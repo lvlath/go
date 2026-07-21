@@ -49,7 +49,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/matrix"
 )
 
 // bbEngine owns branch-and-bound search state, matrix snapshots, incumbent policy,

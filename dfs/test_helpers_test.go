@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/katalvlaran/lvlath/core"
-	"github.com/katalvlaran/lvlath/dfs"
+	"github.com/lvlath/go/core"
+	"github.com/lvlath/go/dfs"
 )
 
 // AI-HINTS (file):

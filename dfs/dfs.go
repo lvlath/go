@@ -7,7 +7,7 @@ package dfs
 import (
 	"fmt"
 
-	"github.com/katalvlaran/lvlath/core"
+	"github.com/lvlath/go/core"
 )
 
 // dfsWalker owns runtime-only DFS state during a single traversal execution.

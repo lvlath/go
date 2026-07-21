@@ -8,8 +8,8 @@ import (
 	"math"
 	"testing"
 
-	"github.com/katalvlaran/lvlath/core"
-	"github.com/katalvlaran/lvlath/mst"
+	"github.com/lvlath/go/core"
+	"github.com/lvlath/go/mst"
 )
 
 const mstWeightTolerance = 1e-12

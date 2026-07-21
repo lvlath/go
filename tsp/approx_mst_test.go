@@ -13,7 +13,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/katalvlaran/lvlath/tsp"
+	"github.com/lvlath/go/tsp"
 )
 
 // degFromAdj computes degrees for an undirected simple graph encoded by adjacency.

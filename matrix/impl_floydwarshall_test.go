@@ -5,7 +5,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/matrix"
 )
 
 // fillInfOffDiagZeroDiag INITIALIZES a distance-matrix fixture:

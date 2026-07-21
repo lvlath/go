@@ -13,8 +13,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/katalvlaran/lvlath/core"
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/core"
+	"github.com/lvlath/go/matrix"
 )
 
 // MaxFlow computes the maximum s-t flow through a weighted capacity network.

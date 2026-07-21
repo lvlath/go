@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/matrix"
 )
 
 // TestNewDenseInvalidDimensions ensures that NewDense rejects negative dimensions

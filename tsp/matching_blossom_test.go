@@ -9,7 +9,7 @@ package tsp_test
 import (
 	"testing"
 
-	"github.com/katalvlaran/lvlath/tsp"
+	"github.com/lvlath/go/tsp"
 )
 
 func TestBlossomMatch_PublicChristofides_LargeDeterministicK64(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/katalvlaran/lvlath/core"
+	"github.com/lvlath/go/core"
 )
 
 // cycleDetector owns runtime-only state during a single cycle-detection execution.

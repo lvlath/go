@@ -50,7 +50,7 @@
 package tsp
 
 import (
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/matrix"
 )
 
 // christofides runs the Christofides pipeline and publishes a canonical Result.

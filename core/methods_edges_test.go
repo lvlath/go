@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/katalvlaran/lvlath/core"
+	"github.com/lvlath/go/core"
 )
 
 // TestGraph_AddEdgeConstraints VERIFIES AddEdge constraint enforcement for weights, loops, multi-edges.

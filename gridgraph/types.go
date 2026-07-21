@@ -1,5 +1,5 @@
 // Package gridgraph defines core types, options, and sentinel errors
-// for the gridgraph subpackage of github.com/katalvlaran/lvlath.
+// for the gridgraph subpackage of github.com/lvlath/go.
 package gridgraph
 
 import (

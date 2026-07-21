@@ -9,7 +9,7 @@ import (
 	"errors"
 	"math"
 
-	"github.com/katalvlaran/lvlath/core"
+	"github.com/lvlath/go/core"
 )
 
 // Algorithm identifies the MST algorithm selected by the canonical facade.

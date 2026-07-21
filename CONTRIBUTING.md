@@ -111,7 +111,7 @@ Tests exist to protect correct math and public contracts. Do not weaken the impl
 ### Clone
 
 ```sh
-git clone https://github.com/katalvlaran/lvlath.git
+git clone https://github.com/lvlath/go.git
 cd lvlath
 ```
 
@@ -692,11 +692,18 @@ If your contribution contains material derived from another project, disclose it
 
 ## 18. Contact and support
 
-* Issues: `github.com/katalvlaran/lvlath/issues`
+* Issues: `github.com/lvlath/go/issues`
 * Discussions: use GitHub Discussions when enabled.
 * Maintainer contact: `katalvlaran@gmail.com`
 
 ---
+
+## Project stewardship
+
+lvlath/go is currently stewarded by @katalvlaran.
+
+Changes to exported API, deterministic behavior, numeric semantics,
+compatibility, or licensing require prior design discussion.
 
 **lvlath contribution rule:** make the library more correct, more deterministic, more explainable, or more trustworthy. Everything else is noise.
 

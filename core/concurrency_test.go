@@ -14,7 +14,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/katalvlaran/lvlath/core"
+	"github.com/lvlath/go/core"
 )
 
 // TestConcurrentAddEdge ENSURES concurrent AddEdge is safe and observable via Neighbors.

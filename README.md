@@ -31,9 +31,9 @@
 
 ---
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/katalvlaran/lvlath.svg)](https://pkg.go.dev/github.com/katalvlaran/lvlath)
-[![CI](https://github.com/katalvlaran/lvlath/actions/workflows/go.yml/badge.svg?branch=main)](https://github.com/katalvlaran/lvlath/actions/workflows/go.yml)
-[![Codecov](https://codecov.io/github/katalvlaran/lvlath/graph/badge.svg?token=QMUZPAO34Y)](https://codecov.io/github/katalvlaran/lvlath)
+[![Go Reference](https://pkg.go.dev/badge/github.com/lvlath/go.svg)](https://pkg.go.dev/github.com/lvlath/go)
+[![CI](https://github.com/lvlath/go/actions/workflows/go.yml/badge.svg?branch=main)](https://github.com/lvlath/go/actions/workflows/go.yml)
+[![Codecov](https://codecov.io/github/lvlath/go/graph/badge.svg?token=QMUZPAO34Y)](https://codecov.io/github/lvlath/go)
 [![Go version](https://img.shields.io/badge/Go-%3E%3D1.23.4-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![License: AGPL-3.0-only](https://img.shields.io/badge/License-AGPL--3.0--only-blue.svg)](LICENSE)
 
@@ -119,7 +119,7 @@ The common failures are familiar:
 ## Installation
 
 ```bash
-go get github.com/katalvlaran/lvlath@latest
+go get github.com/lvlath/go@latest
 ```
 
 Requires Go 1.23 or newer. Pure Go. No cgo. No external runtime dependencies.
@@ -302,9 +302,9 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/katalvlaran/lvlath/bfs"
-	"github.com/katalvlaran/lvlath/core"
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/bfs"
+	"github.com/lvlath/go/core"
+	"github.com/lvlath/go/matrix"
 )
 
 func main() {
@@ -457,11 +457,11 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/katalvlaran/lvlath/bfs"
-	"github.com/katalvlaran/lvlath/core"
-	"github.com/katalvlaran/lvlath/dijkstra"
-	"github.com/katalvlaran/lvlath/matrix"
-	"github.com/katalvlaran/lvlath/mst"
+	"github.com/lvlath/go/bfs"
+	"github.com/lvlath/go/core"
+	"github.com/lvlath/go/dijkstra"
+	"github.com/lvlath/go/matrix"
+	"github.com/lvlath/go/mst"
 )
 
 func main() {
@@ -576,10 +576,10 @@ package main
 import (
 	"fmt"
 
-	"github.com/katalvlaran/lvlath/core"
-	"github.com/katalvlaran/lvlath/dijkstra"
-	"github.com/katalvlaran/lvlath/flow"
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/core"
+	"github.com/lvlath/go/dijkstra"
+	"github.com/lvlath/go/flow"
+	"github.com/lvlath/go/matrix"
 )
 
 func main() {
@@ -841,8 +841,8 @@ If you want to use `lvlath` in a proprietary environment without AGPL source-dis
 
 ## Support
 
-* GitHub Issues: `github.com/katalvlaran/lvlath/issues`
-* API reference: `pkg.go.dev/github.com/katalvlaran/lvlath`
+* GitHub Issues: `github.com/lvlath/go/issues`
+* API reference: `pkg.go.dev/github.com/lvlath/go`
 * Maintainer contact: `katalvlaran@gmail.com`
 
 ---

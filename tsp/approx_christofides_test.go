@@ -13,8 +13,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/katalvlaran/lvlath/matrix"
-	"github.com/katalvlaran/lvlath/tsp"
+	"github.com/lvlath/go/matrix"
+	"github.com/lvlath/go/tsp"
 )
 
 // mstWeight returns the dense MST total used by the Christofides sanity bound.

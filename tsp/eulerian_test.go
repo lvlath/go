@@ -19,7 +19,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/katalvlaran/lvlath/tsp"
+	"github.com/lvlath/go/tsp"
 )
 
 // degFromCircuit computes vertex degrees induced by a walk of edges.

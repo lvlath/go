@@ -26,7 +26,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/katalvlaran/lvlath/core"
+	"github.com/lvlath/go/core"
 )
 
 // adjacencyNoEdgeEncoding identifies the dense numeric sentinel used for absent edges.

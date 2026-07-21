@@ -168,7 +168,7 @@ Contributing:
 ## 3. Installation
 
 ```bash
-go get github.com/katalvlaran/lvlath@latest
+go get github.com/lvlath/go@latest
 ```
 
 Requires Go 1.23 or newer. Pure Go. No cgo. No external runtime dependencies.
@@ -356,9 +356,9 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/katalvlaran/lvlath/bfs"
-	"github.com/katalvlaran/lvlath/core"
-	"github.com/katalvlaran/lvlath/dfs"
+	"github.com/lvlath/go/bfs"
+	"github.com/lvlath/go/core"
+	"github.com/lvlath/go/dfs"
 )
 
 func main() {
@@ -717,8 +717,8 @@ package main
 import (
 	"fmt"
 
-	"github.com/katalvlaran/lvlath/core"
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/core"
+	"github.com/lvlath/go/matrix"
 )
 
 func main() {

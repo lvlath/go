@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/matrix"
 )
 
 const (

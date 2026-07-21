@@ -47,7 +47,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/matrix"
 )
 
 // OneTreeConfig controls the Held-Karp 1-tree subgradient loop and optional

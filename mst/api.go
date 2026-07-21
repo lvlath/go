@@ -5,7 +5,7 @@
 // Public wrappers select an algorithm while preserving the Result contract.
 package mst
 
-import "github.com/katalvlaran/lvlath/core"
+import "github.com/lvlath/go/core"
 
 // MinimumSpanningTree computes a minimum spanning tree or forest over a core.Graph.
 //

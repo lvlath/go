@@ -15,8 +15,8 @@ import (
 	"math"
 	"testing"
 
-	"github.com/katalvlaran/lvlath/matrix"
-	"github.com/katalvlaran/lvlath/tsp"
+	"github.com/lvlath/go/matrix"
+	"github.com/lvlath/go/tsp"
 )
 
 // sumInts returns Σ a[i] (small helper to make assertions readable).

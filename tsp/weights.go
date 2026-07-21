@@ -10,7 +10,7 @@ import (
 	"errors"
 	"math"
 
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/matrix"
 )
 
 // weightBuffer stores a detached dense row-major snapshot of a distance matrix.

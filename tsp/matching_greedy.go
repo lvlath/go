@@ -10,7 +10,7 @@ import (
 	"errors"
 	"math"
 
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/matrix"
 )
 
 // greedyMatch appends a deterministic greedy perfect matching over odd vertices.

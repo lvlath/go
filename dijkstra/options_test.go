@@ -7,8 +7,8 @@ import (
 	"math"
 	"testing"
 
-	"github.com/katalvlaran/lvlath/core"
-	"github.com/katalvlaran/lvlath/dijkstra"
+	"github.com/lvlath/go/core"
+	"github.com/lvlath/go/dijkstra"
 )
 
 // AI-HINTS (file):

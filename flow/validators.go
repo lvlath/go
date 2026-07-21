@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/katalvlaran/lvlath/core"
+	"github.com/lvlath/go/core"
 )
 
 // validateFlowGraphOnly validates graph-level capacity policy without terminals.

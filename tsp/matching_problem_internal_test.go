@@ -10,7 +10,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/matrix"
 )
 
 type internalDense struct {

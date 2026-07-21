@@ -70,8 +70,8 @@ import (
 	"log"
 	"math"
 
-	"github.com/katalvlaran/lvlath/core"
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/core"
+	"github.com/lvlath/go/matrix"
 )
 
 const (

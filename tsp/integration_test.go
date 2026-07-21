@@ -12,7 +12,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/katalvlaran/lvlath/tsp"
+	"github.com/lvlath/go/tsp"
 )
 
 // TestIntegration_AutoVsBnB_Symmetric validates that the high-level pipeline

@@ -33,7 +33,7 @@ package main
 //	"fmt"
 //	"log"
 //
-//	"github.com/katalvlaran/lvlath/gridgraph"
+//	"github.com/lvlath/go/gridgraph"
 //)
 //
 //func main8() {

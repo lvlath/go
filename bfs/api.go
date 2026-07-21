@@ -7,7 +7,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/katalvlaran/lvlath/core"
+	"github.com/lvlath/go/core"
 )
 
 // BFS performs deterministic, unweighted breadth-first search from startID.

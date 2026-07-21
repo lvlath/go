@@ -337,8 +337,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/katalvlaran/lvlath/core"
-	"github.com/katalvlaran/lvlath/dfs"
+	"github.com/lvlath/go/core"
+	"github.com/lvlath/go/dfs"
 )
 
 // Scenario:
@@ -454,8 +454,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/katalvlaran/lvlath/core"
-	"github.com/katalvlaran/lvlath/dfs"
+	"github.com/lvlath/go/core"
+	"github.com/lvlath/go/dfs"
 )
 
 // Scenario:
@@ -555,8 +555,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/katalvlaran/lvlath/core"
-	"github.com/katalvlaran/lvlath/dfs"
+	"github.com/lvlath/go/core"
+	"github.com/lvlath/go/dfs"
 )
 
 // Scenario:
@@ -644,8 +644,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/katalvlaran/lvlath/core"
-	"github.com/katalvlaran/lvlath/dfs"
+	"github.com/lvlath/go/core"
+	"github.com/lvlath/go/dfs"
 )
 
 // Scenario:
@@ -717,8 +717,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/katalvlaran/lvlath/core"
-	"github.com/katalvlaran/lvlath/dfs"
+	"github.com/lvlath/go/core"
+	"github.com/lvlath/go/dfs"
 )
 
 // Scenario:

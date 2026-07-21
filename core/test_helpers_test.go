@@ -14,7 +14,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/katalvlaran/lvlath/core"
+	"github.com/lvlath/go/core"
 )
 
 // Common vertex IDs used across core tests.

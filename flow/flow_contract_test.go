@@ -8,8 +8,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/katalvlaran/lvlath/core"
-	"github.com/katalvlaran/lvlath/flow"
+	"github.com/lvlath/go/core"
+	"github.com/lvlath/go/flow"
 )
 
 func allAlgorithms() []struct {

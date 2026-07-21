@@ -31,7 +31,7 @@ package matrix
 import (
 	"fmt"
 
-	"github.com/katalvlaran/lvlath/core"
+	"github.com/lvlath/go/core"
 )
 
 // --- Incidence marks (no magic numbers) -------------------------------------------------------------

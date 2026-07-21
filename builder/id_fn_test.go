@@ -3,7 +3,7 @@ package builder_test
 import (
 	"testing"
 
-	"github.com/katalvlaran/lvlath/builder"
+	"github.com/lvlath/go/builder"
 )
 
 // assertPanics fails the test if the provided function does not panic.

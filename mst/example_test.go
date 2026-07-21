@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/katalvlaran/lvlath/core"
-	"github.com/katalvlaran/lvlath/mst"
+	"github.com/lvlath/go/core"
+	"github.com/lvlath/go/mst"
 )
 
 // ExampleMinimumSpanningTree_vlsiGlobalRouting demonstrates MST as a deterministic

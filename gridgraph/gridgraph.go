@@ -12,7 +12,7 @@ package gridgraph
 import (
 	"fmt"
 
-	"github.com/katalvlaran/lvlath/core"
+	"github.com/lvlath/go/core"
 )
 
 // NewGridGraph constructs a GridGraph from a non-empty, rectangular 2D slice.

@@ -3,7 +3,7 @@
 
 package dijkstra
 
-import "github.com/katalvlaran/lvlath/core"
+import "github.com/lvlath/go/core"
 
 // Dijkstra runs deterministic single-source shortest paths over a weighted graph
 // and returns a detached result object that exposes distances and optional path

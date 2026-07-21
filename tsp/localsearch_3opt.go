@@ -50,7 +50,7 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/matrix"
 )
 
 // segmentID identifies one of the two movable middle segments in a 3-opt cut.

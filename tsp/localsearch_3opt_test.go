@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/katalvlaran/lvlath/matrix"
-	"github.com/katalvlaran/lvlath/tsp"
+	"github.com/lvlath/go/matrix"
+	"github.com/lvlath/go/tsp"
 )
 
 // -----------------------------------------------------------------------------

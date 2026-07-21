@@ -7,8 +7,8 @@
 package tsp
 
 import (
-	"github.com/katalvlaran/lvlath/core"
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/core"
+	"github.com/lvlath/go/matrix"
 )
 
 // SolveMatrix solves a TSP/ATSP instance represented by a distance matrix.

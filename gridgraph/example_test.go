@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/katalvlaran/lvlath/gridgraph"
+	"github.com/lvlath/go/gridgraph"
 )
 
 // //////////////////////////////////////////////////////////////////////////////

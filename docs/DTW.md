@@ -774,8 +774,8 @@ package main
 import (
 	"fmt"
 
-	"github.com/katalvlaran/lvlath/dtw"
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/dtw"
+	"github.com/lvlath/go/matrix"
 )
 
 func main() {
@@ -877,8 +877,8 @@ package main
 import (
 	"fmt"
 
-	"github.com/katalvlaran/lvlath/dtw"
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/dtw"
+	"github.com/lvlath/go/matrix"
 )
 
 func main() {
@@ -951,8 +951,8 @@ package main
 import (
 	"fmt"
 
-	"github.com/katalvlaran/lvlath/dtw"
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/dtw"
+	"github.com/lvlath/go/matrix"
 )
 
 func main() {

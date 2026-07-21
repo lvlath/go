@@ -11,8 +11,8 @@ import (
 	"math"
 	"strings"
 
-	"github.com/katalvlaran/lvlath/matrix"
-	"github.com/katalvlaran/lvlath/tsp"
+	"github.com/lvlath/go/matrix"
+	"github.com/lvlath/go/tsp"
 )
 
 // ExampleTSP_ApproxDrones plans one closed medical-drone dispatch route over an

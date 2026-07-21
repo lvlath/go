@@ -8,7 +8,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/katalvlaran/lvlath/core"
+	"github.com/lvlath/go/core"
 )
 
 // TopoOption configures TopologicalSort behavior before execution starts.

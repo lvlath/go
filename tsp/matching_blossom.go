@@ -7,7 +7,7 @@
 package tsp
 
 import (
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/matrix"
 )
 
 // blossomMatch computes exact minimum-weight perfect matching for Christofides.

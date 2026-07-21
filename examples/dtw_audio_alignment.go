@@ -8,7 +8,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/katalvlaran/lvlath/dtw"
+	"github.com/lvlath/go/dtw"
 )
 
 // ExampleDTW_audioAlignment aligns a clean voice-command envelope with a noisy stretched recording.

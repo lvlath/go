@@ -10,7 +10,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/katalvlaran/lvlath/dtw"
+	"github.com/lvlath/go/dtw"
 )
 
 func mustNoError(t *testing.T, err error, op string) {

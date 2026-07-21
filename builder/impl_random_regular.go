@@ -32,7 +32,7 @@ package builder
 import (
 	"fmt" // For contextual %w wrapping.
 
-	"github.com/katalvlaran/lvlath/core"
+	"github.com/lvlath/go/core"
 )
 
 // File-local constants (no magic numbers/strings; stable method tags).

@@ -8,8 +8,8 @@ package dtw_test
 import (
 	"fmt"
 
-	"github.com/katalvlaran/lvlath/dtw"
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/dtw"
+	"github.com/lvlath/go/matrix"
 )
 
 // ExampleAlignMatrix_cryptoBreakoutOHLC demonstrates matrix-backed DTW for OHLC market-pattern matching.

@@ -39,7 +39,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/katalvlaran/lvlath/core"
+	"github.com/lvlath/go/core"
 )
 
 // defaultReserve is the initial capacity for neighbor slices

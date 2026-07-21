@@ -8,7 +8,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/katalvlaran/lvlath/core"
+	"github.com/lvlath/go/core"
 )
 
 // AI-HINTS (file):

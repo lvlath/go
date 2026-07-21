@@ -6,7 +6,7 @@ package mst_test
 import (
 	"testing"
 
-	"github.com/katalvlaran/lvlath/mst"
+	"github.com/lvlath/go/mst"
 )
 
 func TestForest_KruskalDisconnectedGraph(t *testing.T) {

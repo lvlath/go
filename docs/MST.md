@@ -1213,8 +1213,8 @@ package main
 import (
     "fmt"
 
-    "github.com/katalvlaran/lvlath/core"
-    "github.com/katalvlaran/lvlath/mst"
+    "github.com/lvlath/go/core"
+    "github.com/lvlath/go/mst"
 )
 
 func main() {
@@ -1271,8 +1271,8 @@ package main
 import (
     "fmt"
 
-    "github.com/katalvlaran/lvlath/core"
-    "github.com/katalvlaran/lvlath/mst"
+    "github.com/lvlath/go/core"
+    "github.com/lvlath/go/mst"
 )
 
 func main() {
@@ -1333,8 +1333,8 @@ import (
     "fmt"
     "sort"
 
-    "github.com/katalvlaran/lvlath/core"
-    "github.com/katalvlaran/lvlath/mst"
+    "github.com/lvlath/go/core"
+    "github.com/lvlath/go/mst"
 )
 
 func main() {
@@ -1404,8 +1404,8 @@ import (
     "errors"
     "fmt"
 
-    "github.com/katalvlaran/lvlath/core"
-    "github.com/katalvlaran/lvlath/mst"
+    "github.com/lvlath/go/core"
+    "github.com/lvlath/go/mst"
 )
 
 func main() {

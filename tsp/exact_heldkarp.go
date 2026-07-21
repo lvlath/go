@@ -32,7 +32,7 @@ import (
 	"math/bits"
 	"time"
 
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/matrix"
 )
 
 // MaxExactN bounds problem size for the Held–Karp solver (time/memory guard).

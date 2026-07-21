@@ -51,7 +51,7 @@ import (
 	"strconv"
 	"unicode"
 
-	"github.com/katalvlaran/lvlath/core"
+	"github.com/lvlath/go/core"
 )
 
 // -----------------------------------------------------------------------------

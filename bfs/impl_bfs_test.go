@@ -8,8 +8,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/katalvlaran/lvlath/bfs"
-	"github.com/katalvlaran/lvlath/core"
+	"github.com/lvlath/go/bfs"
+	"github.com/lvlath/go/core"
 )
 
 // AI-HINTS (file):

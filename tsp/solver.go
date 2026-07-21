@@ -10,7 +10,7 @@ import (
 	"errors"
 	"math"
 
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/matrix"
 )
 
 // preparedMatrix stores the final solver matrix and preparation metadata.

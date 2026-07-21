@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/katalvlaran/lvlath/core"
+	"github.com/lvlath/go/core"
 )
 
 // validateInputs validates the canonical kernel entry inputs before any traversal

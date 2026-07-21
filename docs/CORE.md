@@ -383,7 +383,7 @@ package main
 
 import (
     "fmt"
-    "github.com/katalvlaran/lvlath/core"
+    "github.com/lvlath/go/core"
 )
 
 func main() {

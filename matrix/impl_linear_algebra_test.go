@@ -5,7 +5,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/matrix"
 )
 
 // TestHelpers_InterfaceHiding_Fallback ensures that using a non-nil wrapper

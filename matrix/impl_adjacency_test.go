@@ -11,9 +11,9 @@ import (
 	"math"
 	"testing"
 
-	"github.com/katalvlaran/lvlath/builder"
-	"github.com/katalvlaran/lvlath/core"
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/builder"
+	"github.com/lvlath/go/core"
+	"github.com/lvlath/go/matrix"
 )
 
 // --- helpers ---

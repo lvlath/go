@@ -8,7 +8,7 @@ package mst
 import (
 	"container/heap"
 
-	"github.com/katalvlaran/lvlath/core"
+	"github.com/lvlath/go/core"
 )
 
 // primCandidate stores one frontier edge together with the unvisited endpoint it reaches.

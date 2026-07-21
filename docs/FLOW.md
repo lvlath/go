@@ -178,8 +178,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/katalvlaran/lvlath/core"
-	"github.com/katalvlaran/lvlath/flow"
+	"github.com/lvlath/go/core"
+	"github.com/lvlath/go/flow"
 )
 
 func main() {
@@ -301,8 +301,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/katalvlaran/lvlath/core"
-	"github.com/katalvlaran/lvlath/flow"
+	"github.com/lvlath/go/core"
+	"github.com/lvlath/go/flow"
 )
 
 func main() {
@@ -455,8 +455,8 @@ package main
 import (
 	"fmt"
 
-	"github.com/katalvlaran/lvlath/core"
-	"github.com/katalvlaran/lvlath/flow"
+	"github.com/lvlath/go/core"
+	"github.com/lvlath/go/flow"
 )
 
 func main() {

@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/katalvlaran/lvlath/core"
+	"github.com/lvlath/go/core"
 )
 
 // runDijkstra executes the canonical Dijkstra kernel for one source vertex

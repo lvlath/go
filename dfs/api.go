@@ -19,7 +19,7 @@ package dfs
 import (
 	"context"
 
-	"github.com/katalvlaran/lvlath/core"
+	"github.com/lvlath/go/core"
 )
 
 // DFS performs deterministic depth-first traversal over g from startID.

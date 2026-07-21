@@ -9,8 +9,8 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/katalvlaran/lvlath/builder"
-	"github.com/katalvlaran/lvlath/core"
+	"github.com/lvlath/go/builder"
+	"github.com/lvlath/go/core"
 )
 
 // edgeKey identifies an edge by its endpoints.

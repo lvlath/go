@@ -23,7 +23,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/katalvlaran/lvlath/core"
+	"github.com/lvlath/go/core"
 )
 
 // distanceMatrixAllowsInfByDefault fixes the distance/APSP convention:

@@ -15,7 +15,7 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/matrix"
 )
 
 // Number of vertices used in table-driven graphs.

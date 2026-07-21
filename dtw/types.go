@@ -8,7 +8,7 @@ package dtw
 import (
 	"math"
 
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/matrix"
 )
 
 // MemoryMode controls how much accumulated-cost state the DTW kernel stores.

@@ -28,7 +28,7 @@ import (
 	"errors"
 	"math"
 
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/matrix"
 )
 
 // roundScale controls final cost stabilization precision (1e-9).

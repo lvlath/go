@@ -6,8 +6,8 @@ package dfs_test
 import (
 	"testing"
 
-	"github.com/katalvlaran/lvlath/core"
-	"github.com/katalvlaran/lvlath/dfs"
+	"github.com/lvlath/go/core"
+	"github.com/lvlath/go/dfs"
 )
 
 func TestDetectCycles_NilGraph(t *testing.T) {

@@ -27,7 +27,7 @@ package builder
 import (
 	"fmt"
 
-	"github.com/katalvlaran/lvlath/core"
+	"github.com/lvlath/go/core"
 )
 
 // File-local constants (no magic numbers; stable method tags for context).

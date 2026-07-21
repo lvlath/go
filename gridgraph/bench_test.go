@@ -4,7 +4,7 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/katalvlaran/lvlath/gridgraph"
+	"github.com/lvlath/go/gridgraph"
 )
 
 // BenchmarkConnectedComponents measures performance of ConnectedComponents

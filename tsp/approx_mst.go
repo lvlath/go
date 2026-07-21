@@ -39,7 +39,7 @@ import (
 	"errors"
 	"math"
 
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/matrix"
 )
 
 // MinimumSpanningTree computes an undirected minimum spanning tree with Prim's algorithm.

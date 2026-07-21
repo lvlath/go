@@ -7,7 +7,7 @@ import (
 	"math"
 	"sort"
 
-	"github.com/katalvlaran/lvlath/core"
+	"github.com/lvlath/go/core"
 )
 
 // residualNetwork is the internal mutable residual-capacity model used by all kernels.

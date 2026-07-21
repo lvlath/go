@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/katalvlaran/lvlath/core"
-	"github.com/katalvlaran/lvlath/dfs"
+	"github.com/lvlath/go/core"
+	"github.com/lvlath/go/dfs"
 )
 
 // buildChain creates a directed chain graph of length n: N0->N1->...->N(n-1).

@@ -11,7 +11,7 @@ package core_test
 import (
 	"testing"
 
-	"github.com/katalvlaran/lvlath/core"
+	"github.com/lvlath/go/core"
 )
 
 // TestGraph_Options ASSERTS GraphOption flags are applied correctly.

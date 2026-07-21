@@ -8,7 +8,7 @@ package mst
 import (
 	"sort"
 
-	"github.com/katalvlaran/lvlath/core"
+	"github.com/lvlath/go/core"
 )
 
 // kruskalKernel computes a minimum spanning tree or forest over a validated snapshot.

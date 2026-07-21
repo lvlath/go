@@ -32,7 +32,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/matrix"
 )
 
 // twoOptSearch runs 2-opt local search and publishes canonical result metadata.

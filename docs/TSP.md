@@ -955,8 +955,8 @@ import (
     "log"
     "strings"
 
-    "github.com/katalvlaran/lvlath/matrix"
-    "github.com/katalvlaran/lvlath/tsp"
+    "github.com/lvlath/go/matrix"
+    "github.com/lvlath/go/tsp"
 )
 
 func main() {
@@ -1052,8 +1052,8 @@ import (
     "log"
     "strings"
 
-    "github.com/katalvlaran/lvlath/matrix"
-    "github.com/katalvlaran/lvlath/tsp"
+    "github.com/lvlath/go/matrix"
+    "github.com/lvlath/go/tsp"
 )
 
 func main() {
@@ -1139,8 +1139,8 @@ import (
     "fmt"
     "log"
 
-    "github.com/katalvlaran/lvlath/matrix"
-    "github.com/katalvlaran/lvlath/tsp"
+    "github.com/lvlath/go/matrix"
+    "github.com/lvlath/go/tsp"
 )
 
 func main() {

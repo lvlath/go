@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/katalvlaran/lvlath/gridgraph"
+	"github.com/lvlath/go/gridgraph"
 )
 
 // TestConnectedComponents_Simple4 verifies two islands of values 1 and 2 on a 3×4 grid under Conn4.

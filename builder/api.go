@@ -25,7 +25,7 @@ package builder
 import (
 	"fmt"
 
-	"github.com/katalvlaran/lvlath/core"
+	"github.com/lvlath/go/core"
 )
 
 // Constructor applies a deterministic graph mutation using the resolved

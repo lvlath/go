@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/katalvlaran/lvlath/core"
+	"github.com/lvlath/go/core"
 )
 
 // Benchmark sinks prevent accidental dead-code elimination.

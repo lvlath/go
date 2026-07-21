@@ -15,7 +15,7 @@ import (
 	"errors"
 	"math"
 
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/matrix"
 )
 
 // symTol is the structural tolerance for diagonal and symmetry checks in TSP distance matrices.

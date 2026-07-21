@@ -9,8 +9,8 @@ import (
 	"math"
 	"testing"
 
-	"github.com/katalvlaran/lvlath/dtw"
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/dtw"
+	"github.com/lvlath/go/matrix"
 )
 
 func TestAlignCostMatrixComputesVoiceCommandPath(t *testing.T) {

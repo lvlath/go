@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/katalvlaran/lvlath/gridgraph"
+	"github.com/lvlath/go/gridgraph"
 )
 
 // Basic test on a small grid (1×3) verifying minimal water conversion.

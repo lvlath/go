@@ -6,7 +6,7 @@ package flow
 import (
 	"context"
 
-	"github.com/katalvlaran/lvlath/core"
+	"github.com/lvlath/go/core"
 )
 
 // Algorithm identifies the maximum-flow kernel used by the canonical facade.

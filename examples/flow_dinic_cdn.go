@@ -6,8 +6,8 @@ package main
 import (
 	"fmt"
 
-	"github.com/katalvlaran/lvlath/core"
-	"github.com/katalvlaran/lvlath/flow"
+	"github.com/lvlath/go/core"
+	"github.com/lvlath/go/flow"
 )
 
 // ExampleMaxFlow_dinicCDN runs a production-style CDN throughput analysis with Dinic.

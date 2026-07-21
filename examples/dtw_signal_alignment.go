@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/katalvlaran/lvlath/dtw"
+	"github.com/lvlath/go/dtw"
 )
 
 // Candle represents one exchange candle.

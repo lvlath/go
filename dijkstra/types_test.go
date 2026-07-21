@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/katalvlaran/lvlath/dijkstra"
+	"github.com/lvlath/go/dijkstra"
 )
 
 // AI-HINTS (file):

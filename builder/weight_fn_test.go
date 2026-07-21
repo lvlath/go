@@ -6,7 +6,7 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/katalvlaran/lvlath/builder"
+	"github.com/lvlath/go/builder"
 )
 
 // TestWeightFnConstructors verifies that WeightFn constructors panic

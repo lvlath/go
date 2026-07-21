@@ -8,7 +8,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/matrix"
 )
 
 const epsTight = 1e-12

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/katalvlaran/lvlath/core"
+	"github.com/lvlath/go/core"
 )
 
 // Example_cascadingFailures demonstrates a cascading failure scenario in a power grid network.

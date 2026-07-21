@@ -7,8 +7,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/katalvlaran/lvlath/core"
-	"github.com/katalvlaran/lvlath/dfs"
+	"github.com/lvlath/go/core"
+	"github.com/lvlath/go/dfs"
 )
 
 func TestTopologicalSort_NilGraph(t *testing.T) {

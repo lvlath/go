@@ -7,7 +7,7 @@
 package tsp
 
 import (
-	"github.com/katalvlaran/lvlath/matrix"
+	"github.com/lvlath/go/matrix"
 )
 
 // matchingUnmatched marks a local matching vertex that has not been paired.
