@@ -60,7 +60,7 @@ The library covers:
 * `bfs` hop-distance traversal and weak components;
 * `dfs` finish-order traversal, cycle witnesses, and topological sorting;
 * `dijkstra` weighted full-SSSP and four target-search methods (Dijkstra, bidirectional Dijkstra, consistent A*, balanced A*), original EdgeIDs, and exact target-cutoff policy;
-* `mst` strict minimum spanning trees and explicit minimum spanning forests;
+* `mst` exact Prim/Kruskal MST/MSF, KMB original-edge graph Steiner approximation, and closed/fixed-end edge-covering walks;
 * `flow` max-flow / residual-network analysis;
 * `matrix` dense graph algebra: adjacency, incidence, metric closure, statistics, factorization, sanitation;
 * `dtw` deterministic Dynamic Time Warping for scalar, cost-matrix, and multivariate sequence alignment;
@@ -76,7 +76,9 @@ hop layers                 *bfs.Result                 depth / parent / visited
 DFS forest                 *dfs.Result                 finish order, not discovery
 weighted SSSP              *dijkstra.Result            all known distances / optional predecessor
 weighted target            *dijkstra.PathResult        finite cost / +Inf / original EdgeIDs
-spanning backbone          *mst.Result                 strict tree or explicit forest
+full-vertex backbone       *mst.Result                 strict MST or explicit MSF
+terminal-only network      *mst.SteinerResult          original EdgeIDs, KMB approximation
+cover edges of one tree    *mst.WalkResult             repeated passage IDs, closed/fixed endpoints
 flow network               residual *core.Graph        capacity state after flow
 dense operator             *matrix.Dense               row-major numeric artifact
 warping alignment          *dtw.Result                 distance, reachability, path
@@ -95,6 +97,8 @@ A shortest-path formula is easy. A reliable Go package must also answer:
 * Is a zero edge a real zero-cost edge or an absent edge?
 * In which numeric domain is `+Inf` being used: graph storage, runtime policy, dense representation, or algorithm result?
 * Is a disconnected MST request an error or an explicit forest request?
+* Am I connecting every vertex (MST), only required terminals (graph Steiner), or covering every edge of an existing tree (SteinerWalk)?
+* Is this cost a unique installed-network total or the distance of a route with repeated traversals?
 * Is a DTW path recoverable under the selected memory mode?
 * Is a TSP result exact, approximate, locally improved, or merely a timed-out incumbent?
 * Does the returned result own its data, or does it alias the input?
@@ -138,7 +142,7 @@ Read these files as a learning path. `doc.go` files define implemented package c
 | 2    | [`BFS.md`](BFS.md)                         | Hop-distance traversal, `Result`, components, filters, partial-result behavior.                                            |
 | 3    | [`DFS.md`](DFS.md)                         | Finish order, DFS forest, deterministic cycle witnesses, topological sort.                                                 |
 | 4    | [`DIJKSTRA.md`](DIJKSTRA.md)               | Full SSSP vs target Dijkstra/A*, consistent/balanced potentials, original EdgeIDs, exact cutoff, walls and error contracts. |
-| 5    | [`MST.md`](MST.md)                         | Strict MST vs explicit MSF, Kruskal, Prim, finite-weight law, MST `Result`.                                                |
+| 5    | [`MST.md`](MST.md)                         | Exact Prim/Kruskal MST/MSF, KMB Steiner networks, closed/fixed-end tree walks, original IDs and separate numeric contracts. |
 | 6    | [`FLOW.md`](FLOW.md)                       | Capacity networks, residual graph state, Ford-Fulkerson, Edmonds-Karp, Dinic.                                              |
 | 7    | [`MATRICES.md`](MATRICES.md)               | Dense storage, graph adapters, zero-weight policy, metric closure, statistics, numeric sanitation.                         |
 | 8    | [`DTW.md`](DTW.md)                         | `Align`, `AlignCostMatrix`, `AlignMatrix`, windows, slope penalty, memory/path artifacts.                                  |
@@ -192,7 +196,7 @@ Think of `lvlath` as a contract stack.
        │                      │                      │                      │                      │
   ┌────▼────┐       ┌─────────▼──────────┐      ┌────▼────┐            ┌────▼────┐            ┌────▼──────┐
   │ bfs     │       │ dijkstra           │      │ mst     │            │ flow    │            │ matrix    │
-  │ dfs     │       │ finite weights     │      │ MST/MSF │            │ residual│            │ graph     │
+  │ dfs     │       │ finite weights     │      │ MST/ST  │            │ residual│            │ graph     │
   └────┬────┘       │ +Inf result/policy │      └────┬────┘            └────┬────┘            │ algebra   │
        │            └─────────┬──────────┘           │                      │                 └────┬──────┘
        │                      │                      │                      │                      │
@@ -221,7 +225,7 @@ Think of `lvlath` as a contract stack.
 
 3. **Result artifacts carry meaning**
 
-   Do not reduce results to “a slice and a number.” A result may contain reachability, path tracking, exactness, approximation ratio, timeout state, component roots, residual capacity, matrix policy, or detached IDs.
+   Do not reduce results to “a slice and a number.” A result may contain reachability, path tracking, exactness, approximation ratio, timeout state, component roots, residual capacity, matrix policy, or detached IDs. In `mst`, `Result` spans all vertices, `SteinerResult` selects one original-edge terminal network, and `WalkResult` records repeated travel passages. Their costs are not interchangeable.
 
 4. **Policy is explicit and local to the run**
 
@@ -513,23 +517,38 @@ Good questions:
 
 Run the [three standalone shortest-path scenarios](DIJKSTRA.md#59-compilable-scenarios-and-their-runner-tests) to compare public APIs and exact witness semantics.
 
-### MST: cheapest acyclic backbone
+### MST, graph Steiner, and tree-covering walks: three different objectives
 
-Use MST when you need connectivity with minimum selected edge cost, not route distance.
+Use exact MST for **every** graph vertex; KMB graph Steiner for an **explicit required subset**; and `SteinerWalk` when the goal is to **traverse every edge of one validated tree**.
 
 ```text
-Strict MST:
-  connect all vertices with |V|-1 selected edges.
+Strict MST, Prim/Kruskal:
+  connect every original vertex; Result.TotalWeight counts selected unique links.
 
 Explicit MSF:
-  one MST per connected component, requested deliberately.
+  one exact MST per connected component; WithForest() must be requested.
+
+SteinerTree (KMB approximation):
+  connect only requested terminals through original graph vertices/edge IDs.
+  Every original edge weight must be finite and nonnegative, even on loops/islands.
+  SteinerResult.TotalWeight counts unique selected original edges, not closure links.
+
+SteinerWalk:
+  closed start=end: cover every tree edge twice.
+  fixed start!=end: cover unique spine edges once, off-spine edges twice.
+  WalkResult.Distance sums actual repeated original-ID passages.
 ```
+
+On a simple hub with `AX=BX=CX=1` and direct terminal connections costing 3, `SteinerTree(g, []string{"A", "B", "C"})` chooses original `AX,BX,CX`, total **3**, while the terminal closure MST totals **4**. A closed walk from A costs **6**, a fixed-end walk from A to B costs **4**. Neither is a proof of globally optimal original-graph routing.
+
+The KMB kernel uses source-grouped public Dijkstra SSSP queries and reuses Kruskal selection twice, then prunes unused nonterminal leaves. `SteinerRecomputePaths` favors bounded live predecessor history; `SteinerRetainPaths` retains O(kV) source history for fewer repeated SSSP queries. The walk validates the caller-owned tree independently, including correct `TotalWeight` in original Edge.ID order.
 
 Good questions:
 
-* “What is the cheapest cable, fiber, or relay backbone?”
-* “Is the network disconnected when strict connectivity is required?”
-* “Which component-wise backbones exist if forest mode is acceptable?”
+* “What is the cheapest cable, fiber, or relay backbone spanning **all** nodes?” — MST.
+* “Which required sensor or chiplet pins can share original relay links?” — `SteinerTree`.
+* “How do I inspect every link of the selected tree and finish at a specified endpoint?” — `SteinerWalk`.
+* “Are disconnected islands allowed when they contain no required terminal?” — yes, for graph Steiner.
 
 ### Flow: maximum feasible throughput
 
@@ -689,7 +708,7 @@ The story is intentionally realistic:
 * `profile`, `search`, and `index` represent service dependencies;
 * `db -> backup` is a real zero-cost replication edge;
 * `logs` and `archive` preserve operational evidence;
-* the same topology can feed routing, dense matrices, spectral analysis, MST backbone planning, flow capacity analysis, TSP inspection tours, and DTW telemetry comparison.
+* the same topology can feed routing, dense matrices, spectral analysis, MST backbone planning, terminal-only Steiner network selection, tree-edge covering walks, flow capacity analysis, TSP inspection tours, and DTW telemetry comparison.
 
 The goal of this section is not to run every package in one oversized code block. The goal is to show the **graph-to-matrix foundation** that later packages can reuse.
 
@@ -846,7 +865,7 @@ func main() {
 | `bfs`       | Hop blast radius: “which services are within 2 calls of `edge`?”                           |
 | `dfs`       | Dependency cycle audit before deployment.                                                  |
 | `dijkstra`  | Cheapest failover route from ingress to storage or backup.                                 |
-| `mst`       | Minimal undirected service-backbone sketch after symmetrizing / adapting the network.      |
+| `mst`       | Exact full-vertex MST/MSF, or KMB for required service terminals; walk covers all edges of a selected tree. |
 | `flow`      | Maximum capacity from ingress tier to storage tier on a capacity version of this topology. |
 | `matrix`    | Adjacency, incidence, closure, spectral features, statistics, sanitation.                  |
 | `dtw`       | Compare incident telemetry signature against historical outages.                           |
@@ -887,8 +906,10 @@ Do not use it as:
 | Weighted route from one source         | `dijkstra.Dijkstra`      | all known distances, `+Inf` unreachable, optional predecessor tracking                |
 | One weighted target / consistent A*    | `dijkstra.Search` family | one original-cost `PathResult` and ordered original `EdgeIDs`                         |
 | Runtime weighted walls/cutoffs         | `dijkstra`               | `+Inf` publication without mutating topology.                                           |
-| Strict connected backbone              | `mst`                    | MST `Result` in strict tree mode.                                                       |
-| Component-wise backbones               | `mst` with forest policy | explicit minimum spanning forest.                                                       |
+| Strict connected backbone              | `mst.Kruskal` / `mst.Prim` | Exact full-vertex MST `Result`.                                                          |
+| Component-wise backbones               | `mst` with forest policy | Explicit exact minimum spanning forest.                                                 |
+| Connect only required graph terminals  | `mst.SteinerTree`        | KMB approximate original-edge `SteinerResult` on nonnegative graph.                     |
+| Cover every edge in a selected tree    | `mst.SteinerWalk`        | Closed/fixed-end `WalkResult` with repeated original EdgeIDs and actual passage cost.   |
 | Max throughput                         | `flow`                   | max-flow value and residual graph.                                                      |
 | Grid/lattice topology                  | `gridgraph`              | generated graph world.                                                                  |
 | Dense topology artifacts               | `matrix`                 | adjacency, incidence, degree vector, metric closure.                                    |
@@ -930,7 +951,9 @@ Do not use it as:
 min hops                          -> bfs
 post-order / cycle / DAG order    -> dfs
 min non-negative route cost       -> dijkstra
-min acyclic backbone cost         -> mst
+min acyclic full backbone cost    -> mst.Kruskal / mst.Prim
+approx terminal-only backbone     -> mst.SteinerTree
+cover all edges of a given tree   -> mst.SteinerWalk
 max feasible throughput           -> flow
 all-pairs distances               -> matrix metric closure
 dense topology/statistics         -> matrix
@@ -958,7 +981,9 @@ Do not collapse rich result artifacts into anonymous tuples. Inspect the fields 
 * BFS: `Depth`, `Parent`, `Visited`, `Order`;
 * DFS: finish `Order` and cycle/topology state;
 * Dijkstra: known/unreachable/path-tracked states;
-* MST: `Mode`, `ComponentCount`, `ComponentRoots`;
+* MST/MSF: `Mode`, `ComponentCount`, `ComponentRoots`;
+* Graph Steiner: selected `Terminals`, `Vertices`, original `Edges`, unique `TotalWeight`;
+* Tree walk: ordered `Vertices` and repeated `EdgeIDs`, distinct `NetworkWeight` and `Distance`;
 * Flow: residual graph;
 * DTW: `Reachable`, `PathTracked`, `MemoryMode`;
 * TSP: `Exact`, `Optimal`, `TimedOut`, `ApproximationRatio`.
@@ -986,7 +1011,9 @@ A zero-cost replication or transfer edge is real topology. Use zero-preserving m
 
 ### 11.9. Be honest about exactness and guarantees
 
-* MST is exact for its domain.
+* Prim/Kruskal MST is exact for its full-vertex finite-weight domain.
+* KMB graph Steiner is a polynomial-time approximation for finite nonnegative edges, not an exact optimality certificate.
+* `SteinerWalk` is optimal for covering the given tree with fixed endpoints, not necessarily for routes allowed to leave it.
 * Dijkstra is exact for non-negative single-source routing.
 * Flow algorithms solve max-flow under capacity semantics.
 * Held-Karp / completed Branch-and-Bound are exact TSP regimes.
