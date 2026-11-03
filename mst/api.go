@@ -100,8 +100,8 @@ func MinimumSpanningTree(graph *core.Graph, opts ...Option) (*Result, error) {
 //   - ErrDisconnected for disconnected strict tree mode.
 //
 // Determinism:
-//   - Candidate edges are read from core.Edges() and stable-sorted by finite Weight.
-//   - Equal-weight candidates retain core.Edges() order.
+//   - Candidates are ordered by finite (Weight, Edge.ID), preserving the former stable-sort outcome.
+//   - Equal-weight candidates follow original core.Edges() ID order.
 //
 // Complexity:
 //   - Time O(E log E + E·α(V)), Space O(E + V).
@@ -160,4 +160,59 @@ func Kruskal(graph *core.Graph) (*Result, error) {
 //   - Do not replace this wrapper with a second Prim implementation; that would split the kernel contract.
 func Prim(graph *core.Graph, root string) (*Result, error) {
 	return MinimumSpanningTree(graph, WithAlgorithm(AlgorithmPrim), WithRoot(root))
+}
+
+// SteinerTree computes a deterministic original-edge terminal-covering network using KMB.
+// It returns an acyclic connected approximation, not a global exact Steiner optimum.
+// Implementation:
+//   - Stage 1: Apply independent Steiner policies and observe initial cancellation.
+//   - Stage 2: Validate and clone one coherent input topology before KMB processing.
+//   - Stage 3: Run singleton, pair, or full KMB and publish a checked detached result.
+//
+// Behavior highlights:
+//   - All original edge weights, including loops and unrelated islands, must be nonnegative finite.
+//   - The single-terminal case is validated and has zero edges and zero cost.
+//   - Both witness-storage modes execute real SSSP work without hidden switching.
+//
+// Inputs:
+//   - graph: caller-owned undirected weighted core.Graph, immutable throughout the call.
+//   - terminals: nonempty unique original IDs; copied and lexically canonicalized.
+//   - opts: ordered optional SteinerOption callbacks, not retained.
+//
+// Returns:
+//   - *SteinerResult: detached network with original edges, or nil on any error.
+//
+// Errors:
+//   - Existing MST option/graph sentinels, Steiner terminal/domain/witness errors,
+//     ErrWeightOverflow, ErrResourceLimit, ErrSizeOverflow, context cancellation,
+//     and preserved core/dijkstra root causes when relevant.
+//
+// Determinism:
+//   - Canonical terminal IDs, terminal-pair order, Kruskal (Weight, Edge.ID),
+//     original-edge identity and final Edge.ID publication order.
+//
+// Complexity:
+//   - k-1 SSSP plus up to k-1 recomputation SSSP calls; closure O(k^2 log k),
+//     union O(Eu log Eu), including clone and catalog sorting overhead.
+//
+// Notes:
+//   - core.Clone is coherent for topology but shallow-copies Metadata, which is not read.
+//   - Legacy Dijkstra has no context; cancellation is cooperative around its calls.
+//
+// AI-Hints:
+//   - Do not expose closure edges or equate a network's unique-edge cost with a walk cost.
+//   - Do not use the public MST facade for closure: its mandatory total can overflow.
+func SteinerTree(graph *core.Graph, terminals []string, opts ...SteinerOption) (*SteinerResult, error) {
+	config, err := applySteinerOptions(opts...)
+	if err != nil {
+		return nil, err
+	}
+	if err := config.Context.Err(); err != nil {
+		return nil, err
+	}
+	prepared, err := prepareSteiner(graph, terminals, config)
+	if err != nil {
+		return nil, err
+	}
+	return runSteiner(prepared, config)
 }

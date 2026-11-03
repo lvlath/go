@@ -82,11 +82,7 @@ func (pf primFrontier) Less(i, j int) bool {
 	left := pf[i].edge
 	right := pf[j].edge
 
-	if left.Weight != right.Weight {
-		return left.Weight < right.Weight
-	}
-
-	return left.ID < right.ID
+	return lessMSTEdge(left, right)
 }
 
 // Swap exchanges two heap candidates in O(1) time.
@@ -125,7 +121,7 @@ func (pf *primFrontier) Pop() any {
 //   - Stage 1: Validate root policy against the snapshot.
 //   - Stage 2: Grow the explicit root component in strict mode.
 //   - Stage 3: In forest mode, grow remaining components in vertex order.
-//   - Stage 4: Enforce strict connectivity or publish forest metadata.
+//   - Stage 4: Enforce strict connectivity before checked ordered total publication.
 //
 // Behavior highlights:
 //   - Strict Prim requires a root.
@@ -144,6 +140,7 @@ func (pf *primFrontier) Pop() any {
 // Errors:
 //   - core.ErrVertexNotFound when the requested root is absent.
 //   - ErrDisconnected when strict mode cannot reach all vertices.
+//   - ErrWeightOverflow when the selected-edge total has a non-finite prefix.
 //
 // Determinism:
 //   - Primary root is explicit or the first unvisited vertex in snapshot order.
@@ -151,7 +148,7 @@ func (pf *primFrontier) Pop() any {
 //   - Frontier ties are resolved by Edge.ID.
 //
 // Complexity:
-//   - Time O(E log E), Space O(V + E).
+//   - Time O(V + E log(E+1)), Space O(V + E), after snapshot preparation.
 //
 // AI-Hints:
 //   - Do not derive target from edge.to alone; the same undirected edge is stored in both adjacency lists.
@@ -206,6 +203,12 @@ func primKernel(snapshot *mstSnapshot, cfg Options) (*Result, error) {
 		if len(result.ComponentRoots) == 0 {
 			result.ComponentRoots = []string{cfg.Root}
 		}
+		// Structural disconnection wins over an unrepresentable scalar total.
+		total, err := checkedMSTEdgeTotal(result.Edges)
+		if err != nil {
+			return nil, err
+		}
+		result.TotalWeight = total
 		return result, nil
 	}
 
@@ -226,23 +229,29 @@ func primKernel(snapshot *mstSnapshot, cfg Options) (*Result, error) {
 		result.Root = result.ComponentRoots[0]
 	}
 
+	// Publish only a finite total in the same edge-acceptance order as before.
+	total, err := checkedMSTEdgeTotal(result.Edges)
+	if err != nil {
+		return nil, err
+	}
+	result.TotalWeight = total
 	return result, nil
 }
 
-// growPrimComponent grows one Prim component from root and appends accepted edges into result.
-// It mutates visited and result as kernel-local state owned by the current Prim execution.
+// growPrimComponent grows one Prim component from root and appends selected edges into result.
+// It owns the frontier traversal and leaves cost publication to primKernel after connectivity.
 //
 // Implementation:
 //   - Stage 1: Register root as a public component root.
 //   - Stage 2: Initialize an empty frontier heap.
 //   - Stage 3: Mark root visited and enqueue all frontier candidates.
 //   - Stage 4: Pop candidates by priority, skipping stale targets.
-//   - Stage 5: Accept the lightest valid edge and expand from the reached target.
+//   - Stage 5: Accept the lightest valid edge without summing and expand its target.
 //
 // Behavior highlights:
 //   - Stale candidates are expected when multiple edges reach a vertex before it is visited.
 //   - Accepted edges are detached values copied from mstSnapshot.
-//   - TotalWeight is accumulated only for accepted edges.
+//   - Accepted edge order is preserved; TotalWeight is checked after the component is built.
 //
 // Inputs:
 //   - snapshot: validated MST snapshot.
@@ -281,7 +290,6 @@ func growPrimComponent(snapshot *mstSnapshot, root string, visited map[string]bo
 
 		visited[candidate.target] = true
 		result.Edges = append(result.Edges, candidate.edge)
-		result.TotalWeight += candidate.edge.Weight
 
 		enqueuePrimSnapshotFrontier(snapshot, candidate.target, visited, frontier)
 	}

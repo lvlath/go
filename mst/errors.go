@@ -58,3 +58,39 @@ var ErrNaNInfWeight = errors.New("mst: edge weight is NaN or Inf")
 // ErrNilResult indicates that a method requiring a non-nil Result receiver was called on nil.
 // Result helpers use this sentinel instead of panicking on nil receivers.
 var ErrNilResult = errors.New("mst: nil result")
+
+// ErrEmptyTerminals reports that a Steiner request provides no required vertices.
+// A singleton is valid; an absent terminal set is not interpreted as all vertices.
+var ErrEmptyTerminals = errors.New("mst: empty Steiner terminal set")
+
+// ErrDuplicateTerminal reports a repeated required vertex identifier.
+// Steiner admission preserves the duplicate instead of silently normalizing it away.
+var ErrDuplicateTerminal = errors.New("mst: duplicate Steiner terminal")
+
+// ErrDisconnectedTerminals reports that required vertices do not share one component.
+// Other disconnected components without terminals are permitted.
+var ErrDisconnectedTerminals = errors.New("mst: Steiner terminals are disconnected")
+
+// ErrNegativeWeight reports a finite negative weight outside the Steiner shortest-path domain.
+// Ordinary Prim/Kruskal continue to accept finite negative edge weights.
+var ErrNegativeWeight = errors.New("mst: negative edge weight in Steiner graph")
+
+// ErrInvalidWitness reports an original-edge path that disagrees with its shortest-path result.
+// The cause may be missing edge identity, invalid incidence, or inconsistent path cost.
+var ErrInvalidWitness = errors.New("mst: invalid Steiner original-edge witness")
+
+// ErrInvalidSteinerResult reports a structurally invalid terminal-covering network.
+// It does not assert optimality or verify historical provenance of a supplied tree.
+var ErrInvalidSteinerResult = errors.New("mst: invalid Steiner network result")
+
+// ErrWeightOverflow reports a non-finite float64 prefix while publishing a network cost.
+// It is distinct from graph connectivity and from dijkstra.ErrDistanceOverflow.
+var ErrWeightOverflow = errors.New("mst: weight sum overflow")
+
+// ErrResourceLimit reports that a positive explicit Steiner input-count cap was exceeded.
+// Logical caps do not limit process RSS or allocations inside core and dijkstra.
+var ErrResourceLimit = errors.New("mst: Steiner resource limit exceeded")
+
+// ErrSizeOverflow reports an unrepresentable integer or backing-store allocation size.
+// These checks remain active even when all explicit caller caps are unset.
+var ErrSizeOverflow = errors.New("mst: Steiner allocation size overflow")

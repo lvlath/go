@@ -1,119 +1,224 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2025-2026 katalvlaran
 
-// Package mst contains the Kruskal MST/MSF kernel.
-// Public wrappers live in api.go and delegate here through MinimumSpanningTree.
+// Package mst contains the shared Kruskal edge-selection kernel.
+// The public MST kernel publishes a total; Steiner reuses selection without an intermediate total.
 package mst
 
 import (
+	"context"
 	"sort"
 
 	"github.com/lvlath/go/core"
 )
 
-// kruskalKernel computes a minimum spanning tree or forest over a validated snapshot.
-//
+// lessMSTEdge compares finite MST candidates using their full deterministic ordering key.
+// Weight has priority, and original Edge.ID is the strict tie-break for equal weights.
 // Implementation:
-//   - Stage 1: Copy detached non-loop snapshot edges into local candidate storage.
-//   - Stage 2: Stable-sort candidates by ascending finite weight.
-//   - Stage 3: Use DSU to accept only edges joining different components.
-//   - Stage 4: Enforce strict tree connectivity or publish forest metadata.
+//   - Stage 1: Compare the finite weights without epsilon or negation.
+//   - Stage 2: Break equal-weight ties by unique edge identity.
 //
 // Behavior highlights:
-//   - Equal-weight candidates retain snapshot edge order, inherited from core.Edges().
-//   - Negative finite weights are valid.
-//   - Self-loops were removed by the adapter.
+//   - The same order is used by Prim's heap and Kruskal selection.
 //
 // Inputs:
-//   - snapshot: validated MST snapshot.
-//   - cfg: finalized option policy.
+//   - left, right: validated finite weighted core.Edge values.
 //
 // Returns:
-//   - *Result: canonical detached result.
-//   - error: ErrDisconnected in strict tree mode when not all vertices connect.
+//   - bool: true exactly when left precedes right in the order.
 //
 // Errors:
-//   - ErrDisconnected for disconnected strict tree mode.
+//   - None; numeric admission precedes this comparator.
 //
 // Determinism:
-//   - Candidate edge order is stable by Weight, then original core.Edges() order for ties.
-//   - ComponentRoots are deterministic lexicographic minima for Kruskal forests.
+//   - Lexicographic tuple (Weight, Edge.ID) with exact float64 comparisons.
 //
 // Complexity:
-//   - Time O(E log E + E·α(V)), Space O(E + V).
+//   - Time O(1), Space O(1).
+//
+// Notes:
+//   - This matches legacy Kruskal: core.Edges() was already sorted by ID before stable sorting by Weight.
 //
 // AI-Hints:
-//   - Do not replace stable sort with an unstable sort; equal-weight MST representatives would drift.
-func kruskalKernel(snapshot *mstSnapshot, cfg Options) (*Result, error) {
-	vertexCount := len(snapshot.vertices)
+//   - Do not introduce epsilon-based comparison; it breaks strict weak ordering.
+func lessMSTEdge(left, right core.Edge) bool {
+	if left.Weight != right.Weight {
+		return left.Weight < right.Weight
+	}
+	return left.ID < right.ID
+}
 
-	result := &Result{
-		Algorithm:   AlgorithmKruskal,
-		Mode:        cfg.Mode,
-		Edges:       make([]core.Edge, 0, maxMSTEdgeCapacity(vertexCount)),
-		VertexCount: vertexCount,
+// selectKruskalEdges selects an MST or MSF without calculating any scalar total.
+// Ordinary Kruskal, the terminal closure, and the original-edge union share one DSU/sort path.
+// Implementation:
+//   - Stage 1: Copy candidates and sort them by (Weight, Edge.ID).
+//   - Stage 2: Merge distinct components through the existing disjointSet.
+//   - Stage 3: Enforce strict connectivity and return canonical component roots.
+//
+// Behavior highlights:
+//   - Strict mode stops at |V|-1 accepted edges; forest mode consumes all candidates.
+//   - Valid finite negative weights are accepted here; Steiner enforces its stricter domain upstream.
+//   - Selected edges retain input identities and original weights.
+//
+// Inputs:
+//   - ctx: non-nil cancellation context; ordinary MST passes context.Background().
+//   - vertices: sorted, unique local vertex IDs, read-only.
+//   - candidates: validated undirected non-loop edges with endpoints in vertices.
+//   - mode: ModeStrictTree or ModeForest.
+//
+// Returns:
+//   - []core.Edge: detached selection in (Weight, Edge.ID) order.
+//   - []string: lexicographically sorted component minima, detached.
+//   - error: nil on success; no partial selection on error.
+//
+// Errors:
+//   - ErrDisconnected in strict mode with multiple components.
+//   - ErrInvalidOption for an unrecognized mode, ErrInvalidGraph for missing endpoints,
+//     or context cancellation unchanged.
+//
+// Determinism:
+//   - Full edge key (Weight, Edge.ID), DSU unions, and sorted component roots.
+//
+// Complexity:
+//   - Time O(M log M + M*alpha(V) + V log V), Space O(M+V) for M candidates.
+//
+// Notes:
+//   - No intermediate float64 TotalWeight is materialized; the caller owns publication policy.
+//
+// AI-Hints:
+//   - Do not call the public MST facade on terminal closure: its unnecessary total can overflow.
+//   - Do not duplicate union-find to optimize the Steiner union stage.
+func selectKruskalEdges(
+	ctx context.Context,
+	vertices []string,
+	candidates []core.Edge,
+	mode Mode,
+) ([]core.Edge, []string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	if mode != ModeStrictTree && mode != ModeForest {
+		return nil, nil, ErrInvalidOption
 	}
 
-	// Publish the trivial tree for a single-vertex graph without sorting or DSU allocation.
+	vertexCount := len(vertices)
 	if vertexCount == 1 {
-		result.ComponentCount = 1
-		result.ComponentRoots = []string{snapshot.vertices[0]}
-		return result, nil
+		// The ordinary Kruskal result historically publishes a non-nil empty
+		// edge slice for a singleton. Preserve that observable slice state.
+		return make([]core.Edge, 0), []string{vertices[0]}, nil
 	}
 
-	// Copy candidates before sorting so snapshot edge order remains reusable by other kernels/tests.
-	candidates := append([]core.Edge(nil), snapshot.edges...)
-	sort.SliceStable(candidates, func(i int, j int) bool {
-		return candidates[i].Weight < candidates[j].Weight
+	ordered := append([]core.Edge(nil), candidates...)
+	sort.Slice(ordered, func(i, j int) bool {
+		return lessMSTEdge(ordered[i], ordered[j])
 	})
 
-	// Initialize one DSU component per vertex.
-	set := newDisjointSet(snapshot.vertices)
+	set := newDisjointSet(vertices)
+	selected := make([]core.Edge, 0, maxMSTEdgeCapacity(vertexCount))
+	for _, edge := range ordered {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
 
-	for _, edge := range candidates {
-		// Accept only edges that join two previously separate components.
+		// The graph/closure adapter must declare every endpoint. Guard this
+		// invariant because the existing DSU does not create missing vertices.
+		if _, exists := set.parent[edge.From]; !exists {
+			return nil, nil, ErrInvalidGraph
+		}
+		if _, exists := set.parent[edge.To]; !exists {
+			return nil, nil, ErrInvalidGraph
+		}
 		if !set.union(edge.From, edge.To) {
 			continue
 		}
-
-		// Publish the detached edge value and accumulate its finite weight.
-		result.Edges = append(result.Edges, edge)
-		result.TotalWeight += edge.Weight
-
-		// Strict tree mode can stop as soon as |V|-1 accepted edges are present.
-		if cfg.Mode == ModeStrictTree && len(result.Edges) == vertexCount-1 {
+		selected = append(selected, edge)
+		if mode == ModeStrictTree && len(selected) == vertexCount-1 {
 			break
 		}
 	}
 
-	// Compute deterministic component metadata after all accepted unions.
-	result.ComponentRoots = set.componentRoots(snapshot.vertices)
-	result.ComponentCount = len(result.ComponentRoots)
-
-	// Strict tree mode requires one connected component and exactly |V|-1 accepted edges.
-	if cfg.Mode == ModeStrictTree && len(result.Edges) != vertexCount-1 {
-		return nil, ErrDisconnected
+	// Determine connectivity before the caller attempts to publish a numeric sum.
+	if mode == ModeStrictTree && len(selected) != vertexCount-1 {
+		return nil, nil, ErrDisconnected
 	}
-
-	return result, nil
+	roots := set.componentRoots(vertices)
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	return selected, roots, nil
 }
 
-// maxMSTEdgeCapacity returns the maximum number of edges in a spanning tree over vertexCount vertices.
-// It centralizes the |V|-1 capacity rule and avoids negative capacities for empty or single-vertex graphs.
-//
+// kruskalKernel computes the ordinary minimum spanning tree or forest over a validated snapshot.
+// It consumes the shared selection but preserves the existing Result type and numeric fold order.
 // Implementation:
-//   - Stage 1: Return 0 for vertexCount <= 1.
-//   - Stage 2: Return vertexCount-1 for all larger graphs.
+//   - Stage 1: Select edges and determine structural connectivity without aggregating cost.
+//   - Stage 2: Compute the checked public total in accepted-edge order.
+//   - Stage 3: Publish the Result and component metadata only if both stages succeed.
 //
 // Behavior highlights:
-//   - Used only for slice preallocation.
-//   - Does not validate graph connectivity.
+//   - Disconnected strict graphs return ErrDisconnected before any new arithmetic error.
+//   - Finite negative weights, forest, isolates and historical edge selection are preserved.
 //
 // Inputs:
-//   - vertexCount: number of vertices in a validated snapshot.
+//   - snapshot: detached, validated graph snapshot.
+//   - cfg: finalized old MST policy; no caller callbacks are executed here.
 //
 // Returns:
-//   - int: safe edge-slice capacity.
+//   - *Result: the usual MST/MSF result, or nil on any failure.
+//
+// Errors:
+//   - ErrDisconnected from selection; ErrWeightOverflow from total publication.
+//
+// Determinism:
+//   - The same (Weight, Edge.ID) accepted-edge order as previous stable Kruskal.
+//
+// Complexity:
+//   - Time O(E log E + E*alpha(V) + V log V), Space O(E+V).
+//
+// Notes:
+//   - This is the sole ordinary Kruskal kernel and shares no numeric policy with closure selection.
+//
+// AI-Hints:
+//   - Keep structural checks before checked weight publication and preserve negative MST weights.
+func kruskalKernel(snapshot *mstSnapshot, cfg Options) (*Result, error) {
+	edges, roots, err := selectKruskalEdges(
+		context.Background(), snapshot.vertices, snapshot.edges, cfg.Mode,
+	)
+	if err != nil {
+		return nil, err
+	}
+	total, err := checkedMSTEdgeTotal(edges)
+	if err != nil {
+		return nil, err
+	}
+	return &Result{
+		Algorithm:      AlgorithmKruskal,
+		Mode:           cfg.Mode,
+		Edges:          edges,
+		TotalWeight:    total,
+		VertexCount:    len(snapshot.vertices),
+		ComponentCount: len(roots),
+		ComponentRoots: roots,
+	}, nil
+}
+
+// maxMSTEdgeCapacity returns the maximum number of tree edges for vertexCount vertices.
+// It protects slice capacity calculations for empty or singleton vertex sets.
+// Implementation:
+//   - Stage 1: Return zero for vertexCount at most one.
+//   - Stage 2: Return vertexCount-1 otherwise.
+//
+// Behavior highlights:
+//   - It does not validate graph connectivity.
+//
+// Inputs:
+//   - vertexCount: count of local vertices, nonnegative.
+//
+// Returns:
+//   - int: nonnegative safe upper bound on accepted tree edges.
+//
+// Errors:
+//   - None.
 //
 // Determinism:
 //   - Pure arithmetic.
@@ -121,8 +226,11 @@ func kruskalKernel(snapshot *mstSnapshot, cfg Options) (*Result, error) {
 // Complexity:
 //   - Time O(1), Space O(1).
 //
+// Notes:
+//   - A spanning forest also has at most V-1 edges for nonempty V.
+//
 // AI-Hints:
-//   - Do not use vertexCount-1 directly in make capacity without guarding vertexCount <= 1.
+//   - Guard V-1 when V may be zero; never make a negative slice capacity.
 func maxMSTEdgeCapacity(vertexCount int) int {
 	if vertexCount <= 1 {
 		return 0
