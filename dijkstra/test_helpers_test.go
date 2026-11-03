@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/lvlath/go/core"
+	"github.com/lvlath/go/dijkstra"
 )
 
 // AI-HINTS (file):
@@ -487,4 +488,58 @@ func mustPanicFree(t *testing.T, fn func()) {
 	}()
 
 	fn()
+}
+
+// mustBalancedError checks canonical errors.Is identity without matching messages.
+// No partially constructed PathResult may accompany a rejected search call.
+func mustBalancedError(t *testing.T, result *dijkstra.PathResult, err, want error) {
+	t.Helper()
+	if result != nil || !errors.Is(err, want) {
+		t.Fatalf("result=%+v, err=%v; want nil result and errors.Is(%v)", result, err, want)
+	}
+}
+
+// mustBalancedWitness checks original EdgeIDs, directedness and exact original cost.
+// This independent postcondition prevents a reduced key from escaping as Distance.
+func mustBalancedWitness(t *testing.T, graph *core.Graph, result *dijkstra.PathResult) {
+	t.Helper()
+	if result == nil {
+		t.Fatal("nil result")
+	}
+	if !result.Reachable {
+		if !math.IsInf(result.Distance, 1) || result.Vertices != nil || result.EdgeIDs != nil {
+			t.Fatalf("invalid unreachable publication: %+v", result)
+		}
+		return
+	}
+	if len(result.Vertices) == 0 || len(result.Vertices) != len(result.EdgeIDs)+1 ||
+		result.Vertices[0] != result.SourceID || result.Vertices[len(result.Vertices)-1] != result.TargetID {
+		t.Fatalf("invalid witness shape: %+v", result)
+	}
+	seen := make(map[string]bool, len(result.Vertices))
+	for _, id := range result.Vertices {
+		if seen[id] {
+			t.Fatalf("repeated original vertex in witness: %+v", result)
+		}
+		seen[id] = true
+	}
+	cost := float64(0)
+	for i, id := range result.EdgeIDs {
+		edge, err := graph.GetEdge(id)
+		if err != nil {
+			t.Fatalf("EdgeID=%q missing from original graph: %v", id, err)
+		}
+		from, to := result.Vertices[i], result.Vertices[i+1]
+		if !(edge.From == from && edge.To == to) && (edge.Directed || edge.From != to || edge.To != from) {
+			t.Fatalf("invalid original orientation edge_id=%q between %q and %q", id, from, to)
+		}
+		cost += edge.Weight
+	}
+	if cost != result.Distance {
+		t.Fatalf("original edges cost %g differs from published Distance %g", cost, result.Distance)
+	}
+	vertices, edgeIDs, err := result.Path()
+	if err != nil || len(vertices) != len(result.Vertices) || len(edgeIDs) != len(result.EdgeIDs) {
+		t.Fatalf("Path did not reproduce validated witness: vertices=%v edges=%v err=%v", vertices, edgeIDs, err)
+	}
 }

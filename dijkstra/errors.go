@@ -161,4 +161,54 @@ var (
 	//   - Result implements core.Nilable, but methods must still remain safe on nil receivers.
 	//   - Do not replace this with a panic or with ErrTargetNotFound.
 	ErrNilResult = errors.New("dijkstra: result is nil")
+
+	// ErrInvalidSearchMethod reports a target method without an implemented kernel.
+	// The assembler rejects unsupported values rather than selecting another algorithm.
+	// AI-Hints:
+	//   - Public enum values must not outrun production implementations.
+	ErrInvalidSearchMethod = errors.New("dijkstra: unsupported search method")
+
+	// ErrNilContext reports an explicitly nil target-search cancellation context.
+	// The caller must supply a valid context or use the background default.
+	// AI-Hints:
+	//   - Do not silently replace an explicitly nil context with Background.
+	ErrNilContext = errors.New("dijkstra: context is nil")
+
+	// ErrInexactArithmetic reports an admitted original-cost sum that cannot be
+	// represented exactly as a finite binary64 state under the target-search policy.
+	// AI-Hints:
+	//   - This is not an invalid graph edge or an unreachable target.
+	//   - Do not silence it with rounding or a final-summation correction.
+	ErrInexactArithmetic = errors.New("dijkstra: inexact target-search arithmetic")
+
+	// ErrInvalidSearchOptions reports a callback supplied to an algorithm that
+	// cannot consume it. The finalized method never silently discards heuristics.
+	// AI-Hints:
+	//   - Do not silently ignore ToTarget when SearchDijkstra is selected.
+	ErrInvalidSearchOptions = errors.New("dijkstra: search options do not match selected method")
+
+	// ErrNilHeuristic reports an explicitly nil callback or a missing A* estimate.
+	// Explicit nil setters fail during option application; missing A* state fails
+	// during final method-specific completeness validation.
+	// AI-Hints:
+	//   - A nil callback must not select an implicit zero-heuristic fallback.
+	ErrNilHeuristic = errors.New("dijkstra: target heuristic is nil")
+
+	// ErrInvalidHeuristic reports a NaN, infinity, or nonzero terminal estimate.
+	// Values are checked after evaluating each vertex exactly once in lexical order.
+	// AI-Hints:
+	//   - Negative finite values alone are not invalid; consistency decides validity.
+	ErrInvalidHeuristic = errors.New("dijkstra: invalid target heuristic value")
+
+	// ErrInconsistentHeuristic reports a violation of h(u)<=w(u,v)+h(v)
+	// on one admitted original oriented arc, checked without epsilon rounding.
+	// AI-Hints:
+	//   - Inconsistent admissible heuristics need reopening and are not supported.
+	ErrInconsistentHeuristic = errors.New("dijkstra: inconsistent target heuristic")
+
+	// ErrSearchKeyOverflow reports overflow of an A* offset or heap priority.
+	// Original path-distance overflow keeps the separate ErrDistanceOverflow identity.
+	// AI-Hints:
+	//   - Never convert an overflowing signed key to +Inf in a heap comparator.
+	ErrSearchKeyOverflow = errors.New("dijkstra: search priority or offset overflow")
 )

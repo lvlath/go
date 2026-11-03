@@ -1,0 +1,117 @@
+# lvlath/go
+
+> lvlath/go is a deterministic, contract-driven, pure-Go library for graph modeling, traversal, shortest paths, spanning trees, network flow, routing, dense matrix computation, combinatorial optimization, grid construction, reproducible fixtures, and time-series alignment.
+
+
+Maintained repository: `github.com/lvlath/go`.
+Use `go get github.com/lvlath/go`; read `go.mod` for the required Go version.
+The maintained implementation requires Go 1.23.4 or newer and is licensed under `AGPL-3.0-only`.
+
+Canonical Go module: `github.com/lvlath/go`
+
+Install with:
+
+```bash
+go get github.com/lvlath/go@latest
+```
+
+
+## Start here
+
+- [Repository README](https://github.com/lvlath/go/blob/main/README.md): Overview and working entry points.
+- [Go module](https://raw.githubusercontent.com/lvlath/go/main/go.mod): Module path and Go requirement.
+- [Tutorial](https://raw.githubusercontent.com/lvlath/go/main/docs/TUTORIAL.md): Package selection and composition.
+- [Go reference](https://pkg.go.dev/github.com/lvlath/go): Published API documentation; check the selected version.
+
+## Important usage rules:
+
+- Treat package documentation and the current `pkg.go.dev` API as authoritative. Do not invent exported functions, options, fields, or result methods.
+- Build graph topology with `core.Graph`; use algorithm packages for computation and `matrix` for dense numeric artifacts.
+- Deterministic ordering and tie-breaking are observable API behavior where documented.
+- Public sentinel errors are checked with `errors.Is`; never match error strings.
+- Non-trivial algorithms return inspectable evidence such as paths, predecessor maps, cycle witnesses, trees, cuts, residual graphs, tours, alignments, or matrices.
+- Numeric meanings are package-specific. Do not treat `0`, `+Inf`, `NaN`, a missing edge, an unreachable state, and an untracked witness as interchangeable.
+- Preserve caller ownership and aliasing rules documented by each package. Do not mutate returned or retained values unless the API explicitly permits it.
+- Prefer explicit options over inferred policy. Never silently substitute a weaker algorithm, memory mode, matching policy, topology interpretation, or numeric encoding.
+
+## Package-selection guide:
+
+- Use `core` for deterministic, thread-safe graph topology and explicit directed/weighted/loop/multi-edge/mixed-edge capabilities.
+- Use `builder` for deterministic fixtures and reproducible graph construction.
+- Use `bfs` for unweighted shortest-hop traversal, paths, layers, and weak components.
+- Use `dfs` for depth-first forests, finish order, cycle witnesses, and topological sorting.
+- Use `dijkstra` for non-negative weighted single-source shortest paths.
+- Use `mst` for minimum spanning trees or explicitly requested spanning forests.
+- Use `flow` for max-flow/min-cut computation and residual-network evidence.
+- Use `gridgraph` to generate lattice graphs for routing and traversal workloads.
+- Use `matrix` for dense matrices, graph adapters, metric closure, algebra, statistics, and factorization workflows.
+- Use `tsp` for exact, approximate, heuristic, and local-search tour construction under documented assumptions.
+- Use `dtw` for deterministic scalar, multivariate, or cost-matrix dynamic time warping.
+
+## Critical semantic boundaries:
+
+- `bfs`: discovery/visited state is not the same as processing order.
+- `dfs`: discovery order is not finish order and is not automatically a topological order.
+- `dijkstra`: unknown target, known unreachable target, disabled path tracking, and missing path evidence are distinct states.
+- `mst`: a disconnected graph has no single spanning tree; forest behavior must be requested explicitly.
+- `flow`: a scalar maximum-flow value is incomplete when the caller needs residual or cut evidence.
+- `matrix`: classic adjacency may use `0` for absence; zero-preserving weighted adjacency uses finite `0` for a real zero-weight edge and `+Inf` for absence. All-zero weighted graphs require explicit zero-weight preservation.
+- `matrix`: metric closure stores derived all-pairs distances and must not be exported as if those distances were literal graph edges.
+- `tsp`: exactness, metric assumptions, matching policy, time limits, and incumbent optimality are explicit contracts.
+- `dtw`: alignment cost and recovered alignment path are different result products; path recovery depends on memory policy.
+
+## Canonical project resources:
+
+- [Repository](https://github.com/lvlath/go): Source code, tests, benchmarks, examples, releases, contribution workflow, and issue tracker.
+- [Go Reference](https://pkg.go.dev/github.com/lvlath/go): Current public package APIs and GoDoc.
+- [Organization profile](https://github.com/lvlath): Project principles, maintained implementations, and contribution entry points.
+- [Repository README](https://github.com/lvlath/go/blob/main/README.md): Package map, project laws, installation, and navigation.
+- [Tutorial](https://github.com/lvlath/go/blob/main/docs/TUTORIAL.md): Cross-package introduction and composition guidance.
+- [Engineering standard](https://github.com/lvlath/go/blob/main/docs/lvlath_UES.md): Repository-wide quality, documentation, testing, and API expectations.
+- [Contributing](https://github.com/lvlath/go/blob/main/CONTRIBUTING.md): Required workflow and quality gates for changes.
+- [Security policy](https://github.com/lvlath/go/security/policy): Private vulnerability-reporting process.
+
+## Package documentation:
+
+- [core](https://pkg.go.dev/github.com/lvlath/go/core): Deterministic graph topology, capabilities, identity, ownership, and concurrency rules.
+- [builder](https://pkg.go.dev/github.com/lvlath/go/builder): Deterministic graph builders and reproducible fixtures.
+- [bfs](https://pkg.go.dev/github.com/lvlath/go/bfs): Breadth-first traversal, shortest-hop paths, layers, components, filters, hooks, and partial results.
+- [dfs](https://pkg.go.dev/github.com/lvlath/go/dfs): Depth-first traversal, finish order, cycle witnesses, and topological sorting.
+- [dijkstra](https://pkg.go.dev/github.com/lvlath/go/dijkstra): Non-negative weighted shortest paths, path witnesses, cutoffs, and unreachable-state publication.
+- [mst](https://pkg.go.dev/github.com/lvlath/go/mst): Prim/Kruskal minimum spanning trees and explicit forest behavior.
+- [flow](https://pkg.go.dev/github.com/lvlath/go/flow): Ford-Fulkerson, Edmonds-Karp, Dinic, residual graphs, and cut evidence.
+- [gridgraph](https://pkg.go.dev/github.com/lvlath/go/gridgraph): Deterministic two-dimensional lattice graph generation.
+- [matrix](https://pkg.go.dev/github.com/lvlath/go/matrix): Dense matrices, graph adapters, zero-weight policy, metric closure, algebra, statistics, and factorizations.
+- [tsp](https://pkg.go.dev/github.com/lvlath/go/tsp): Exact, approximate, heuristic, and local-search tours with explicit assumptions and stopping policy.
+- [dtw](https://pkg.go.dev/github.com/lvlath/go/dtw): Dynamic time warping, windows, slope penalties, memory modes, costs, and optional path recovery.
+
+## Detailed guides:
+
+- [Core guide](https://github.com/lvlath/go/blob/main/docs/CORE.md): Graph contracts, topology, identity, ownership, concurrency, and operational examples.
+- [BFS guide](https://github.com/lvlath/go/blob/main/docs/BFS.md): Queue semantics, discovery versus processing, paths, components, and pitfalls.
+- [DFS guide](https://github.com/lvlath/go/blob/main/docs/DFS.md): Discovery/finish semantics, cycles, DAG validation, and topological ordering.
+- [Dijkstra guide](https://github.com/lvlath/go/blob/main/docs/DIJKSTRA.md): Input domain, unreachable states, witnesses, policy, and complexity.
+- [MST guide](https://github.com/lvlath/go/blob/main/docs/MST.md): Prim/Kruskal, strict tree versus forest behavior, and disconnected inputs.
+- [Flow guide](https://github.com/lvlath/go/blob/main/docs/FLOW.md): Augmenting paths, residual networks, cuts, and algorithm selection.
+- [Matrix guide](https://github.com/lvlath/go/blob/main/docs/MATRICES.md): Dense storage, numeric policy, zero-weight preservation, graph adapters, APSP, statistics, and factorizations.
+- [TSP guide](https://github.com/lvlath/go/blob/main/docs/TSP.md): Exactness, approximation assumptions, local search, limits, and result interpretation.
+- [DTW guide](https://github.com/lvlath/go/blob/main/docs/DTW.md): Alignment cost, path recovery, windows, penalties, and memory modes.
+- [Grid graph guide](https://github.com/lvlath/go/blob/main/docs/GRID_GRAPH.md): Lattice construction, connectivity, obstacles, and routing scenarios.
+
+## Numerical representations and alignment:
+
+- [Matrix contract](https://raw.githubusercontent.com/lvlath/go/main/matrix/doc.go): Dense storage, numeric policies and graph representations.
+- [Matrix API](https://raw.githubusercontent.com/lvlath/go/main/matrix/api.go): Implemented constructors and operations.
+- [DTW](https://raw.githubusercontent.com/lvlath/go/main/dtw/doc.go): Sequence alignment, cost models, windows and memory policies.
+
+## Examples and verification:
+
+- [Runnable examples](https://github.com/lvlath/go/tree/main/examples): Cross-package executable scenarios using the implemented public API.
+- [Package tests](https://github.com/lvlath/go): Validation, medium, edge, adversarial, deterministic, and concurrency tests live beside each package.
+- [GitHub Actions](https://github.com/lvlath/go/actions): Continuous integration status and workflow history.
+- [Codecov](https://codecov.io/github/lvlath/go): Repository coverage reporting.
+
+## Optional:
+
+- [Issues](https://github.com/lvlath/go/issues): Reproducible defects, API proposals, and planned work.
+- [License](https://github.com/lvlath/go/blob/main/LICENSE): Full AGPL-3.0-only terms.

@@ -59,7 +59,7 @@ The library covers:
 * `core` graph modeling with deterministic topology and explicit capabilities;
 * `bfs` hop-distance traversal and weak components;
 * `dfs` finish-order traversal, cycle witnesses, and topological sorting;
-* `dijkstra` finite non-negative single-source shortest paths, deterministic witnesses, `+Inf` unreachable results, and explicit cutoff/wall policies;
+* `dijkstra` weighted full-SSSP and four target-search methods (Dijkstra, bidirectional Dijkstra, consistent A*, balanced A*), original EdgeIDs, and exact target-cutoff policy;
 * `mst` strict minimum spanning trees and explicit minimum spanning forests;
 * `flow` max-flow / residual-network analysis;
 * `matrix` dense graph algebra: adjacency, incidence, metric closure, statistics, factorization, sanitation;
@@ -74,7 +74,8 @@ Mathematical object        Package surface             Contract idea
 G = (V,E)                  *core.Graph                 deterministic topology
 hop layers                 *bfs.Result                 depth / parent / visited
 DFS forest                 *dfs.Result                 finish order, not discovery
-weighted route             *dijkstra.Result            finite cost / +Inf unreachable / witness
+weighted SSSP              *dijkstra.Result            all known distances / optional predecessor
+weighted target            *dijkstra.PathResult        finite cost / +Inf / original EdgeIDs
 spanning backbone          *mst.Result                 strict tree or explicit forest
 flow network               residual *core.Graph        capacity state after flow
 dense operator             *matrix.Dense               row-major numeric artifact
@@ -136,7 +137,7 @@ Read these files as a learning path. `doc.go` files define implemented package c
 | 1    | [`CORE.md`](CORE.md)                       | Graph capabilities, deterministic topology, ownership, locks, graph invariants.                                            |
 | 2    | [`BFS.md`](BFS.md)                         | Hop-distance traversal, `Result`, components, filters, partial-result behavior.                                            |
 | 3    | [`DFS.md`](DFS.md)                         | Finish order, DFS forest, deterministic cycle witnesses, topological sort.                                                 |
-| 4    | [`DIJKSTRA.md`](DIJKSTRA.md)               | Finite non-negative weighted routing, strict improvement, `+Inf` result semantics, overflow, path tracking, walls/cutoffs. |
+| 4    | [`DIJKSTRA.md`](DIJKSTRA.md)               | Full SSSP vs target Dijkstra/A*, consistent/balanced potentials, original EdgeIDs, exact cutoff, walls and error contracts. |
 | 5    | [`MST.md`](MST.md)                         | Strict MST vs explicit MSF, Kruskal, Prim, finite-weight law, MST `Result`.                                                |
 | 6    | [`FLOW.md`](FLOW.md)                       | Capacity networks, residual graph state, Ford-Fulkerson, Edmonds-Karp, Dinic.                                              |
 | 7    | [`MATRICES.md`](MATRICES.md)               | Dense storage, graph adapters, zero-weight policy, metric closure, statistics, numeric sanitation.                         |
@@ -171,7 +172,7 @@ Contributing:
 go get github.com/lvlath/go@latest
 ```
 
-Requires Go 1.23 or newer. Pure Go. No cgo. No external runtime dependencies.
+Requires Go 1.23.4 or newer. Pure Go. No cgo. No external runtime dependencies.
 
 ---
 
@@ -489,24 +490,28 @@ Good questions:
 * “Where is a deterministic cycle witness?”
 * “What is the post-order structure of this graph?”
 
-### Dijkstra: non-negative weighted routing
+### Dijkstra and consistent A*: non-negative weighted routing
 
-Use Dijkstra when edge weights are costs.
+Use the **full SSSP** method when one source needs distances to many destinations, and a **target method** when only one original-cost route is required.
 
 ```text
-Objective:
-  minimize sum of non-negative edge weights
-
-Relaxation:
-  candidate = dist[u] + weight(u,v)
-  update only on strict improvement
+Full Dijkstra:     Dijkstra(...)         -> Result, all known distances
+One target:        Search(...)           -> PathResult, original EdgeIDs
+Two frontiers:     Bidirectional(...)    -> certified meeting and lower bound
+Consistent A*:    AStar(...)            -> frozen target estimates, no reopening
+Balanced A*:      BidirectionalAStar(...) -> two frozen directional estimates
 ```
+
+All target methods operate on one `core.Clone`, retain original edge identities and have stricter exact-binary64 cost/key requirements than the legacy SSSP runner. A target result contains one complete witness, **not** a map of finalized distances.
 
 Good questions:
 
-* “What is the cheapest route from ingress to storage?”
-* “Which target is known but unreachable under a wall policy?”
-* “What route witness produced this cost?”
+* “What are the shortest costs from ingress to every service?” — full `Dijkstra`.
+* “What single route uses these particular original multigraph links?” — `Search` / `Bidirectional`.
+* “Can my grid Manhattan estimate legally accelerate settlement?” — consistent `AStar`.
+* “Do I have reliable, directionally consistent estimates from both endpoints?” — balanced `BidirectionalAStar`.
+
+Run the [three standalone shortest-path scenarios](DIJKSTRA.md#59-compilable-scenarios-and-their-runner-tests) to compare public APIs and exact witness semantics.
 
 ### MST: cheapest acyclic backbone
 
@@ -879,7 +884,8 @@ Do not use it as:
 | DFS forest / finish order              | `dfs`                    | DFS `Result` with finish-order semantics.                                               |
 | Cycle witness                          | `dfs`                    | deterministic witness, not exhaustive enumeration.                                      |
 | Topological execution order            | `dfs`                    | DAG order or cycle error.                                                               |
-| Weighted route from one source         | `dijkstra`               | finite distances, `+Inf` for known unreachable vertices, optional deterministic witness |
+| Weighted route from one source         | `dijkstra.Dijkstra`      | all known distances, `+Inf` unreachable, optional predecessor tracking                |
+| One weighted target / consistent A*    | `dijkstra.Search` family | one original-cost `PathResult` and ordered original `EdgeIDs`                         |
 | Runtime weighted walls/cutoffs         | `dijkstra`               | `+Inf` publication without mutating topology.                                           |
 | Strict connected backbone              | `mst`                    | MST `Result` in strict tree mode.                                                       |
 | Component-wise backbones               | `mst` with forest policy | explicit minimum spanning forest.                                                       |
@@ -1007,23 +1013,23 @@ Sparse graph traversal, dense matrix kernels, flow residual pressure, DTW full-m
 Use this tutorial as the entry point, then move into package-specific material:
 
 > If you are modeling topology first:
-> 
+>
 >    [`CORE.md`](CORE.md) -> [`BFS.md`](BFS.md) -> [`DFS.md`](DFS.md) -> [`DIJKSTRA.md`](DIJKSTRA.md)
 
 > If you are doing routing/optimization:
-> 
+>
 >   [`DIJKSTRA.md`](DIJKSTRA.md) -> [`MST.md`](MST.md) -> [`FLOW.md`](FLOW.md) -> [`TSP.md`](TSP.md)
 
 > If you are doing numeric graph analytics:
-> 
+>
 >   [`CORE.md`](CORE.md) -> [`MATRICES.md`](MATRICES.md) -> examples/matrix_*.go
 
 > If you are doing sequence comparison:
-> 
+>
 >   [`DTW.md`](DTW.md) -> matrix sanitation/statistics sections
 
 > If you are contributing:
-> 
+>
 >   [`lvlath_UES.md`](lvlath_UES.md) -> [`CONTRIBUTING.md`](../CONTRIBUTING.md) -> package doc.go -> tests/examples
 
 ---

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2025-2026 katalvlaran
 
+// Package dijkstra defines shortest-path result and method types.
+// This file owns the stable SSSP and target-search public result contracts.
 package dijkstra
 
 import (
@@ -8,6 +10,191 @@ import (
 
 	"github.com/lvlath/go/core"
 )
+
+// SearchMethod identifies a supported target-directed shortest-path kernel.
+// Only functioning kernels are assigned public enum values.
+// Implementation:
+//   - Stage 1: Select a supported method explicitly through SearchOptions.
+//   - Stage 2: Dispatch to the actual kernel after input preparation.
+//   - Stage 3: Preserve the executed method in the published PathResult.
+//
+// Behavior highlights:
+//   - SearchDijkstra, SearchBidirectional, SearchAStar and SearchBidirectionalAStar have working kernels.
+//
+// Inputs:
+//   - SearchMethod: enum value, never a hidden solver fallback.
+//
+// Returns:
+//   - SearchMethod: a stable identifier of the executed target algorithm.
+//
+// Errors:
+//   - ErrInvalidSearchMethod is returned for an unsupported value.
+//
+// Determinism:
+//   - The method does not change due to heuristic or numeric observations.
+//
+// Complexity:
+//   - Time O(1), Space O(1) as a uint8 value.
+//
+// Notes:
+//   - Additional values are introduced only alongside their functioning kernels.
+//
+// AI-Hints:
+//   - Never assign enum values to algorithms without a working implementation.
+type SearchMethod uint8
+
+const (
+	// SearchDijkstra selects settled-target Dijkstra with original edge witnesses.
+	SearchDijkstra SearchMethod = iota
+
+	// SearchBidirectional selects two-frontier Dijkstra with a certified stopping bound.
+	SearchBidirectional
+
+	// SearchAStar selects consistent-heuristic single-frontier A*.
+	SearchAStar
+
+	// SearchBidirectionalAStar selects balanced-potential bidirectional A*.
+	SearchBidirectionalAStar
+)
+
+// Heuristic estimates the original cost remaining from a vertex to the target.
+// A consistent potential supplies an exact lower bound for settled-target A*.
+// Implementation:
+//   - Stage 1: Receive a stable original vertex ID from the prepared graph.
+//   - Stage 2: Return one finite cost-unit estimate or a preserved callback error.
+//   - Stage 3: Let the caller freeze and validate all estimates before traversal.
+//
+// Behavior highlights:
+//   - h(target)=0 and h(u)<=weight(u,v)+h(v) are mandatory for every effective arc.
+//   - Negative finite values are allowed when the inequalities hold.
+//
+// Inputs:
+//   - vertexID: original lexical vertex identity; no Graph pointer is exposed.
+//
+// Returns:
+//   - float64: finite lower-bound estimate in original edge-weight units.
+//   - error: optional caller error, preserved by the search facade.
+//
+// Errors:
+//   - Callback errors retain their causes; invalid values use ErrInvalidHeuristic.
+//
+// Determinism:
+//   - Each vertex is evaluated exactly once in prepared lexical ID order.
+//
+// Complexity:
+//   - Callback cost H is caller-defined; total preparation is O(V*H+A).
+//
+// Notes:
+//   - Callbacks run synchronously and must be safe for the caller's own state.
+//
+// AI-Hints:
+//   - Do not assume an arbitrary admissible-only heuristic works without reopening.
+//   - Do not return squared Euclidean distance unless it is a valid lower bound
+//     in the same units as every admitted edge weight.
+//   - Do not mutate the graph topology from a heuristic callback.
+type Heuristic func(vertexID string) (float64, error)
+
+// PathResult holds one target-directed route and the policy used to obtain it.
+// Unlike Result, it does not claim that all vertex labels are finalized SSSP distances.
+// Implementation:
+//   - Stage 1: Record source, target, method and original-cost traversal policies.
+//   - Stage 2: Store either one fully verified original-edge-ID witness or unreachable.
+//   - Stage 3: Expose nil-safe, copying Clone and Path helpers.
+//
+// Behavior highlights:
+//   - Reachable: finite Distance, Vertices[0]=SourceID, final vertex=TargetID,
+//     len(EdgeIDs)+1=len(Vertices), with every ID belonging to the verified witness.
+//   - Known unreachable: Distance=+Inf, Reachable=false, Vertices=nil, EdgeIDs=nil.
+//   - Empty EdgeIDs is valid for the zero-length source==target witness.
+//
+// Inputs:
+//   - SourceID, TargetID: requested original vertex IDs.
+//   - Distance: final original-cost path length, not a reduced priority.
+//   - Reachable: true only when Vertices/EdgeIDs hold a complete witness.
+//   - Method: the actual executed SearchMethod.
+//   - MaxDistance, InfEdgeThreshold: validated original-cost traversal policies.
+//   - Vertices, EdgeIDs: independently allocated caller-owned ordered slices.
+//
+// Returns:
+//   - PathResult: a detached public contract value, queryable via Path and Clone.
+//
+// Errors:
+//   - No errors from the type; Path returns ErrNilResult/ErrNoPath on invalid state.
+//
+// Determinism:
+//   - The witness follows the producing kernel's strict heap/arc ordering.
+//
+// Complexity:
+//   - Storage O(k) for the selected witness, k its number of vertices and edges.
+//
+// Notes:
+//   - Caller mutation after return can invalidate witness provenance/optimality.
+//   - The result retains no source Graph, context, heuristic callback or workspace.
+//
+// AI-Hints:
+//   - Never publish tentative labels of unvisited vertices as completed SSSP.
+//   - Do not infer the selected parallel edge solely from adjacent vertex IDs.
+type PathResult struct {
+	// SourceID is the requested original source vertex identifier.
+	SourceID string
+
+	// TargetID is the requested original target vertex identifier.
+	TargetID string
+
+	// Distance is the certified original-cost distance, or +Inf if unreachable.
+	Distance float64
+
+	// Reachable indicates whether Vertices and EdgeIDs contain a complete witness.
+	Reachable bool
+
+	// Method records the concrete algorithm used to obtain this witness.
+	Method SearchMethod
+
+	// MaxDistance records the inclusive original-cost cutoff used for this search.
+	MaxDistance float64
+
+	// InfEdgeThreshold records the finite-edge wall policy used for this search.
+	InfEdgeThreshold float64
+
+	// Vertices holds caller-owned source-to-target vertex IDs when reachable.
+	Vertices []string
+
+	// EdgeIDs holds caller-owned original edge identities for each vertex transition.
+	EdgeIDs []string
+}
+
+// IsNil reports whether the target result pointer itself is nil.
+// It implements the package's established core.Nilable convention safely.
+// Implementation:
+//   - Stage 1: Compare the receiver pointer with nil.
+//
+// Behavior highlights:
+//   - A non-nil but manually damaged result is not classified as nil.
+//
+// Inputs:
+//   - None; receiver may be nil.
+//
+// Returns:
+//   - bool: true only for a nil receiver.
+//
+// Errors:
+//   - None.
+//
+// Determinism:
+//   - Exact pointer nil test.
+//
+// Complexity:
+//   - Time O(1), Space O(1).
+//
+// Notes:
+//   - Other methods independently validate public result fields.
+//
+// AI-Hints:
+//   - Do not conflate nil result and unreachable target.
+func (r *PathResult) IsNil() bool { return r == nil }
+
+// Verify that the target result follows the package's established nilability convention.
+var _ core.Nilable = (*PathResult)(nil)
 
 // Result stores the detached, queryable outcome of a single-source
 // shortest-path run over a weighted graph.

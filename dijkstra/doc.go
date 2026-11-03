@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2025-2026 katalvlaran
 
-// Package dijkstra implements deterministic single-source shortest paths over
-// weighted core.Graph instances using Dijkstra's algorithm.
+// Package dijkstra implements deterministic non-negative weighted shortest paths.
+// It offers full single-source Dijkstra and a family of target-directed Dijkstra/A* methods.
 //
 // -----------------------------------------------------------------------------
 // -- WHAT ---------------------------------------------------------------------
 //
-// dijkstra provides one canonical public shortest-path facade plus convenience
-// wrappers over the same result contract:
+// dijkstra provides two deliberately distinct result domains:
+// full single-source Dijkstra and certified source-to-target route queries.
+// The single-source family includes:
 //
 //   - Dijkstra(g, sourceID, opts...)
 //     Runs deterministic single-source shortest paths and returns a detached
@@ -24,11 +25,36 @@
 //     Convenience wrapper that runs Dijkstra with path tracking enabled and
 //     returns one deterministic shortest-path witness plus its distance.
 //
-// Result is the public result artifact. It exposes:
+// The target-directed family shares one Search facade and three wrappers:
+//
+//   - Search(g, sourceID, targetID, opts...)
+//     Runs a selected, implemented SearchMethod and returns a detached PathResult.
+//
+//   - Bidirectional(g, sourceID, targetID, opts...)
+//     Runs two-frontier Dijkstra with an exact stopping certificate.
+//
+//   - AStar(g, sourceID, targetID, toTarget, opts...)
+//     Runs consistent-heuristic A* using the canonical forward label-setting loop.
+//
+//   - BidirectionalAStar(g, sourceID, targetID, toTarget, fromSource, opts...)
+//     Runs balanced-potential A* using the canonical bidirectional engine.
+//
+// SearchMethod selects exactly one implemented kernel: SearchDijkstra,
+// SearchBidirectional, SearchAStar, or SearchBidirectionalAStar.
+// SearchOptions is intentionally separate from legacy Options; SearchOption
+// assembly requires heuristic completeness for the selected method.
+//
+// Result is the full-SSSP result artifact. It exposes:
 //
 //   - SourceID  - the source vertex identifier used for the run.
 //   - Distances - finalized shortest-path distances for the known result domain.
 //   - Prev      - optional predecessor map used for path reconstruction.
+//
+// PathResult is the target-only artifact. It exposes SourceID, TargetID,
+// Reachable, finite original-cost Distance (or +Inf when unreachable), Method,
+// policy metadata, and ordered original Vertices/EdgeIDs of exactly one witness.
+// Reachable target paths always include their witness; there is no TrackPaths
+// option in SearchOptions. PathResult.Path and Clone return detached copies.
 //
 // The package is designed as a reusable weighted shortest-path kernel for
 // downstream algorithms that require deterministic behavior, explicit numeric
@@ -39,8 +65,9 @@
 // -- WHY ----------------------------------------------------------------------
 //
 //   - Determinism First:
-//     dijkstra preserves the graph relation order surfaced by core and adds an
-//     explicit heap tie-break on vertex ID for equal candidate distances.
+//     Legacy Dijkstra follows core.Neighbors ordering and breaks equal distance
+//     heap keys by vertex ID. Target Search enumerates sorted original edge IDs
+//     and orders heap entries by (priority, distance, vertex index, sequence).
 //
 //   - Correct Weighted Semantics:
 //     Distances are true weighted shortest-path costs over non-negative edges.
@@ -51,8 +78,9 @@
 //     Result instead of ad-hoc parallel maps returned from the kernel.
 //
 //   - Policy Without Topology Mutation:
-//     Runtime options such as MaxDistance and InfEdgeThreshold alter traversal
-//     policy without rewriting or cloning the input graph.
+//     Runtime limits never rewrite caller topology. Target Search clones the
+//     graph once before preparing admitted original oriented arcs; legacy SSSP
+//     traverses its normal core graph surfaces directly.
 //
 //   - Detached Ownership:
 //     Published results are detached from the graph and belong to the caller
@@ -63,7 +91,9 @@
 //
 // dijkstra is intentionally scoped to:
 //
-//   - deterministic single-source shortest paths,
+//   - deterministic full single-source and one-target shortest paths,
+//   - one-directional A* with a consistent target heuristic,
+//   - balanced two-frontier A* with consistent directional heuristics,
 //   - weighted graphs with non-negative finite edge costs,
 //   - deterministic path reconstruction of one shortest-path witness when
 //     path tracking is enabled,
@@ -83,8 +113,8 @@
 //
 //   - a negative-weight shortest-path package,
 //   - an all-pairs shortest-path package,
-//   - a snapshot-isolated traversal engine,
-//   - a concurrent-mutation-safe graph execution model,
+//   - a guarantee that legacy SSSP observes one atomic topology snapshot,
+//   - a guarantee for callers mutating live Edge pointers without synchronization,
 //   - an exhaustive all-shortest-path reconstruction package.
 //
 // Consequences:
@@ -93,8 +123,9 @@
 //     mathematically the wrong tool and the package rejects that input.
 //   - If you need all-pairs shortest paths, this package does not provide
 //     Floyd-Warshall-, Johnson-, or repeated-source orchestration.
-//   - If you need an immutable snapshot of a graph under concurrent mutation,
-//     this package does not materialize one for you.
+//   - Target Search obtains one core.Clone before validation, policy admission,
+//     heuristic evaluation and traversal; legacy SSSP does not use that snapshot.
+//     Synchronize caller-owned direct Edge pointer mutations in either case.
 //   - If you need every shortest witness rather than one deterministic witness,
 //     Prev and PathTo are insufficient by design.
 //
@@ -145,12 +176,19 @@
 //   - finite w < 0      -> ErrNegativeWeight
 //   - finite w >= 0     -> accepted
 //
-// Arithmetic-overflow law:
+// Arithmetic law (method-specific):
 //
-//   - If two individually valid finite operands produce +Inf, traversal returns
-//     ErrDistanceOverflow.
-//   - Arithmetic overflow is not published as ordinary unreachable state.
-//   - On overflow, the package returns nil result plus error.
+//   - Legacy SSSP uses its established rounded float64 relaxation and cutoff
+//     semantics. A candidate that overflows its admitted domain fails with
+//     ErrDistanceOverflow rather than becoming unreachable.
+//   - Target Search compares exact represented-binary sums against a finite
+//     MaxDistance. Candidates above that cutoff are excluded before required
+//     storage checks. Admitted costs must be exactly representable as float64:
+//     a rounded finite but inexact cost fails with ErrInexactArithmetic.
+//   - Target A* and balanced A* additionally require exact finite normalized
+//     heap priorities; a nonrepresentable key fails with ErrInexactArithmetic
+//     or ErrSearchKeyOverflow. Original path costs remain distinct from keys.
+//   - All numeric failures return nil result plus error, not +Inf or a partial path.
 //
 // Published-distance law:
 //
@@ -159,6 +197,8 @@
 //   - An unknown target is classified through ErrTargetNotFound.
 //   - +Inf in Distances is package-owned result state; it is not copied from a
 //     graph-edge weight.
+//   - Target PathResult.Distance uses the same unreachable +Inf meaning;
+//     its public witness is nil when Reachable is false.
 //
 // -----------------------------------------------------------------------------
 // -- GRAPH POLICY -------------------------------------------------------------
@@ -173,22 +213,26 @@
 //   - undirected graphs are supported.
 //   - mixed-edge graphs are supported.
 //
-// Traversable relations are sourced from:
-//
-//	g.Neighbors(u)
+// Legacy SSSP takes live graph relations from g.Neighbors(u). Target Search
+// instead builds one isolated searchGraph from core.Clone, preserving every
+// original Edge.ID and creating oriented arcs only for admitted finite edges.
+// Its out/in indexes are shared by forward and backward search; a backward
+// search never manufactures a reversed original directed edge.
 //
 // Endpoint interpretation law:
 //
 //   - dijkstra does not assume that the traversable neighbor is always edge.To.
 //   - For undirected and mixed relations, the effective opposite endpoint is
 //     resolved relative to the current vertex.
-//   - Directed reverse traversal is forbidden unless the current relation from
-//     core.Neighbors(u) is actually traversable from u.
+//   - Directed reverse traversal is forbidden unless the original arc permits it.
+//   - On target Search, InfEdgeThreshold is applied after global weight
+//     validation; every blocked edge is still checked for invalid numbers.
 //
 // -----------------------------------------------------------------------------
 // -- DETERMINISM LAW ----------------------------------------------------------
 //
-// Determinism is a package-level contract.
+// Determinism is a package-level contract. The rules below describe legacy
+// full SSSP; target Search has a different, explicit prepared-order contract.
 //
 //  1. Vertex-domain initialization
 //     The kernel initializes the known result domain by iterating:
@@ -221,10 +265,21 @@
 // reconstructed path witnesses stable for the same graph state, sourceID, and
 // runtime policy.
 //
+// Target Search determinism:
+//
+//   - One snapshot; vertex IDs and original edges are sorted lexicographically.
+//   - Undirected arcs preserve one Edge.ID in both permitted orientations.
+//   - Heap order is (priority, original distance, dense lexical vertex, sequence).
+//   - All parent links update on strict improvement only; ties keep the first.
+//   - Bidirectional ties between the two clean minimum keys expand forward first.
+//   - Frozen heuristic callbacks run once per vertex in lexical ID order:
+//     for balanced A*, all to-target callbacks precede all from-source callbacks.
+//   - Selected PathResult.Method reports the executed algorithm, never a fallback.
+//
 // -----------------------------------------------------------------------------
 // -- RESULT CONTRACT ----------------------------------------------------------
 //
-// Result is the detached public shortest-path artifact.
+// Result is the detached public full-SSSP artifact.
 //
 // Public result semantics:
 //
@@ -256,6 +311,18 @@
 //     Never returns a partial witness and never loops indefinitely on malformed Prev.
 //     Does not enumerate all shortest paths.
 //
+// Target PathResult laws:
+//
+//   - Reachable=true: Vertices[0]=SourceID, last vertex=TargetID,
+//     len(EdgeIDs)+1=len(Vertices), finite Distance, and original directed
+//     or undirected edges matching every source-to-target transition.
+//   - Reachable=false: Distance=+Inf and both witness slices nil, with nil error.
+//   - Source==target: one vertex, zero distance, nil EdgeIDs after validation.
+//   - A missing target is ErrTargetNotFound; unreachable known target is not an error.
+//   - PathResult.Path returns independent vertex and edge ID slices.
+//   - PathResult.Clone deep-copies both public slices and preserves nil slices.
+//   - Every error returns nil *PathResult, even if a tentative route exists.
+//
 // -----------------------------------------------------------------------------
 // -- OPTIONS GOVERNANCE -------------------------------------------------------
 //
@@ -285,10 +352,26 @@
 //   - MaxDistance      = +Inf
 //   - InfEdgeThreshold = +Inf
 //
+// Target SearchOptions are a separate options family:
+//
+//   - WithSearchMethod(SearchDijkstra | SearchBidirectional | SearchAStar |
+//     SearchBidirectionalAStar) selects only an implemented kernel.
+//   - WithSearchContext(ctx) supplies a non-nil cancellation context.
+//   - WithSearchMaxDistance(max) and WithSearchInfEdgeThreshold(wall) retain
+//     the same policy domains but exact target-search cutoff semantics.
+//   - WithTraversalPolicy(Options) copies the two traversal scalars only;
+//     it does not copy TrackPaths, because target witnesses are mandatory.
+//   - WithHeuristic(toTarget) provides one A* callback without selecting a method.
+//   - WithBalancedHeuristics(toTarget, fromSource) sets both directional callbacks.
+//   - DefaultSearchOptions selects SearchDijkstra with no finite cutoff or wall.
+//   - Explicit nil callback setters fail immediately. Method-specific completeness
+//     and absence of unused heuristics are verified after all valid options.
+//
 // Important separation:
 //
 //   - sourceID is not an option.
 //   - sourceID is an explicit required input to the public API.
+//   - Legacy Option and target SearchOption are not interchangeable.
 //
 // -----------------------------------------------------------------------------
 // -- WALL AND CUTOFF POLICY ---------------------------------------------------
@@ -311,6 +394,9 @@
 //     contains +Inf for that target because traversal policy disallowed it.
 //
 // These are traversal policies, not numeric-validation failures.
+// Target Search additionally checks the exact binary sum before admitting a
+// candidate under a finite MaxDistance. In contrast, the legacy SSSP kernel
+// retains its rounded-candidate cutoff policy for compatibility.
 //
 // -----------------------------------------------------------------------------
 // -- ERROR LAW ----------------------------------------------------------------
@@ -335,6 +421,18 @@
 //   - ErrNoPath
 //   - ErrEmptyTargetID
 //   - ErrNilResult
+//   - ErrInvalidSearchMethod
+//   - ErrNilContext
+//   - ErrInexactArithmetic
+//   - ErrInvalidSearchOptions
+//   - ErrNilHeuristic
+//   - ErrInvalidHeuristic
+//   - ErrInconsistentHeuristic
+//   - ErrSearchKeyOverflow
+//
+// The Search error classes distinguish invalid original weights, unrepresentable
+// original costs, inexact/overflowing heuristic keys, inconsistent potentials,
+// invalid option combinations, and canceled contexts with preserved causes.
 //
 // Wrapping law:
 //
@@ -367,6 +465,8 @@
 //   - PathTo validates witness-chain safety and fails with ErrNoPath when mutation
 //     leaves the predecessor relation broken, cyclic, or outside Distances.
 //   - Clone creates independent maps but does not validate semantic correctness.
+//   - PathResult owns its witness and carries no live graph or heuristic callback.
+//     The caller may mutate its exported slices, potentially invalidating them.
 //
 // Clone law:
 //
@@ -376,7 +476,7 @@
 // -----------------------------------------------------------------------------
 // -- PARTIAL RESULT LAW -------------------------------------------------------
 //
-// On failure, the package does not publish a partial Result.
+// On failure, neither the full-SSSP Result nor target PathResult is published.
 //
 // Publication law:
 //
@@ -390,18 +490,18 @@
 // -----------------------------------------------------------------------------
 // -- CONCURRENCY LAW ----------------------------------------------------------
 //
-// dijkstra treats the graph as read-only during a call.
+// Legacy SSSP uses the graph's live public surfaces; callers should keep
+// topology stable during that run to preserve a coherent problem instance.
 //
-// Concurrency policy:
+// Target Search calls core.Clone once, then prepares all admitted vertex/edge
+// and oriented-arc state from that clone. It does not read the original graph
+// again during any shortest-path kernel. Core-owned mutation through its proper
+// synchronized methods may overlap with Clone according to core's lock model;
+// direct unsynchronized writes through retained *core.Edge pointers are not safe.
 //
-//   - concurrent reads through core are expected usage,
-//   - concurrent topology mutation during Dijkstra execution is unsupported,
-//   - the package does not materialize a snapshot-isolated graph image before traversal.
-//
-// In other words:
-//
-//   - if you need reproducible shortest-path results, do not mutate the graph
-//     concurrently while dijkstra is running.
+// Context cancellation is checked during search preparation, heuristic callbacks,
+// arc expansion and witness publication. Synchronous Clone or a blocking user
+// callback cannot be forcibly interrupted by the context.
 //
 // -----------------------------------------------------------------------------
 // -- COMPLEXITY SUMMARY -------------------------------------------------------
@@ -410,11 +510,21 @@
 //
 // Public summary:
 //
-//   - Dijkstra / Distances / DistanceTo / ShortestPathTo
+//   - Dijkstra / Distances / DistanceTo / ShortestPathTo:
 //     Effective time O(V log V + E log V + graph-surface-enumeration cost).
 //     Effective space O(V + E_heap), excluding graph-owned storage.
+//   - Search / Bidirectional / AStar / BidirectionalAStar:
+//     Snapshot/sort O(V log V+E log E), arc preparation O(V+A), and target
+//     kernels O(V+(V+A)log(A+1)), with A<=2E oriented admitted arcs.
+//     A* preparation adds O(V*HT+A), balanced A* adds O(V*(HT+HS)+A), where
+//     HT/HS are callback costs. Space O(V+E+A) including one clone, arcs,
+//     up to two lazy frontiers, frozen heuristics, and detached witness.
+//     This is an end-to-end upper bound, not a promised speedup over Dijkstra.
 //
 // Result-surface summary:
+//
+//   - PathResult.Path / Clone:
+//     Time O(k), Space O(k) over a k-vertex witness.
 //
 //   - DistanceTo / HasPathTo
 //     Time O(1), Space O(1).
@@ -474,8 +584,29 @@
 //     Do not publish partial shortest-path state on runtime failure.
 //
 //   - Concurrency:
-//     Treat the graph as read-only during traversal if correctness and
-//     reproducibility matter.
+//     Legacy Dijkstra requires stable topology; target Search clones once and
+//     must not be confused with direct unsynchronized Edge pointer mutation.
+//
+//   - A* Consistency:
+//     hT(t)=0 and hT(u)<=w(u,v)+hT(v) on every effective arc are mandatory.
+//     Balanced search also requires hS(s)=0 and hS(v)<=w(u,v)+hS(u).
+//     Admissibility alone does not authorize a no-reopening solver.
+//
+//   - Balanced Normalization:
+//     p(v)=(hT(v)-hS(v))/2; forward keys are dF(v)+p(v)-p(s), backward
+//     keys are dB(v)+p(t)-p(v). Stop only when clean key minima satisfy
+//     minKeyF+minKeyB >= mu+p(t)-p(s). mu and PathResult.Distance remain
+//     original costs, never potentials or rounded reduced weights.
+//
+//   - Target Arithmetic:
+//     Target paths require exact binary64 cost storage. A successful original
+//     edge weight can still lead to ErrInexactArithmetic or ErrSearchKeyOverflow.
+//     Never replace their sentinels with unreachable +Inf or epsilon comparisons.
+//
+//   - Scenario Executability:
+//     Three standalone examples in examples/dijkstra_scenario_*.go are launched
+//     by dijkstra/scenario_test.go; benchmarks in search_bench_test.go compare all four
+//     target methods on one fixed directed grid and cutoff-sensitive regimes.
 //
 // -----------------------------------------------------------------------------
 // -- SEE ALSO -----------------------------------------------------------------

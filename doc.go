@@ -223,4 +223,4 @@
 //     and runnable examples for each algorithm.
 //
 // lvlath targets modern Go, is entirely in Go, and has no external dependencies.
-package lvlath
+package main
