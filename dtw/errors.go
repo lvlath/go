@@ -32,6 +32,12 @@ var (
 	// ErrNaNInf indicates that NaN or Inf appeared where finite values are required.
 	ErrNaNInf = errors.New("dtw: NaN or Inf encountered")
 
+	// ErrOverflow indicates a reachable accumulated or local cost outside finite float64.
+	// A terminal optimal overflow returns nil Result and is joined with ErrNaNInf
+	// for compatibility with the existing family of numerical errors.
+	// Overflow in a discarded transition does not by itself fail an alignment.
+	ErrOverflow = errors.New("dtw: optimal cost exceeds finite float64 range")
+
 	// ErrNoPath indicates that no admissible warping path exists under the active policy.
 	ErrNoPath = errors.New("dtw: no admissible warping path")
 
