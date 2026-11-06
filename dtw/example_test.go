@@ -138,7 +138,7 @@ func ExampleAlignMatrix_cryptoBreakoutOHLC() {
 	}
 
 	// Output:
-	// distance=3.232 path-steps=15
+	// distance=3.233 path-steps=15
 	// anchors entry={0 0} ignition={3 4} peak={6 7} exit={11 14}
 	// matrices accumulated=13x16 local=12x15
 	// trade-filter=similar stretched breakout

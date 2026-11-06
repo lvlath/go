@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2025-2026 katalvlaran
 
-// Package dtw adapts matrix.Matrix inputs into local-cost matrices for DTW.
-// This file keeps matrix-backed cost construction separate from the DP recurrence.
+// Package dtw adapts matrix.Matrix sequences into finite local-cost surfaces.
+// This file implements squared L2 construction and detached flat input materialization.
 package dtw
 
 import (
@@ -13,60 +13,57 @@ import (
 	"github.com/lvlath/go/matrix"
 )
 
-const (
-	// squaredL2RoundoffTolerance clamps tiny negative squared distances caused by floating-point roundoff.
-	squaredL2RoundoffTolerance = 1e-12
-)
-
-// localSquaredL2Matrix computes pairwise squared L2 row distances.
+// localSquaredL2Matrix constructs the complete row-to-row squared Euclidean cost surface.
+// It subtracts coordinates before scaling and squaring, preventing catastrophic
+// cancellation in the identity ||x||²+||y||²-2*x·y for large near-equal rows.
 //
 // Implementation:
-//   - Stage 1: validate non-nil matrix inputs.
-//   - Stage 2: validate equal feature dimensions and non-empty time axes.
-//   - Stage 3: reject NaN and ±Inf through matrix.ValidateAllFinite.
-//   - Stage 4: compute dot products using matrix.Mul(x, Transpose(y)).
-//   - Stage 5: compute row squared norms with Hadamard and RowSums.
-//   - Stage 6: assemble a dense local-cost matrix in row-major order.
+//   - Stage 1: validate matrix nil-state, time axes, matching feature dimensions,
+//     and finite source coordinates using the published matrix validators.
+//   - Stage 2: for each row pair, read corresponding feature coordinates in order
+//     and accumulate their squared differences in a shared exponent domain.
+//   - Stage 3: reject an unrepresentable local cost and publish a fully populated
+//     finite Dense local matrix, independent of the active DTW window.
 //
 // Behavior highlights:
-//   - Rows are time steps.
-//   - Columns are features.
-//   - The returned cost is squared L2, not sqrt L2.
-//   - Tiny negative values caused by roundoff are clamped to zero.
+//   - Equal finite coordinate vectors produce exactly zero cost, including 1e200.
+//   - A genuinely unrepresentable squared distance reports ErrOverflow and ErrNaNInf.
+//   - Subnormal squared distances follow binary64 rounding, without clamping.
 //
 // Inputs:
-//   - x: matrix with rows as time steps and columns as feature dimensions.
-//   - y: matrix with rows as time steps and columns as feature dimensions.
+//   - x: read-only nx-by-d matrix, each row a multivariate time step.
+//   - y: read-only ny-by-d matrix, matching feature dimension d.
 //
 // Returns:
-//   - *matrix.Dense: local-cost matrix C where C[i,j]=||x_i-y_j||².
+//   - *matrix.Dense: detached nx-by-ny matrix of finite non-negative squared costs.
+//   - error: sentinel-classified validation, access, allocation, or numeric failure.
 //
 // Errors:
-//   - ErrBadInput joined with matrix nil/shape/operation/access errors.
-//   - matrix.ErrDimensionMismatch is preserved when x.Cols()!=y.Cols().
-//   - ErrEmptyInput when x or y has zero rows.
-//   - ErrNaNInf joined with matrix finite-validation failures.
-//   - ErrBadInput when roundoff exceeds tolerance and produces a negative cost.
+//   - ErrBadInput: matrix shape, allocation, or access failure.
+//   - matrix.ErrDimensionMismatch: unequal feature dimensions, joined with ErrBadInput.
+//   - ErrEmptyInput: either time axis has zero rows.
+//   - ErrNaNInf: invalid coordinate or numeric artifact.
+//   - ErrOverflow joined with ErrNaNInf: a local squared cost exceeds float64 range.
 //
 // Determinism:
-//   - Uses deterministic matrix operations and row-major assembly.
+//   - Pair order is row-major (i, j); feature order is k ascending.
+//   - Each pair uses a deterministic ordered float64 exponent accumulator.
 //
 // Complexity:
-//   - Time O(nx*ny*d) conceptually, where d=x.Cols()=y.Cols().
-//   - Space O(nx*ny + nx*d + ny*d) depending on matrix operation internals.
+//   - Time O(nx*ny*d + nx*d + ny*d), Space O(nx*ny) for the output.
+//   - No extra dot-product, transposed matrix, or squared-norm matrices are allocated.
 //
 // Notes:
-//   - Caller-side normalization should happen before this function.
-//   - This function does not mutate x or y.
+//   - Inputs and their storage are never modified or aliased by the result.
+//   - Concurrent mutation of x or y during this call is unsupported.
 //
 // AI-Hints:
-//   - Do not silently normalize or clip inputs here.
-//   - Do not take sqrt unless the API explicitly promises Euclidean L2 instead of squared L2.
+//   - Never reconstruct this cost via x²+y²-2xy: high-magnitude cancellation is real.
+//   - Generic matrix.Matrix implementations must obey the same coordinate cost law as Dense.
 func localSquaredL2Matrix(x, y matrix.Matrix) (*matrix.Dense, error) {
 	if err := matrix.ValidateNotNil(x); err != nil {
 		return nil, errors.Join(ErrBadInput, err)
 	}
-
 	if err := matrix.ValidateNotNil(y); err != nil {
 		return nil, errors.Join(ErrBadInput, err)
 	}
@@ -74,47 +71,14 @@ func localSquaredL2Matrix(x, y matrix.Matrix) (*matrix.Dense, error) {
 	if x.Rows() == 0 || y.Rows() == 0 {
 		return nil, ErrEmptyInput
 	}
-
 	if x.Cols() != y.Cols() {
 		return nil, errors.Join(ErrBadInput, matrix.ErrDimensionMismatch)
 	}
-
 	if err := matrix.ValidateAllFinite(x); err != nil {
 		return nil, errors.Join(ErrNaNInf, err)
 	}
-
 	if err := matrix.ValidateAllFinite(y); err != nil {
 		return nil, errors.Join(ErrNaNInf, err)
-	}
-
-	yT, err := matrix.Transpose(y)
-	if err != nil {
-		return nil, errors.Join(ErrBadInput, err)
-	}
-
-	dot, err := matrix.Mul(x, yT)
-	if err != nil {
-		return nil, errors.Join(ErrBadInput, err)
-	}
-
-	x2, err := matrix.Hadamard(x, x)
-	if err != nil {
-		return nil, errors.Join(ErrBadInput, err)
-	}
-
-	y2, err := matrix.Hadamard(y, y)
-	if err != nil {
-		return nil, errors.Join(ErrBadInput, err)
-	}
-
-	xNorms, err := matrix.RowSums(x2)
-	if err != nil {
-		return nil, errors.Join(ErrBadInput, err)
-	}
-
-	yNorms, err := matrix.RowSums(y2)
-	if err != nil {
-		return nil, errors.Join(ErrBadInput, err)
 	}
 
 	cost, err := matrix.NewPreparedDense(x.Rows(), y.Rows())
@@ -124,95 +88,97 @@ func localSquaredL2Matrix(x, y matrix.Matrix) (*matrix.Dense, error) {
 
 	for i := 0; i < x.Rows(); i++ {
 		for j := 0; j < y.Rows(); j++ {
-			dotValue, err := dot.At(i, j)
-			if err != nil {
-				return nil, errors.Join(ErrBadInput, err)
+			var sum squaredSumOfDifferences
+			for feature := 0; feature < x.Cols(); feature++ {
+				left, readErr := x.At(i, feature)
+				if readErr != nil {
+					return nil, errors.Join(ErrBadInput, readErr)
+				}
+				right, readErr := y.At(j, feature)
+				if readErr != nil {
+					return nil, errors.Join(ErrBadInput, readErr)
+				}
+				sum.addDifference(left, right)
 			}
 
-			localCost := xNorms[i] + yNorms[j] - 2*dotValue
-			if localCost < 0 && math.Abs(localCost) <= squaredL2RoundoffTolerance {
-				localCost = 0
+			local := sum.value()
+			if math.IsNaN(local) {
+				return nil, fmt.Errorf("dtw: non-finite local squared L2 at (%d,%d): %w", i, j, ErrNaNInf)
 			}
-
-			if localCost < 0 || math.IsNaN(localCost) || math.IsInf(localCost, 0) {
-				return nil, fmt.Errorf("dtw: local squared L2 cost[%d,%d]=%v: %w", i, j, localCost, ErrBadInput)
+			if math.IsInf(local, 1) {
+				return nil, fmt.Errorf("dtw: unrepresentable squared L2 at (%d,%d): %w", i, j, errors.Join(ErrOverflow, ErrNaNInf))
 			}
-
-			if err = cost.Set(i, j, localCost); err != nil {
+			if err = cost.Set(i, j, local); err != nil {
 				return nil, errors.Join(ErrNaNInf, err)
 			}
 		}
 	}
-
 	return cost, nil
 }
 
-// materializeLocalCostMatrix validates and flattens a local-cost matrix.
+// materializeLocalCostMatrix copies and validates a caller-owned local cost matrix.
+// Its flat row-major representation keeps arbitrary Matrix.At dispatch and
+// mutation concerns out of the DP hot loop.
 //
 // Implementation:
-//   - Stage 1: validate matrix nil-state.
-//   - Stage 2: reject zero-row or zero-column DTW domains.
-//   - Stage 3: read every cell in row-major order.
-//   - Stage 4: validate each local cost and store it into a flat slice.
+//   - Stage 1: validate nil, dimensions, and integer-safe cell count.
+//   - Stage 2: allocate a flat slice and read every source cell in row-major order.
+//   - Stage 3: validate and store each finite non-negative local cost.
 //
 // Behavior highlights:
-//   - The flat layout is row-major: cost[i*cols+j].
-//   - The DP hot loop reads the flat slice without interface dispatch.
-//   - The source matrix is never mutated.
+//   - All cells are validated, including those excluded by a future window policy.
+//   - Caller input remains untouched and detached from the resulting flat slice.
 //
 // Inputs:
-//   - local: matrix of finite non-negative local alignment costs.
+//   - local: read-only n-by-m matrix of finite non-negative local costs.
 //
 // Returns:
-//   - []float64: row-major local costs.
-//   - rows: number of time steps in sequence A.
-//   - cols: number of time steps in sequence B.
-//   - error: sentinel-classified failure.
+//   - []float64: detached row-major local costs indexed by i*cols+j.
+//   - int, int: validated row and column counts.
+//   - error: sentinel-preserving validation or access failure.
 //
 // Errors:
-//   - ErrBadInput joined with matrix validation/access errors.
-//   - ErrEmptyInput when rows==0 or cols==0.
-//   - ErrNaNInf when a cost is NaN or ±Inf.
-//   - ErrNegativeCost when a cost is negative.
+//   - ErrBadInput: invalid nil-state, dimension product, or At error.
+//   - ErrEmptyInput: zero rows or zero columns.
+//   - ErrNaNInf / ErrNegativeCost: invalid caller local cost.
 //
 // Determinism:
-//   - Reads cells in row-major order and reports the first invalid cell.
+//   - Strict ascending row then column validation, first failure wins.
 //
 // Complexity:
 //   - Time O(rows*cols), Space O(rows*cols).
 //
+// Notes:
+//   - Cannot guarantee a stable snapshot if the caller concurrently mutates input.
+//
 // AI-Hints:
-//   - Do not run DP directly through Matrix.At in the hot loop unless benchmarking proves it acceptable.
-//   - Do not allow +Inf local costs; +Inf is reserved for unreachable accumulated states.
+//   - Do not defer validation of off-band cells until after recurrence execution.
+//   - Check integer products before allocation or indexing.
 func materializeLocalCostMatrix(local matrix.Matrix) ([]float64, int, int, error) {
 	if err := matrix.ValidateNotNil(local); err != nil {
 		return nil, 0, 0, errors.Join(ErrBadInput, err)
 	}
-
-	rows := local.Rows()
-	cols := local.Cols()
-
+	rows, cols := local.Rows(), local.Cols()
 	if rows == 0 || cols == 0 {
 		return nil, 0, 0, ErrEmptyInput
 	}
+	if rows < 0 || cols < 0 || rows > maxIntValue/cols {
+		return nil, 0, 0, ErrBadInput
+	}
 
 	costs := make([]float64, rows*cols)
-
 	for i := 0; i < rows; i++ {
 		for j := 0; j < cols; j++ {
 			value, err := local.At(i, j)
 			if err != nil {
 				return nil, 0, 0, errors.Join(ErrBadInput, err)
 			}
-
 			if err = validateLocalCost(value); err != nil {
 				return nil, 0, 0, err
 			}
-
 			costs[i*cols+j] = value
 		}
 	}
-
 	return costs, rows, cols, nil
 }
 

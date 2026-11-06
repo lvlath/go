@@ -32,6 +32,30 @@ var (
 	// ErrNaNInf indicates that NaN or Inf appeared where finite values are required.
 	ErrNaNInf = errors.New("dtw: NaN or Inf encountered")
 
+	// ErrOverflow indicates a reachable accumulated or local cost outside finite float64.
+	// A terminal optimal overflow returns nil Result and is joined with ErrNaNInf
+	// for compatibility with the existing family of numerical errors.
+	// Overflow in a discarded transition does not by itself fail an alignment.
+	ErrOverflow = errors.New("dtw: optimal cost exceeds finite float64 range")
+
+	// ErrInvalidOption indicates an invalid bounded-alignment or search policy.
+	// Existing legacy options retain their original errors and precedence.
+	ErrInvalidOption = errors.New("dtw: invalid search option")
+
+	// ErrShape indicates incompatible dimensions, envelope lengths, or start ranges.
+	ErrShape = errors.New("dtw: invalid search shape")
+
+	// ErrNonFinite indicates invalid input values in the finite-only search domain.
+	// It is returned together with ErrNaNInf for compatibility with numeric diagnostics.
+	ErrNonFinite = errors.New("dtw: nonfinite search input")
+
+	// ErrZeroVariance indicates an exactly constant sequence under population z-normalization.
+	ErrZeroVariance = errors.New("dtw: zero population variance")
+
+	// ErrBudget indicates a hard search cell or explicitly accounted working-memory limit.
+	// It can accompany a SearchResult with Complete=false after candidate computation begins.
+	ErrBudget = errors.New("dtw: search resource budget exceeded")
+
 	// ErrNoPath indicates that no admissible warping path exists under the active policy.
 	ErrNoPath = errors.New("dtw: no admissible warping path")
 
