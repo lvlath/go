@@ -48,7 +48,7 @@ func regressionDense(t *testing.T, rows, cols int, values ...float64) *matrix.De
 	if err != nil {
 		t.Fatalf("NewPreparedDense: %v", err)
 	}
-	if err := m.Fill(values); err != nil {
+	if err = m.Fill(values); err != nil {
 		t.Fatalf("Fill: %v", err)
 	}
 	return m

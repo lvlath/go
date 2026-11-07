@@ -23,7 +23,7 @@ import (
 // Behavior highlights:
 //   - A sample inside [lower[i],upper[i]] contributes zero.
 //   - No window radius is inferred; callers must supply a mathematically valid envelope.
-//   - Search v0.1 does not use the rounded result to prune candidates.
+//   - Search uses an independently certified enclosure, never this rounded diagnostic as a direct cutoff.
 //
 // Inputs:
 //   - query: nonempty finite scalar samples, borrowed read-only.

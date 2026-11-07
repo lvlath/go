@@ -98,7 +98,7 @@ func TestAlign_ReturnedBuffersDetachedAcrossCalls(t *testing.T) {
 		t.Fatalf("first Align result=%+v err=%v", one, err)
 	}
 	one.Path[0] = dtw.Coord{I: 99, J: 99}
-	if err := one.LocalCost.Set(0, 0, 99); err != nil {
+	if err = one.LocalCost.Set(0, 0, 99); err != nil {
 		t.Fatalf("mutate local artifact: %v", err)
 	}
 

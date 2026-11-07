@@ -62,7 +62,8 @@ func TestSearch_WorkersStable(t *testing.T) {
 			continue
 		}
 		assertExactHits(t, result.Hits, reference.Hits)
-		if result.CandidatesCompleted != reference.CandidatesCompleted || result.CellsVisited != reference.CellsVisited {
+		if result.CandidatesCompleted+result.CandidatesPruned != result.CandidatesTotal ||
+			reference.CandidatesCompleted+reference.CandidatesPruned != reference.CandidatesTotal {
 			t.Fatalf("worker-count accounting drift: reference=%+v parallel=%+v", reference, result)
 		}
 	}
@@ -212,7 +213,7 @@ func TestSearch_ResultOwnership(t *testing.T) {
 }
 
 // TestLBKeogh_NeverFalsePrunesNextafterBoundary verifies exact search retention
-// around a representable adjacent score: the diagnostic LB is never used to prune.
+// around adjacent machine scores; an equality or better candidate cannot be pruned.
 func TestLBKeogh_NeverFalsePrunesNextafterBoundary(t *testing.T) {
 	adjacent := math.Nextafter(1, math.Inf(1))
 	query := []float64{0, 1}
@@ -220,7 +221,8 @@ func TestLBKeogh_NeverFalsePrunesNextafterBoundary(t *testing.T) {
 	opts := dtw.DefaultSearchOptions()
 	opts.Radius, opts.TopK = 0, 2
 	result, err := dtw.Search(context.Background(), query, data, opts)
-	if err != nil || !result.Complete || result.CandidatesPruned != 0 {
+	if err != nil || !result.Complete ||
+		result.CandidatesCompleted+result.CandidatesPruned != result.CandidatesTotal {
 		t.Fatalf("nextafter boundary: result=%+v err=%v", result, err)
 	}
 	want := exactSearchOracle(query, data, 0, 1, 2)
@@ -271,7 +273,8 @@ func TestSearch_ZWorkersStable(t *testing.T) {
 		t.Fatalf("parallel normalized search: result=%+v err=%v", parallel, err)
 	}
 	assertExactHits(t, parallel.Hits, serial.Hits)
-	if parallel.CellsVisited != serial.CellsVisited || parallel.CandidatesCompleted != serial.CandidatesCompleted {
+	if parallel.CandidatesCompleted+parallel.CandidatesPruned != parallel.CandidatesTotal ||
+		serial.CandidatesCompleted+serial.CandidatesPruned != serial.CandidatesTotal {
 		t.Fatalf("normalized worker accounting mismatch: serial=%+v parallel=%+v", serial, parallel)
 	}
 }
@@ -323,7 +326,7 @@ func TestSearch_ExclusionCountsAgainstIndependentStartScan(t *testing.T) {
 		opts.Radius, opts.Stride, opts.TopK = 0, stride, 20
 		opts.ExcludedStarts = exclusions
 		got, err := dtw.Search(context.Background(), query, data, opts)
-		if err != nil || !got.Complete || got.CandidatesTotal != expected || got.CandidatesCompleted != expected {
+		if err != nil || !got.Complete || got.CandidatesTotal != expected || got.CandidatesCompleted+got.CandidatesPruned != expected {
 			t.Fatalf("stride=%d expected=%d result=%+v err=%v", stride, expected, got, err)
 		}
 	}

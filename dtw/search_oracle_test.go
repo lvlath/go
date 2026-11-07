@@ -117,7 +117,7 @@ func TestSearch_ExactTopKAgainstExhaustive(t *testing.T) {
 						t.Fatalf("L=%d trial=%d radius=%d stride=%d: result=%+v err=%v", length, trial, radius, stride, result, err)
 					}
 					assertExactHits(t, result.Hits, exactSearchOracle(query, data, radius, stride, opts.TopK))
-					if result.CandidatesCompleted != result.CandidatesTotal || result.CandidatesPruned != 0 {
+					if result.CandidatesCompleted+result.CandidatesPruned != result.CandidatesTotal {
 						t.Fatalf("inconsistent exhaustive accounting: %+v", result)
 					}
 				}

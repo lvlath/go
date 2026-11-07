@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2025-2026 katalvlaran
 
-// Package dtw implements an exact, deterministic fixed-length subsequence search facade.
-// This file validates the search domain and prepares bounded-memory worker execution.
+// Package dtw implements an exact, deterministic fixed-length subsequence search kernel.
+// This file validates the search domain and prepares certified worker execution.
 package dtw
 
 import (
@@ -18,17 +18,19 @@ import (
 // searchPlan is a validated read-only description of one search invocation.
 // It owns its copied exclusion ranges and keeps no mutable per-worker state.
 type searchPlan struct {
-	length    int          // Complete candidate and query length in scalar samples.
-	stride    int          // Positive candidate start increment.
-	radius    int          // -1 or nonnegative admissible half-band width.
-	positions uint64       // Raw stride-aligned starts before exclusions.
-	admitted  uint64       // Exact number of starts after exclusions.
-	workers   int          // Actual bounded worker count, at most admitted.
-	hitCap    int          // Retained exact top-K count, at most admitted.
-	width     int          // Per-worker classified band row width.
-	excluded  []IndexRange // Detached sorted/coalesced excluded starts.
+	length    int             // Complete candidate and query length in scalar samples.
+	stride    int             // Positive candidate start increment.
+	radius    int             // -1 or nonnegative admissible half-band width.
+	positions uint64          // Raw stride-aligned starts before exclusions.
+	admitted  uint64          // Exact number of starts after exclusions.
+	workers   int             // Actual bounded worker count, at most admitted.
+	hitCap    int             // Retained exact top-K count, at most admitted.
+	width     int             // Per-worker classified band row width.
+	excluded  []IndexRange    // Detached sorted/coalesced excluded starts.
+	envelope  *searchEnvelope // Optional immutable machine-pruning certificate.
 }
 
+// move to api.gp and discribe!
 func Search(ctx context.Context, query, data []float64, opts SearchOptions) (*SearchResult, error) {
 	return searchFixedWindows(ctx, query, data, opts)
 }
@@ -40,13 +42,13 @@ func Search(ctx context.Context, query, data []float64, opts SearchOptions) (*Se
 // Implementation:
 //   - Stage 1: validate context, options, input shapes, every sample, and normalization domain.
 //   - Stage 2: copy/coalesce exclusions, account for all explicit buffers, and normalize query.
-//   - Stage 3: evaluate every admitted window using the band-only classified recurrence.
+//   - Stage 3: evaluate or soundly prune admitted windows using the band-only recurrence.
 //   - Stage 4: retain the best K fully evaluated hits, sort by (distance,start,end), and publish.
 //
 // Behavior highlights:
-//   - Every completed result is an exact top-K: no approximate shortlist or heuristic pruning.
+//   - Complete results are exact top-K; optional pruning requires machine certificates.
 //   - Constant z-normalized query is an input error (nil result); constant candidate yields partial+error.
-//   - Workers share only a checked cell counter; row/normalization buffers are per-worker.
+//   - Workers share only atomic cutoff and checked cell counters; scratch is per-worker.
 //   - MaxCells includes all evaluated cells, including interrupted/inflight candidate work.
 //
 // Inputs:
@@ -73,11 +75,11 @@ func Search(ctx context.Context, query, data []float64, opts SearchOptions) (*Se
 // Complexity:
 //   - For C admitted windows, L=len(query), b=min(L,2*Radius+1), O(C*L*b + C*log K).
 //   - Radius=-1 uses b=L. Z normalization adds O(C*L) time.
-//   - Memory O(R + K + W*b + W*L) in z-mode, O(R + K + W*b) in raw mode.
+//   - Memory O(R + K + W*b + W*L + L) in z-mode, O(R + K + W*b + L) in raw mode.
 //
 // Notes:
 //   - All costs are squared scalar local costs with zero slope penalty; generic CostFunc is excluded.
-//   - This exact-first implementation does not use LB_Keogh for pruning; CandidatesPruned=0.
+//   - Certificates require a finite diagonal, finite local domain, and strictly greater machine LB_Keogh.
 //   - MaxWorkingBytes covers explicitly allocated buffers, not runtime/goroutine stack metadata.
 //
 // AI-Hints:
@@ -180,10 +182,11 @@ func searchFixedWindows(ctx context.Context, query, data []float64, opts SearchO
 		excluded: exclusions,
 	}
 
-	if _, err := estimateSearchBytes(plan, opts.Normalization, exclusionBytes, opts.MaxWorkingBytes); err != nil {
+	baseBytes, err := estimateSearchBytes(plan, opts.Normalization, exclusionBytes, opts.MaxWorkingBytes)
+	if err != nil {
 		return nil, err
 	}
-	if err := ctx.Err(); err != nil {
+	if err = ctx.Err(); err != nil {
 		return nil, err
 	}
 
@@ -191,9 +194,16 @@ func searchFixedWindows(ctx context.Context, query, data []float64, opts SearchO
 	preparedQuery := query
 	if opts.Normalization == SearchZPopulation {
 		preparedQuery = make([]float64, len(query))
-		if err := normalizeZPopulationInto(preparedQuery, query); err != nil {
+		if err = normalizeZPopulationInto(preparedQuery, query); err != nil {
 			return nil, fmt.Errorf("dtw: query: %w", err)
 		}
+	}
+	// The optional envelope is prepared only after normalization, ensuring the
+	// lower bound is measured in exactly the same units as the squared scorer.
+	// A tight budget disables this optimization, not the exact alignment.
+	plan.envelope = prepareSearchEnvelope(preparedQuery, opts.Radius, baseBytes, opts.MaxWorkingBytes)
+	if err = ctx.Err(); err != nil {
+		return nil, err
 	}
 	return runSearchWorkers(ctx, result, plan, preparedQuery, data, opts)
 }

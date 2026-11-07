@@ -114,3 +114,54 @@ func ExampleLBKeoghSquared_envelopeDiagnostic() {
 	// Output:
 	// squared-envelope-bound=6
 }
+
+// ExampleSearch_certifiedPruning demonstrates a provably inferior candidate exclusion.
+// A finite zero-cost template establishes the cutoff, while distant later windows
+// are excluded only after verifying an envelope bound in the scorer's float64 model.
+//
+// Implementation:
+//   - Stage 1: define one exact four-frame template followed by distant samples.
+//   - Stage 2: search with one worker to make performance counters reproducible.
+//   - Stage 3: inspect both the exact winning hit and the certificate accounting.
+//
+// Behavior highlights:
+//   - The skipped windows are certified noncompetitive, not approximate matches.
+//
+// Inputs:
+//   - No parameters; fixed finite scalar samples with a diagonal radius.
+//
+// Returns:
+//   - Deterministic output from one complete SearchResult.
+//
+// Errors:
+//   - Any classified search error prints diagnostics instead of a false success.
+//
+// Determinism:
+//   - One worker processes candidate starts in increasing order.
+//
+// Complexity:
+//   - Worst-case O(C*L) time for Radius=0, O(L) private workspace.
+//
+// Notes:
+//   - The count of pruned candidates is a performance diagnostic, not a speed guarantee.
+//
+// AI-Hints:
+//   - Never infer that pruning is safe from a rounded diagnostic LBKeoghSquared alone.
+func ExampleSearch_certifiedPruning() {
+	query := []float64{0, 1, 2, 3}
+	series := []float64{0, 1, 2, 3, 100, 101, 102, 103, 104, 105}
+	options := dtw.DefaultSearchOptions()
+	options.Radius = 0
+	options.Workers = 1
+
+	result, err := dtw.Search(context.Background(), query, series, options)
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Printf("winner=[%d,%d) squared=%g\n", result.Hits[0].Window.Start, result.Hits[0].Window.End, result.Hits[0].SquaredDistance)
+	fmt.Printf("complete=%t scored=%d pruned=%d cells=%d\n", result.Complete, result.CandidatesCompleted, result.CandidatesPruned, result.CellsVisited)
+	// Output:
+	// winner=[0,4) squared=0
+	// complete=true scored=1 pruned=6 cells=4
+}

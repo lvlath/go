@@ -76,7 +76,7 @@ func AlignBounded(ctx context.Context, a, b []float64, limit float64, opts ...Op
 	// Validate the sequence before the independently invalid limit, as specified
 	// for new context-bearing entry points. Validation is intentionally repeated
 	// by compute to preserve its existing internal contract and error identities.
-	if err := validateSequences(a, b, cfg.validateFinite); err != nil {
+	if err = validateSequences(a, b, cfg.validateFinite); err != nil {
 		return nil, err
 	}
 	if math.IsNaN(limit) || math.IsInf(limit, -1) || limit < 0 {

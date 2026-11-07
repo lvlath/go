@@ -181,7 +181,7 @@ type IndexRange struct {
 // Implementation:
 //   - Stage 1: validate Radius, TopK, Stride, Workers, normalization, and range endpoints.
 //   - Stage 2: copy/coalesce excluded start ranges and compute a checked workspace budget.
-//   - Stage 3: score all admitted starts in deterministic index order or parallel workers.
+//   - Stage 3: score or soundly prune admitted starts with independent worker workspaces.
 //
 // Behavior highlights:
 //   - Radius=-1 is unconstrained; Radius=0 permits only diagonal matches.
@@ -278,7 +278,7 @@ type SearchHit struct {
 //
 // Behavior highlights:
 //   - Complete=true guarantees CandidatesCompleted+CandidatesPruned==CandidatesTotal.
-//   - Initial exhaustive execution performs no pruning, so CandidatesPruned is zero.
+//   - Machine-certified envelope exclusions count toward CandidatesPruned; no uncertified score is skipped.
 //
 // Inputs:
 //   - Produced by Search; all counts are exact uint64 values.
@@ -310,7 +310,7 @@ type SearchResult struct {
 	CandidatesTotal uint64
 	// CandidatesCompleted counts fully computed finite exact candidate distances.
 	CandidatesCompleted uint64
-	// CandidatesPruned counts only safe certified exclusions (zero in this exhaustive version).
+	// CandidatesPruned counts machine-certified strict-above-cutoff exclusions, not completed hits.
 	CandidatesPruned uint64
 	// CellsVisited counts all evaluated DP cells, including on interrupted candidates.
 	CellsVisited uint64

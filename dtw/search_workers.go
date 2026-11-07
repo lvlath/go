@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -21,6 +22,7 @@ type candidateOutcome struct {
 	start    int
 	distance float64
 	err      error
+	pruned   bool // A certified noncompetitive candidate, never an exact hit.
 }
 
 // worstSearchHeap retains the K smallest exact hits with the worst hit at its root.
@@ -242,13 +244,13 @@ func searchHitLess(a, b SearchHit) bool {
 // Implementation:
 //   - Stage 1: launch a bounded worker pool, each with two band rows and optional z buffer.
 //   - Stage 2: claim stride-grid positions atomically; skip excluded starts without evaluation.
-//   - Stage 3: score every claimed admitted candidate, sending completed/error outcomes.
+//   - Stage 3: certify noncompetitive windows or score them, sending typed outcomes.
 //   - Stage 4: drain all worker outcomes even after a failure, then sort the transferred heap.
 //
 // Behavior highlights:
 //   - No O(N) candidate queue is built; positions are computed directly from a shared ordinal.
 //   - A candidate runtime failure stops further dispatch and returns a non-global partial result.
-//   - Every evaluated DP cell reserves a shared credit before computing its local cost.
+//   - Only evaluated DP cells reserve credits; certified prunes account separately.
 //
 // Inputs:
 //   - ctx: user-owned cancellation source; result: unpublished SearchResult under construction.
@@ -263,10 +265,11 @@ func searchHitLess(a, b SearchHit) bool {
 //   - ErrBudget, ErrZeroVariance, ErrOverflow/ErrNaNInf, or context error after work starts.
 //
 // Determinism:
-//   - Full rankings do not depend on completion order; one-worker partial prefix is stable.
+//   - Complete sorted hits are stable; with Workers=1, acknowledgement fixes the pruning prefix.
+//   - With Workers>1, pruning counts and CellsVisited may vary by scheduling.
 //
 // Complexity:
-//   - Work O(C*L*b + C log K), aggregate private storage O(W*b + W*L + K).
+//   - Worst-case work O(C*L*b + C log K), storage O(W*b + W*L + K + L).
 //
 // Notes:
 //   - Partial rankings are scheduling-dependent when Workers>1, as explicitly documented.
@@ -274,7 +277,8 @@ func searchHitLess(a, b SearchHit) bool {
 //
 // AI-Hints:
 //   - Always drain the result channel after cancellation to avoid goroutine leaks.
-//   - Never promote an errored or interrupted candidate into CandidatesCompleted.
+//   - Keep the one-worker acknowledgement after cutoff publication to prevent run-ahead.
+//   - Never promote an errored or interrupted candidate into completed or pruned counts.
 func runSearchWorkers(
 	ctx context.Context,
 	result *SearchResult,
@@ -289,6 +293,17 @@ func runSearchWorkers(
 	// starts are a subset of the increasing stride progression after exclusions.
 	var nextPosition atomic.Uint64
 	var visited atomic.Uint64
+	// A coordinator-owned heap publishes only its current finite kth score.
+	// Stale loads are safe: the cutoff can only decrease as exact hits arrive.
+	var cutoff atomic.Uint64
+	cutoff.Store(math.Float64bits(math.Inf(1)))
+	// A single worker must observe the coordinator's newly committed kth score
+	// before claiming the next candidate. Without this acknowledgement, even a
+	// one-worker buffered channel can run ahead and make pruning counts vary.
+	var singleWorkerAck chan struct{}
+	if plan.workers == 1 {
+		singleWorkerAck = make(chan struct{})
+	}
 	outcomes := make(chan candidateOutcome, plan.workers)
 	var workers sync.WaitGroup
 	workers.Add(plan.workers)
@@ -326,7 +341,17 @@ func runSearchWorkers(
 					}
 				}
 				var distance float64
-				if err == nil {
+				pruned := false
+				if err == nil && plan.envelope != nil {
+					// Before K exact hits exist, +Inf disables exclusion. Once the heap
+					// is full, a stale atomic cutoff may waste work but cannot hide
+					// a better hit because heap roots only improve over time.
+					threshold := math.Float64frombits(cutoff.Load())
+					if !math.IsInf(threshold, 1) {
+						pruned, err = certifiedKeoghPrune(workerContext, query, candidate, plan.envelope, threshold)
+					}
+				}
+				if err == nil && !pruned {
 					distance, err = scoreSquaredBand(
 						workerContext, query, candidate, plan.radius,
 						prev, curr, &visited, opts.MaxCells,
@@ -335,11 +360,18 @@ func runSearchWorkers(
 				if err != nil {
 					err = fmt.Errorf("dtw: candidate start=%d: %w", start, err)
 				}
-				// Sending even after cancellation allows the coordinator to account
-				// for every started task and to release all workers without a leak.
-				outcomes <- candidateOutcome{start: start, distance: distance, err: err}
+				// An errored candidate is never ranked. A certified prune counts
+				// toward completed admission but is not an exact scored hit.
+				outcomes <- candidateOutcome{start: start, distance: distance, err: err, pruned: pruned}
 				if err != nil {
 					return
+				}
+				if singleWorkerAck != nil {
+					select {
+					case <-singleWorkerAck:
+					case <-workerContext.Done():
+						return
+					}
 				}
 			}
 		}()
@@ -362,6 +394,16 @@ func runSearchWorkers(
 			cancel()
 			continue
 		}
+		if candidate.pruned {
+			result.CandidatesPruned++
+			if singleWorkerAck != nil {
+				select {
+				case singleWorkerAck <- struct{}{}:
+				case <-workerContext.Done():
+				}
+			}
+			continue
+		}
 		result.CandidatesCompleted++
 		hit := SearchHit{
 			Window:          IndexRange{Start: candidate.start, End: candidate.start + plan.length},
@@ -374,6 +416,15 @@ func runSearchWorkers(
 			best[0] = hit
 			heap.Fix(&best, 0)
 		}
+		if len(best) == plan.hitCap {
+			cutoff.Store(math.Float64bits(best[0].SquaredDistance))
+		}
+		if singleWorkerAck != nil {
+			select {
+			case singleWorkerAck <- struct{}{}:
+			case <-workerContext.Done():
+			}
+		}
 	}
 	result.CellsVisited = visited.Load()
 
@@ -384,7 +435,7 @@ func runSearchWorkers(
 	if firstError != nil {
 		return result, firstError
 	}
-	if result.CandidatesCompleted == result.CandidatesTotal {
+	if result.CandidatesCompleted+result.CandidatesPruned == result.CandidatesTotal {
 		result.Complete = true
 		return result, nil
 	}
