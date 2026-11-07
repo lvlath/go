@@ -12,7 +12,7 @@ import (
 	"math/bits"
 )
 
-// AlignBounded aligns two scalar sequences against an inclusive accumulated-cost limit.
+// alignBounded aligns two scalar sequences against an inclusive accumulated-cost limit.
 // It preserves Align's local-cost metric, window, penalty, and strict path witness;
 // the initial exact-first implementation computes the complete alignment before classification.
 //
@@ -56,7 +56,7 @@ import (
 // AI-Hints:
 //   - Do not turn a completed overflow into BoundAboveLimit merely because the limit is smaller.
 //   - Never call Align again with the same Option values: custom options may have stateful assembly.
-func AlignBounded(ctx context.Context, a, b []float64, limit float64, opts ...Option) (*BoundedResult, error) {
+func alignBounded(ctx context.Context, a, b []float64, limit float64, opts ...Option) (*BoundedResult, error) {
 	if ctx == nil {
 		return nil, ErrInvalidOption
 	}

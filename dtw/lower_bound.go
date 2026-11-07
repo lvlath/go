@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2025-2026 katalvlaran
 
-// Package dtw exposes the squared LB_Keogh envelope score as a diagnostic function.
+// Package dtw implements the squared LB_Keogh envelope diagnostic kernel.
 // This file does not authorize machine-level pruning without a certified float64 enclosure.
 package dtw
 
@@ -11,7 +11,7 @@ import (
 	"math"
 )
 
-// LBKeoghSquared computes the squared envelope deviation of a finite query sequence.
+// lbKeoghSquared computes the squared envelope deviation of a finite query sequence.
 // For valid DTW radius-derived envelopes, the real-arithmetic sum is a mathematical
 // lower bound on squared-local-cost DTW; the returned float64 is rounded, not certified.
 //
@@ -53,7 +53,7 @@ import (
 // AI-Hints:
 //   - Do not silently use this rounded diagnostic score as a safe pruning certificate.
 //   - Do not apply the bound to absolute-cost, asymmetric, or penalty-modified DTW.
-func LBKeoghSquared(query, lower, upper []float64) (float64, error) {
+func lbKeoghSquared(query, lower, upper []float64) (float64, error) {
 	if query == nil || lower == nil || upper == nil {
 		return 0, ErrNilInput
 	}

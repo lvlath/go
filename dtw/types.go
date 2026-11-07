@@ -93,33 +93,52 @@ type Coord struct {
 //   - Returned Path values are detached; callers may mutate them.
 //
 // Determinism:
-//   - Backtracking tie-break is diagonal first, then vertical/up, then horizontal/left.
+//   - The forward recurrence records diagonal, then up, then left on
+//     strict binary64 ties; backtracking follows those stored codes.
 //
 // Complexity:
 //   - Length is at most len(a)+len(b)-1 for the standard step set.
 type Path []Coord
 
-// CostFunc computes the local non-negative finite alignment cost for one scalar pair.
+// CostFunc computes one finite non-negative local cost for a scalar pair.
+// Its values define the additive objective of the existing DTW recurrence.
 //
-// What:
-//   - ai is the value from sequence A.
-//   - bj is the value from sequence B.
+// Implementation:
+//   - Stage 1: Align selects the configured callback after applying options.
+//   - Stage 2: the kernel evaluates each required pair once and validates its cost.
+//   - Stage 3: it reuses the validated value for dynamic programming and artifacts.
 //
 // Behavior highlights:
-//   - Returned costs must be finite and non-negative.
-//   - The kernel validates every returned cost before using it in the recurrence.
+//   - Without LocalCost output only admitted window cells invoke the callback.
+//   - With WithReturnLocalCost(true), every n-by-m cell is evaluated once,
+//     including off-band cells, and all local values must be representable.
+//
+// Inputs:
+//   - ai, bj: immutable scalar sample values; interpretation is caller-defined.
+//
+// Returns:
+//   - float64: finite non-negative local cost in the chosen metric units.
+//   - error: caller failure propagated unchanged or package numeric validation.
 //
 // Errors:
 //   - ErrNaNInf when the returned cost is NaN or Inf.
 //   - ErrNegativeCost when the returned cost is negative.
-//   - User-defined callback errors are propagated unchanged.
+//   - User-defined callback errors are propagated without replacing their identity.
+//
+// Determinism:
+//   - The callback must be pure and deterministic for equal input sample pairs.
 //
 // Complexity:
-//   - Called once per admissible DP cell, so it participates in O(n*m) time.
+//   - O(n*m) invocations with a full local artifact, or one per admitted cell
+//     otherwise; callback runtime is paid separately for each invocation.
+//
+// Notes:
+//   - No callback is invoked during path reconstruction. Concurrent mutation
+//     of caller state read by the callback is unsupported.
 //
 // AI-Hints:
-//   - Do not return signed distances from CostFunc.
-//   - Use AbsoluteCost or SquaredCost unless the domain explicitly requires another cost.
+//   - Do not use callback invocation order as a business-state protocol.
+//   - Use AbsoluteCost or SquaredCost unless a different metric is required.
 type CostFunc func(ai, bj float64) (float64, error)
 
 // Result is the canonical DTW result artifact.
@@ -130,15 +149,19 @@ type CostFunc func(ai, bj float64) (float64, error)
 //
 // Implementation:
 //   - Stage 1: Align validates options and inputs.
-//   - Stage 2: the kernel computes the row-major DP recurrence.
-//   - Stage 3: optional path and matrix artifacts are attached as detached result state.
+//   - Stage 2: the kernel computes the classified row-major DP recurrence
+//     and records incoming predecessors when requested.
+//   - Stage 3: optional path and matrix artifacts are attached as detached state.
 //
 // Behavior highlights:
-//   - Reachable=false means no admissible path exists under the active window policy.
-//   - Distance is +Inf when Reachable=false.
+//   - Reachable=false means the endpoint is structurally blocked by Window;
+//     Distance=+Inf in that case, not after a failed numeric calculation.
+//   - An unrepresentable terminal optimum returns nil with ErrOverflow.
 //   - Path is populated only when PathTracked=true and Reachable=true.
-//   - Accumulated is populated only when WithReturnAccumulated(true) is used.
-//   - LocalCost is populated only when WithReturnLocalCost(true) is used.
+//   - Accumulated is present only with WithReturnAccumulated(true); its numeric
+//     +Inf cells do not distinguish overflowed from unreachable intermediates.
+//   - LocalCost is a complete n-by-m artifact, including off-band cells, only
+//     when WithReturnLocalCost(true) was requested.
 //
 // Inputs:
 //   - Produced by Align, AlignCostMatrix, and AlignMatrix.
@@ -152,18 +175,20 @@ type CostFunc func(ai, bj float64) (float64, error)
 //
 // Determinism:
 //   - Path order is start-to-end.
-//   - Tie-break is diagonal first, then vertical/up, then horizontal/left.
+//   - Strict forward predecessor ties prefer diagonal, then up, then left;
+//     reconstructed paths follow those codes without cost subtraction.
 //
 // Complexity:
 //   - Result storage is O(1) without path/matrices.
 //   - Path storage is O(n+m).
-//   - Accumulated storage is O(n*m).
+//   - Accumulated or complete local-cost artifact storage is O(n*m).
 //
 // Nilability:
 //   - Methods on nil *Result never panic.
 //
 // AI-Hints:
 //   - Do not expose internal DP buffers directly.
+//   - A +Inf accumulated cell alone is not a structural reachability witness.
 //   - Use PathOrError instead of checking Path nilness when the distinction matters.
 type Result struct {
 	Distance  float64

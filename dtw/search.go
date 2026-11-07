@@ -30,11 +30,6 @@ type searchPlan struct {
 	envelope  *searchEnvelope // Optional immutable machine-pruning certificate.
 }
 
-// move to api.gp and discribe!
-func Search(ctx context.Context, query, data []float64, opts SearchOptions) (*SearchResult, error) {
-	return searchFixedWindows(ctx, query, data, opts)
-}
-
 // searchFixedWindows finds the globally exact top-K fixed-length squared-DTW windows in a scalar series.
 // Candidate starts are 0,Stride,... with complete query-length coverage; excluded *starts*
 // are removed before scoring. This is not an open-boundary subsequence-DTW algorithm.
