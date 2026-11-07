@@ -145,7 +145,7 @@ lvlath/
 ├── dijkstra/              # full SSSP + Dijkstra/A* target-search family
 ├── mst/                   # Prim/Kruskal MST/MSF, KMB Steiner networks, tree-covering walks
 ├── flow/                  # Ford-Fulkerson, Edmonds-Karp, Dinic
-├── dtw/                   # dynamic time warping for numeric sequences
+├── dtw/                   # temporal alignment, bounded outcomes and exact window search
 ├── gridgraph/             # 2D lattice graph generation
 ├── matrix/                # dense graph algebra and statistics
 ├── tsp/                   # tour construction, local search, exact small-instance routing
@@ -160,6 +160,7 @@ lvlath/
 │   ├── MST.md
 │   ├── FLOW.md
 │   ├── DTW.md
+│   ├── DTW_SEARCH.md
 │   ├── GRID_GRAPH.md
 │   ├── MATRICES.md
 │   ├── TSP.md
@@ -252,7 +253,7 @@ Composition rule:
 | `dijkstra`  | Full-SSSP Dijkstra plus target Dijkstra, bidirectional Dijkstra, consistent A*, balanced bidirectional A*.                                         | Deterministic original `EdgeIDs`, detached `PathResult`, exact target cutoff/keys and certified stopping.      | Weighted routing, mixed multigraph logistics, grids, network failover.        |
 | `mst`       | Prim/Kruskal exact MST/MSF; original-edge KMB graph Steiner approximation; closed/fixed-end tree-edge covering walks. | Shared deterministic Kruskal/DSU selection, original IDs, independent tree validation and distinct network/travel costs. | Fiber/chiplet routing backbones, terminal-only connections, inspection walks. |
 | `flow`      | Ford-Fulkerson, Edmonds-Karp, and Dinic over `core.Graph`, returning max flow and residual graph.                                                  | Preserves residual semantics and supports algorithm selection from simple to high-throughput.                  | Capacity planning, traffic engineering, assignment models, min-cut analysis.  |
-| `dtw`       | Dynamic Time Warping with window, slope penalty, memory modes, and optional path recovery.                                                         | Aligns sequences that share a pattern but differ in speed or local timing.                                     | Sensors, gestures, audio contours, time-series similarity.                    |
+| `dtw`       | General Dynamic Time Warping, bounded classification, certified exact top-K fixed-length squared-scalar window search.                                                         | Aligns sequences that share a pattern but differ in speed or local timing.                                     | Sensors, gestures, audio contours, time-series similarity.                    |
 | `gridgraph` | 2D lattice graph generation with neighborhood and obstacle-style workflows.                                                                        | Avoids manual wiring for pathfinding maps and teaching graphs.                                                 | Grid routing, maps, demos, benchmark fixtures.                                |
 | `matrix`    | Dense row-major matrices, adjacency/incidence, metric closure, APSP, algebra, LU/QR/Eigen, covariance/correlation, sanitation.                     | Connects graph topology to numeric workflows without losing zero/`+Inf`/metric semantics.                      | Spectral analysis, graph features, routing matrices, risk/ML preprocessing.   |
 | `tsp`       | Tour optimization toolkit: practical approximation/local search/exact small-instance strategies.                                                   | Bridges exactness and practicality for route planning.                                                         | Delivery tours, inspection routes, metric routing experiments.                |
@@ -301,7 +302,8 @@ Target methods require **exactly representable binary64 stored costs and heurist
 | Shortest paths spec   | [`docs/DIJKSTRA.md`](docs/DIJKSTRA.md)       | Full SSSP vs four target methods, consistency proofs, balanced potentials, exact arithmetic and runnable scenarios. |
 | MST spec             | [`docs/MST.md`](docs/MST.md)                 | Exact Prim/Kruskal, KMB Steiner approximation, tree-covering walks, original IDs, numeric/error contracts. |
 | Flow spec            | [`docs/FLOW.md`](docs/FLOW.md)               | Max-flow/min-cut math, residual networks, Ford-Fulkerson, Edmonds-Karp, Dinic.              |
-| DTW spec             | [`docs/DTW.md`](docs/DTW.md)                 | Dynamic programming alignment, windows, penalties, memory modes, path recovery.             |
+| DTW spec             | [`docs/DTW.md`](docs/DTW.md)                 | Dynamic programming, numeric classification, windows, penalties and path recovery.         |
+| DTW exact search      | [`docs/DTW_SEARCH.md`](docs/DTW_SEARCH.md)   | Bounded classification, fixed-length top-K, certified pruning, budgets and worker law.       |
 | Grid spec            | [`docs/GRID_GRAPH.md`](docs/GRID_GRAPH.md)   | Grid/lattice graph modeling and pathfinding-oriented construction.                          |
 | Matrix spec          | [`docs/MATRICES.md`](docs/MATRICES.md)       | Dense matrix model, graph adapters, metric closure, zero-shape/statistics/numeric policy.   |
 | TSP spec             | [`docs/TSP.md`](docs/TSP.md)                 | Tour optimization, exact vs approximate methods, metric assumptions.                        |

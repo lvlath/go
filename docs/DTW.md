@@ -24,6 +24,7 @@
     - Legacy tuple-returning DTW wrapper for compatibility.
     - Optional deterministic path reconstruction.
     - Optional accumulated-cost and local-cost matrix artifacts.
+    - Bounded alignment and certified exact fixed-length top-K window search.
 
   License:
     The lvlath repository is licensed under AGPL-3.0-only. See LICENSE.
@@ -41,11 +42,14 @@ The package is not a generic “compare two slices” snippet. It is a contract-
 
 ## 8.1. Header & Opening
 
-`lvlath/dtw` exposes three canonical facades and one legacy wrapper:
+`lvlath/dtw` exposes general alignment facades, two explicit search facades, an envelope diagnostic, and one legacy wrapper:
 
 - `Align` compares scalar `[]float64` sequences.
 - `AlignCostMatrix` compares a caller-provided finite non-negative local-cost matrix.
 - `AlignMatrix` compares multivariate time series stored as `matrix.Matrix`, with rows as time steps and columns as features.
+- `AlignBounded` classifies an exact scalar alignment against an inclusive cost limit.
+- `Search` returns global exact top-K fixed-length windows under squared scalar local costs.
+- `LBKeoghSquared` reports a rounded diagnostic envelope score, not a standalone pruning certificate.
 - `DTW` preserves the old tuple-returning API and delegates to the same scalar recurrence.
 
 All canonical facades return `*Result`, a detached artifact that records accumulated distance, reachability under policy, path-tracking state, effective options, and optional matrix surfaces.
@@ -60,11 +64,11 @@ A correct DTW consumer should ask four questions: did validation pass, is the fi
 
 1. **Determinism Law**
 
-   The forward dynamic-programming loop is row-major: `i` ascending, then `j` ascending. Matrix local costs are materialized in row-major order. Backtracking uses a fixed predecessor tie-break: diagonal, then vertical/up, then horizontal/left. Equal-cost alignments therefore publish one stable representative optimal path.
+   The general forward dynamic-programming loop is row-major: `i` ascending, then `j` ascending. Matrix local costs are materialized in row-major order. The selected predecessor is recorded during forward recurrence with strict diagonal, then up, then left priority; backtracking follows those codes without cost subtraction. Equal-cost alignments therefore publish one stable representative optimal path.
 
 2. **Numeric Discipline Law**
 
-   Scalar samples are finite by default. Matrix inputs for `AlignMatrix` must pass finite validation. Local costs must always be finite and non-negative. `+Inf` is reserved for unreachable accumulated DP states and no-path results. `NaN` is never valid.
+   Scalar samples are finite by default. Matrix inputs for `AlignMatrix` must pass finite validation. Local costs must always be finite and non-negative. `+Inf` is the public no-path distance, but a full accumulated matrix may also contain an overflowed reachable prefix. Internally those states are separately classified; final optimal overflow returns `ErrOverflow`, never a false no-path result. `NaN` is never a valid local or exact distance.
 
 3. **Policy-Gated Warping Law**
 
@@ -88,7 +92,7 @@ A correct DTW consumer should ask four questions: did validation pass, is the fi
 
 ### 8.3.2. What the Package Does Not Do
 
-The package intentionally does not provide automatic normalization, smoothing, resampling, interpolation, imputation, streaming DTW, approximate DTW, all-pairs batch DTW, exhaustive optimal-path enumeration, classifier calibration, probability-to-cost conversion, hidden feature weighting, snapshot isolation for caller-owned inputs, concurrent mutation support, metric guarantees, or `O(1)` exact DTW memory.
+The general alignment facades do not provide automatic normalization, smoothing, resampling, interpolation, imputation, streaming DTW, approximate DTW, all-pairs batch DTW, exhaustive optimal-path enumeration, classifier calibration, probability-to-cost conversion, hidden feature weighting, snapshot isolation for caller-owned inputs, concurrent mutation support, metric guarantees, or `O(1)` exact DTW memory. The separate `Search` facade implements independent optional population z-normalization for fixed-length squared-scalar windows only.
 
 `AlignMatrix` uses squared L2 row distance. It does not normalize columns and does not take square roots. Feature scaling is caller responsibility.
 
@@ -170,9 +174,7 @@ Expanded over feature dimension `d`:
 
 $$ c(i,j)=\sum_{\ell=1}^{d}\left(X_{i-1,\ell}-Y_{j-1,\ell}\right)^2 $$
 
-The matrix-backed construction can be understood as:
-
-$$ C_{ij}=\|X_i\|_2^2+\|Y_j\|_2^2-2X_iY_j^\top $$
+The implementation subtracts corresponding coordinates first, then accumulates squared differences with scaling to protect representable results from intermediate overflow and cancellation. It does **not** use the unstable norm/dot-product identity `x²+y²−2xy` as its numeric kernel.
 
 ### 8.4.5. Window Policy
 
@@ -182,7 +184,7 @@ $$ A_w=\{(i,j)\mid 1\le i\le n,\;1\le j\le m,\;w=-1\;\lor\;|i-j|\le w\} $$
 
 Cells outside `A_w` are not usable predecessor targets and are published as `+Inf` in accumulated state when the matrix is stored.
 
-Important implementation note: the current kernels still scan the rectangular DP grid. The window restricts admissible states and skips scalar local-cost evaluation outside the band, but the worst-case loop structure remains `O(n*m)`. For `AlignMatrix`, local-cost construction occurs before window gating.
+Important implementation note: the current kernels still scan the rectangular DP grid. The window restricts admissible states and skips scalar local-cost evaluation outside the band, but the general `Align`/matrix DP still scans an `O(n*m)` grid. The specialized fixed-length `Search` scorer visits only admitted band cells, costing `O(L*b)` per candidate. `AlignMatrix` still constructs its complete local-cost surface before window gating.
 
 ### 8.4.6. Complexity by Phase
 
@@ -192,7 +194,7 @@ Let `n` be first length or row count, `m` be second length or row count, `d` be 
 |:------------------------|:-------------------------------------------|:-----------------------------------------------------|:------------------------------------------------------|
 | Option assembly         | `O(k)` time, `O(1)` space                  | `O(k)` time, `O(1)` space                            | `O(k)` time, `O(1)` space                             |
 | Input validation        | `O(n+m)` when finite validation is enabled | `O(n*m)` while materializing and validating costs    | matrix finite validation plus local-cost construction |
-| Local-cost construction | inside DP for admissible scalar cells      | caller-provided, materialized to flat `O(n*m)` slice | conceptual `O(n*m*d)` plus matrix intermediates       |
+| Local-cost construction | inside DP for admissible scalar cells      | caller-provided, materialized to flat `O(n*m)` slice | `O(n*m*d)` scaled per-row costs       |
 | DP recurrence           | `O(n*m)` time                              | `O(n*m)` time                                        | `O(n*m)` after cost construction                      |
 | Distance-only DP memory | `O(m)` rolling rows                        | `O(m)` rolling rows plus flat local costs            | `O(m)` rolling rows plus local matrix                 |
 | Full matrix/path memory | `O(n*m)`                                   | `O(n*m)`                                             | `O(n*m)`                                              |
@@ -211,6 +213,12 @@ func Align(a, b []float64, opts ...Option) (*Result, error)
 func AlignCostMatrix(local matrix.Matrix, opts ...Option) (*Result, error)
 
 func AlignMatrix(x, y matrix.Matrix, opts ...Option) (*Result, error)
+
+func AlignBounded(ctx context.Context, a, b []float64, limit float64, opts ...Option) (*BoundedResult, error)
+
+func Search(ctx context.Context, query, data []float64, opts SearchOptions) (*SearchResult, error)
+
+func LBKeoghSquared(query, lower, upper []float64) (float64, error)
 
 func DTW(a, b []float64, legacy *Options) (dist float64, path []Coord, err error)
 ```
@@ -278,6 +286,7 @@ func (r *Result) Clone() *Result
 | Reachable distance, path requested        | `Result`, `nil`                           | Alignment exists; path is authoritative.                                   | Use `Path` or `PathOrError`.                             |
 | No admissible path, path not requested    | `Result`, `nil`                           | Final cell is unreachable; `Distance=+Inf`, `Reachable=false`.             | Treat as blocked by policy.                              |
 | No admissible path, path requested        | `Result`, `ErrNoPath`                     | Unreachable state is known; path cannot be published.                      | Use `errors.Is(err, ErrNoPath)` and inspect `Reachable`. |
+| Terminal optimal cost overflow           | `nil`, `ErrOverflow` joined with `ErrNaNInf` | Reachable optimal cost cannot be represented.                         | Treat as numerical failure, not unreachable.                  |
 | Invalid scalar input/options/matrix input | `nil`, `error`                            | No valid result artifact exists.                                           | Fix input/policy; classify with `errors.Is`.             |
 | Path not tracked but requested later      | `PathOrError` returns `ErrPathNotTracked` | Valid distance result; path was not requested.                             | Re-run with `WithReturnPath(true)`.                      |
 | Nil result helper call                    | `PathOrError` returns `ErrNilResult`      | Caller used a nil result pointer.                                          | Fix caller state.                                        |
@@ -319,7 +328,7 @@ Options are runtime policies. They do not mutate input slices or input matrices.
 | finite float64  | allowed                  | allowed if non-negative | allowed                            |
 | negative finite | allowed as scalar sample | rejected as local cost  | not expected from valid policy     |
 | `NaN`           | rejected by default      | rejected                | never valid                        |
-| `+Inf`          | rejected by default      | rejected                | valid only as unreachable sentinel |
+| `+Inf`          | rejected by default      | rejected                | structural no-path **or reachable overflow** inside accumulated artifacts; final overflow is error |
 | `-Inf`          | rejected by default      | rejected                | never valid                        |
 
 `WithValidateFinite(false)` only disables scalar input finite checks. It does not allow invalid local costs and does not weaken matrix input validation for `AlignMatrix`.
@@ -336,6 +345,7 @@ var (
 	ErrInvalidWindow   = errors.New("dtw: invalid window")
 	ErrInvalidPenalty  = errors.New("dtw: invalid slope penalty")
 	ErrNaNInf          = errors.New("dtw: NaN or Inf encountered")
+	ErrOverflow        = errors.New("dtw: optimal cost exceeds finite float64 range")
 	ErrNoPath          = errors.New("dtw: no admissible warping path")
 	ErrPathNeedsMatrix = errors.New("dtw: path tracking requires FullMatrix")
 	ErrPathNotTracked  = errors.New("dtw: path was not tracked")
@@ -343,6 +353,11 @@ var (
 	ErrNilResult       = errors.New("dtw: nil result")
 	ErrNilCostFunc     = errors.New("dtw: nil cost function")
 	ErrNegativeCost    = errors.New("dtw: negative local cost")
+	ErrInvalidOption   = errors.New("dtw: invalid search option")
+	ErrShape           = errors.New("dtw: invalid search shape")
+	ErrNonFinite       = errors.New("dtw: nonfinite search input")
+	ErrZeroVariance    = errors.New("dtw: zero population variance")
+	ErrBudget          = errors.New("dtw: search resource budget exceeded")
 )
 ```
 
@@ -373,229 +388,52 @@ Rules:
 
 ## 8.7. Algorithmic Architecture & Pseudocode
 
-### 8.7.1. Kernel Model
+### 8.7.1. Shared Classified Recurrence
 
-The package has two DP entry families:
-
-1. scalar kernel: validates scalar slices and computes local scalar cost inside the DP loop;
-2. flat local-cost kernel: consumes a row-major local-cost slice and is used by `AlignCostMatrix` and `AlignMatrix`.
-
-Both kernels share the same recurrence, boundary law, window law, no-path classification, and backtracking tie-break.
-
-### 8.7.2. Canonical Execution Stages
+General scalar and precomputed-cost DTW use one classified predecessor recurrence. Each
+DP cell has one of `dpUnreachable` (no structural path), `dpFinite` (finite optimal
+prefix), or `dpOverflow` (reachable but unrepresentable prefix). A finite candidate
+wins over overflow; strict finite minima preserve diagonal, then up, then left.
 
 ```text
-STAGE 1: Option Assembly
-  apply user options
-  reject nil options
-  validate window, penalty, memory mode, callback policy
-  derive FullMatrix storage when path or accumulated matrix is requested
-
-STAGE 2: Input / Adapter Validation
-  scalar Align:
-    reject nil or empty input slices
-    reject NaN and ±Inf samples by default
-
-  AlignCostMatrix:
-    reject nil matrix
-    reject zero rows or zero columns
-    reject NaN, ±Inf, and negative local costs
-    materialize row-major costs
-
-  AlignMatrix:
-    reject nil matrices
-    reject empty time axes
-    reject feature-dimension mismatch
-    reject non-finite matrix input
-    construct squared-L2 local-cost matrix
-
-STAGE 3: State Initialization
-  allocate rolling rows
-  set D(0,0)=0
-  set prefix row/column to +Inf
-  allocate accumulated matrix only when needed
-  allocate local-cost artifact only when requested
-
-STAGE 4: DP Recurrence
-  scan rows in ascending order
-  scan columns in ascending order
-  apply window wall
-  compute or read local cost
-  choose stable minimum predecessor
-  publish accumulated/local-cost cells when requested
-
-STAGE 5: Final Classification
-  read final distance from D(n,m)
-  create Result with policy fields
-  if final distance is +Inf:
-    publish unreachable result
-    return ErrNoPath only if path tracking was requested
-
-STAGE 6: Backtracking and Publication
-  if path requested and reachable:
-    backtrack from D(n,m)
-    apply tie-break diagonal -> up -> left
-    reverse path
-    publish Result
+STAGE 1  Validate existing API options/input in their established order.
+STAGE 2  Allocate two rolling classified rows; allocate predecessors only for path.
+         Full Accumulated and LocalCost artifacts are independent opt-in storage.
+STAGE 3  If a full LocalCost artifact is requested, evaluate every n*m local cost
+         exactly once, including cells outside the admitted warping window.
+STAGE 4  For each ordinary admitted cell in row-major order:
+           obtain its local cost from the cache or invoke callback once
+           reject NaN, infinity and negative local costs
+           diag = previous diagonal state
+           up   = previous vertical state + slope penalty
+           left = current horizontal state + slope penalty
+           choose strict minimum (finite < overflow < unreachable)
+           state = checked_add(chosen predecessor, local)
+           save chosen predecessor code during forward computation when requested
+           publish full accumulated cell if requested
+STAGE 5  Classify final cell:
+           unreachable -> Result{Distance:+Inf,Reachable:false}; ErrNoPath iff path
+           overflow    -> nil, ErrOverflow joined with ErrNaNInf
+           finite      -> Result{Distance:finite,Reachable:true}
+STAGE 6  If path requested, follow recorded predecessor codes backwards and
+         reverse once; NEVER re-evaluate the callback or subtract local cost.
 ```
 
-### 8.7.3. Scalar Kernel Pseudocode
+### 8.7.2. Numeric Operations and Bounded Search
 
-```text
-FUNCTION Align(a, b, options):
-  cfg = applyOptions(options)
-  IF cfg invalid:
-    RETURN nil, error
+Finite inputs and local costs remain separate from overflow of their sums. Addition
+uses the established float64 operation order, with a checked `MaxFloat64` boundary.
+It is not an exact-real shortest-path oracle; deterministic strict comparison is
+performed on the resulting floating states.
 
-  RETURN compute(a, b, cfg)
-```
+`AlignBounded` retains this general recurrence and then classifies the completed
+result against an inclusive limit. `Search`, by contrast, uses a specialized equal-length
+squared-local-cost scorer with two `O(b)` rows and actual admitted-column loops,
+where `b=min(L,2r+1)` for nonnegative `r` or `L` when unconstrained. Both use the
+same classified numeric and strict minimum primitives, not two conflicting DTW laws.
 
-```text
-FUNCTION compute(a, b, cfg):
-  IF a == nil OR b == nil:
-    RETURN nil, ErrNilInput
-
-  IF len(a) == 0 OR len(b) == 0:
-    RETURN nil, ErrEmptyInput
-
-  IF cfg.validateFinite:
-    REJECT NaN and ±Inf samples
-
-  n = len(a)
-  m = len(b)
-  prevRow = make(m + 1)
-  currRow = make(m + 1)
-
-  prevRow[0] = 0
-  FOR j = 1..m:
-    prevRow[j] = +Inf
-
-  IF full accumulated storage is required:
-    accumulated = Dense(n+1, m+1)
-    fill accumulated with +Inf
-    accumulated[0,0] = 0
-
-  IF local-cost artifact requested:
-    localCost = Dense(n, m)
-
-  FOR i = 1..n:
-    currRow[0] = +Inf
-
-    FOR j = 1..m:
-      IF cfg.window >= 0 AND abs(i-j) > cfg.window:
-        currRow[j] = +Inf
-        IF accumulated exists:
-          accumulated[i,j] = +Inf
-        CONTINUE
-
-      local = cfg.costFunc(a[i-1], b[j-1])
-      VALIDATE local is finite and non-negative
-
-      IF localCost exists:
-        localCost[i-1,j-1] = local
-
-      match  = prevRow[j-1]
-      up     = prevRow[j]   + cfg.slopePenalty
-      left   = currRow[j-1] + cfg.slopePenalty
-      best   = min3Stable(match, up, left)
-
-      currRow[j] = local + best
-
-      IF accumulated exists:
-        accumulated[i,j] = currRow[j]
-
-    SWAP(prevRow, currRow)
-
-  distance = prevRow[m]
-  result = Result{Distance: distance, Reachable: distance is not +Inf, ...}
-
-  attach requested matrix artifacts
-
-  IF result is unreachable:
-    IF cfg.returnPath:
-      RETURN result, ErrNoPath
-    RETURN result, nil
-
-  IF cfg.returnPath:
-    result.Path = backtrackDense(accumulated, a, b, cfg)
-
-  RETURN result, nil
-```
-
-### 8.7.4. Flat Local-Cost Kernel Pseudocode
-
-```text
-FUNCTION computeFromFlatLocal(costs, rows, cols, cfg):
-  VALIDATE rows > 0 and cols > 0
-  VALIDATE len(costs) == rows * cols
-  VALIDATE every cost is finite and non-negative
-
-  initialize rolling rows and optional accumulated matrix
-
-  FOR i = 1..rows:
-    currRow[0] = +Inf
-
-    FOR j = 1..cols:
-      IF cfg.window >= 0 AND abs(i-j) > cfg.window:
-        currRow[j] = +Inf
-        publish +Inf into accumulated if present
-        CONTINUE
-
-      local = costs[(i-1)*cols + (j-1)]
-      currRow[j] = local + min3Stable(
-        prevRow[j-1],
-        prevRow[j] + penalty,
-        currRow[j-1] + penalty,
-      )
-
-      publish accumulated if present
-
-    SWAP(prevRow, currRow)
-
-  classify final distance
-  backtrack from accumulated matrix if requested
-  publish Result
-```
-
-### 8.7.5. Backtracking Pseudocode
-
-```text
-FUNCTION backtrack(accumulated, localCostSource, rows, cols, cfg):
-  IF accumulated == nil:
-    RETURN ErrPathNeedsMatrix
-
-  i = rows
-  j = cols
-  path = empty list
-
-  WHILE i > 0 OR j > 0:
-    IF i == 0 OR j == 0:
-      RETURN ErrIncompletePath
-
-    append Coord{I:i-1, J:j-1}
-
-    current = accumulated[i,j]
-    local = localCost(i-1, j-1)
-    target = current - local
-
-    IF equalCost(target, accumulated[i-1,j-1], cfg.tieEpsilon):
-      i--
-      j--
-      CONTINUE
-
-    IF equalCost(target, accumulated[i-1,j] + cfg.slopePenalty, cfg.tieEpsilon):
-      i--
-      CONTINUE
-
-    IF equalCost(target, accumulated[i,j-1] + cfg.slopePenalty, cfg.tieEpsilon):
-      j--
-      CONTINUE
-
-    RETURN ErrIncompletePath
-
-  reverse(path)
-  RETURN path
-```
+For the exact top-K window search, see [DTW_SEARCH.md](DTW_SEARCH.md) for the
+independent oracle, certified bounds, memory budgets, cancellation, and workers.
 
 ---
 
@@ -662,29 +500,29 @@ Reachable publication:
   last path point  = {n-1,m-1}
 ```
 
-### 8.8.3. Equal-Cost Tie-Break Under Backtracking
+### 8.8.3. Forward Predecessor Selection and Deterministic Witness
 
 ```text
-                           Backtracking target
-                    target = D(i,j) - localCost(i,j)
+                   Forward cell (i,j)
+                           │
+         ┌─────────────────┼──────────────────┐
+         ▼                 ▼                  ▼
+    D(i-1,j-1)        D(i-1,j)+p         D(i,j-1)+p
+      diagonal          vertical             left
+         │                 │                  │
+         └─────────────────┼──────────────────┘
+                           ▼
+              strict minimum on classified
+                accumulated predecessors
+                           │
+                           ▼
+                 checked_add(best, local)
+                           │
+                           ▼
+                  store predecessor code
 
-                         ┌─────────────────────┐
-                         │      D(i-1,j)       │
-                         │      vertical/up    │
-                         └──────────┬──────────┘
-                                    │  candidate + p
-                                    ▼
-┌─────────────────────┐     ┏━━━━━━━━━━━━━━━┓     ┌─────────────────────┐
-│     D(i-1,j-1)      │ ──▶ ┃    D(i,j)     ┃ ◀── │      D(i,j-1)       │
-│      diagonal       │     ┃ current cell  ┃     │   horizontal/left   │
-└─────────────────────┘     ┗━━━━━━━━━━━━━━━┛     └─────────────────────┘
-       candidate                         ▲                 candidate + p
-
-Tie-break law:
-  1. if diagonal explains target, choose diagonal
-  2. else if vertical/up explains target, choose up
-  3. else if horizontal/left explains target, choose left
-  4. else ErrIncompletePath
+Equal finite predecessor cost: diagonal -> up -> left.
+Backtracking follows the saved code; it does not subtract local costs from D.
 ```
 
 ### 8.8.4. Strict Diagonal No-Path Cutoff
@@ -1064,9 +902,9 @@ func main() {
 
 ### 8.10.2. Matrix Artifact Law
 
-`Result.Accumulated` is the DP surface `D`. It is useful for heatmaps, debugging, path explanation, and predecessor inspection.
+`Result.Accumulated` is the DP surface `D`. It is useful for heatmaps and diagnostics. It may contain `+Inf` both for structurally blocked and reachable-but-overflowed intermediate states; that numeric artifact alone does not encode the private class or saved predecessor codes.
 
-`Result.LocalCost` is the local cost surface `C`. It is useful for checking feature scale, acoustic model behavior, embedding distances, and externally supplied cost surfaces.
+`Result.LocalCost` is the **complete** local cost surface `C`, including cells outside `Window`. It is useful for checking feature scale, acoustic model behavior, embedding distances, and externally supplied cost surfaces. A pure deterministic callback is evaluated once per published cell.
 
 Returned matrix artifacts are not live views into caller input.
 
@@ -1092,9 +930,40 @@ Backtracking failures such as `ErrIncompletePath` indicate that a finite forward
 
 ---
 
-## 8.11. Pitfalls & Best Practices
+## 8.11. Bounded Alignment and Exact Window Search
 
-### 8.11.1. Anti-Patterns
+`AlignBounded(ctx,a,b,limit,opts...)` uses the normal scalar DTW metric and
+published options; its result is `BoundExact` (finite distance and equal lower
+bound), `BoundAboveLimit` (`Distance=NaN`, certified `LowerBound>limit`) or
+`BoundUnreachable` (both distances `+Inf`). Final numerical overflow is still an
+error. It currently computes the full alignment and does not promise early exit.
+
+`Search(ctx,query,data,options)` ranks complete windows of length `len(query)`.
+Each window uses squared scalar costs, no callbacks or penalties, and optional
+independent population z normalization. `SearchOptions{}` is invalid; obtain
+`DefaultSearchOptions()` before changing policy. `Radius=-1` means unconstrained,
+`Radius=0` means strict diagonal. Excluded starts use half-open intervals.
+
+When `Complete=true`, `CandidatesCompleted+CandidatesPruned=CandidatesTotal` and
+Hits is the exact global top-K sorted `(SquaredDistance,Start,End)`. The machine
+certificate may prune candidates strictly above the current finite kth score;
+`LBKeoghSquared` alone is only a rounded diagnostic. Certification requires a
+radius-derived envelope, finite local domain, a finite diagonal witness, and
+monotone checked accumulation. If any condition is uncertain, the full scorer
+runs. Equal lower bound and cutoff are never pruned.
+
+When interrupted, Hits represents only **completed** candidates and is not a
+certified global ranking. Search owns its result slices; workers have independent
+scratch, and the configured cell budget never counts pruned candidate cells.
+`MaxWorkingBytes` governs explicitly accounted workspace and may disable optional
+envelope construction without altering the exact scorer. See
+[DTW_SEARCH.md](DTW_SEARCH.md) for full details, proof, examples and benchmarks.
+
+---
+
+## 8.12. Pitfalls & Best Practices
+
+### 8.12.1. Anti-Patterns
 
 > **Do not treat `Window=0` as unconstrained.** It is strict diagonal alignment. Use `Window=-1` for no band.
 
@@ -1116,7 +985,7 @@ Backtracking failures such as `ErrIncompletePath` indicate that a finite forward
 
 > **Do not document `NoMemory` as `O(1)` exact DTW.** It is a deprecated compatibility alias for rolling-row distance mode.
 
-### 8.11.2. Best Practices
+### 8.12.2. Best Practices
 
 > **Choose the correct facade.** Use `Align` for scalar signals, `AlignCostMatrix` for external cost surfaces, and `AlignMatrix` for row-wise multivariate time series.
 

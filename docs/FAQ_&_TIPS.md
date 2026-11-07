@@ -110,9 +110,9 @@ Graph options define the mathematical universe of the graph.
 
 ```go
 g, err := core.NewGraph(
-	core.WithDirected(true),
-	core.WithWeighted(),
-	core.WithLoops(),
+core.WithDirected(true),
+core.WithWeighted(),
+core.WithLoops(),
 )
 ```
 
@@ -221,15 +221,15 @@ ctx, cancel := context.WithCancel(context.Background())
 defer cancel()
 
 res, err := bfs.BFS(
-	g,
-	"gateway",
-	bfs.WithContext(ctx),
-	bfs.WithOnVisit(func(id string, depth int) error {
-		if id == "ledger" {
-			cancel()
-		}
-		return nil
-	}),
+g,
+"gateway",
+bfs.WithContext(ctx),
+bfs.WithOnVisit(func(id string, depth int) error {
+if id == "ledger" {
+cancel()
+}
+return nil
+}),
 )
 
 _ = res
@@ -358,11 +358,11 @@ Use:
 ```go
 cost, err := result.DistanceTo(targetID)
 if err != nil {
-	// Handle empty or unknown target.
+// Handle empty or unknown target.
 }
 
 if math.IsInf(cost, 1) {
-	// The target is known but unreachable under the active policy.
+// The target is known but unreachable under the active policy.
 }
 ```
 
@@ -557,11 +557,11 @@ For telemetry or external data, sanitize first:
 ```go
 clean, err := matrix.ReplaceInfNaN(raw, 0)
 if err != nil {
-	return err
+return err
 }
 clean, err = matrix.Clip(clean, 0, 100)
 if err != nil {
-	return err
+return err
 }
 ```
 
@@ -573,9 +573,9 @@ If a finite zero is a real edge, use a matrix policy that preserves zero weights
 
 ```go
 opts, err := matrix.NewMatrixOptions(
-	matrix.WithDirected(),
-	matrix.WithWeighted(),
-	matrix.WithPreserveZeroWeights(),
+matrix.WithDirected(),
+matrix.WithWeighted(),
+matrix.WithPreserveZeroWeights(),
 )
 ```
 
@@ -697,7 +697,7 @@ AlignMatrix:
   DP recurrence:           O(n*m)
 ```
 
-A window can restrict admissible cells, but do not oversell it as a universal complexity fix. In the current contract, the rectangular DP structure remains `O(n*m)`; the window controls valid states and prevents unrealistic warping.
+A window can restrict admissible cells, but do not oversell it as a universal complexity fix. The general `Align` DP still scans `O(n*m)` cells, while fixed-length `Search` runs a true band-only scorer with `O(L*b)` worst-case DP work per candidate, `b=min(L,2r+1)` or `L` unconstrained. Certification may reduce evaluated windows but does not guarantee universal speedup.
 
 Use a smaller window when domain knowledge says the alignment should stay near the diagonal. Use distance-only mode when you do not need a path or diagnostic matrices.
 
@@ -745,15 +745,15 @@ A path is one deterministic optimal path, not all optimal paths. Backtracking ti
 
 ### Q8.5. Why did DTW return `Reachable=false` or `+Inf` distance?
 
-`+Inf` in DTW is not a dirty local cost. It means the final cell is unreachable under the active policy.
+`+Inf` in a successful final `Result` means the endpoint is structurally unreachable. An internal reachable prefix may also overflow, but **final optimal overflow returns `ErrOverflow`**, joined with `ErrNaNInf`; it is never silently published as unreachable.
 
 Common causes:
 
 * window too narrow;
 * strict diagonal mode for unequal or phase-shifted sequences;
-* local-cost matrix has no admissible route;
+* local-cost matrix shape and the selected window admit no endpoint-to-endpoint route;
 * path requested but policy makes the endpoint unreachable;
-* slope/window combination blocks all practical paths.
+* the endpoint lies outside the admissible window (penalty changes costs, not structural reachability).
 
 A good debugging progression:
 
@@ -779,7 +779,7 @@ not +Inf
 not -Inf
 ```
 
-`+Inf` belongs to accumulated DP states as “unreachable,” not to caller-provided local costs. `AlignCostMatrix` therefore rejects `NaN`, infinities, and negative costs. `AlignMatrix` validates finite matrix inputs. `Align` validates scalar inputs by default.
+`+Inf` is prohibited in caller-provided local costs. A full accumulated artifact may represent structural absence or an overflowing reachable intermediate prefix with `+Inf`; final overflow is a classified error. `AlignCostMatrix` therefore rejects `NaN`, infinities, and negative costs. `AlignMatrix` validates finite matrix inputs. `Align` validates scalar inputs by default.
 
 ### Q8.7. Should I normalize time-series data before DTW?
 
@@ -834,6 +834,44 @@ LocalCost:
 ```
 
 Use `PathOrError` when you need to distinguish nil result, unreachable result, and path-not-tracked state.
+
+### Q8.9. When should I use `AlignBounded` instead of `Align`?
+
+Use `AlignBounded(ctx,a,b,limit,opts...)` when the caller needs an explicit
+inclusive cutoff classification. `BoundExact` has a finite exact Distance;
+`BoundAboveLimit` sets Distance to `NaN` and publishes a certified LowerBound
+above limit; `BoundUnreachable` uses `+Inf` for both fields. The current
+bounded API still performs the full canonical recurrence. It rejects
+unpublishable local/accumulated matrix artifacts rather than silently ignoring
+those options. A final overflow remains an error, not a cutoff.
+
+### Q8.10. Is `Search` a globally exact subsequence search?
+
+`Search` is **globally exact over fixed-length candidate windows** of length
+`len(query)` at admitted stride-aligned starts. It is *not* open-boundary
+subsequence DTW. Scoring uses squared local differences, no callback, and no
+slope penalty. ExcludedStarts are half-open **start-index** ranges, not sample
+overlap exclusions. A complete result is sorted by `(SquaredDistance,Start,End)`.
+A partial result ranks only completed candidates and is not globally certified.
+
+### Q8.11. Can LB_Keogh be used to discard candidates near a cutoff?
+
+Only with a numerical certificate tied to the scorer. The public
+`LBKeoghSquared` is a rounded diagnostic; comparing its value directly with
+cutoff is not safe in general. `Search` builds its own radius-matched envelope,
+proves finite local-domain and diagonal-path representability, accumulates a
+monotone machine bound, and prunes only on **strictly greater** than cutoff.
+Uncertain cases are evaluated normally. A tight MaxWorkingBytes can disable
+optional pruning without changing the exact mathematical result.
+
+### Q8.12. What do `CandidatesCompleted`, `CandidatesPruned` and `CellsVisited` mean?
+
+`CandidatesCompleted` counts windows with fully scored finite DTW objectives.
+`CandidatesPruned` counts candidates excluded with a valid machine certificate.
+`CellsVisited` counts only actual DP cells evaluated, including incomplete
+work before a budget or cancellation error. On complete search,
+`CandidatesCompleted+CandidatesPruned=CandidatesTotal`; worker scheduling may
+change these performance counters but not the final sorted Hits.
 
 ---
 
@@ -1161,11 +1199,11 @@ Correct handling:
 ```go
 res, err := tsp.SolveMatrix(dist, ids, opts)
 if errors.Is(err, tsp.ErrTimeLimit) {
-	// res may contain the best incumbent found so far.
-	// It is feasible, but not certified optimal.
-	if res != nil && res.TimedOut && !res.Optimal {
-		// Decide whether the incumbent is acceptable for your application.
-	}
+// res may contain the best incumbent found so far.
+// It is feasible, but not certified optimal.
+if res != nil && res.TimedOut && !res.Optimal {
+// Decide whether the incumbent is acceptable for your application.
+}
 }
 ```
 
@@ -1243,7 +1281,7 @@ They let callers branch safely while still preserving helpful context.
 
 ```go
 if errors.Is(err, matrix.ErrDimensionMismatch) {
-	// stable protocol branch
+// stable protocol branch
 }
 ```
 
@@ -1344,7 +1382,7 @@ Use tolerances for computations that can accumulate floating-point error.
 
 ```go
 if math.Abs(got-want) > tol {
-	t.Fatalf("got %.12g, want %.12g", got, want)
+t.Fatalf("got %.12g, want %.12g", got, want)
 }
 ```
 
@@ -1366,7 +1404,7 @@ Example:
 
 ```go
 func TestAdjacencyMatrix_ToGraphPreservesZeroWeightEdgeByDefaultInInfEncoding(t *testing.T) {
-	// ...
+// ...
 }
 ```
 
@@ -1387,10 +1425,10 @@ g := buildGraph(b)
 b.ReportAllocs()
 b.ResetTimer()
 for i := 0; i < b.N; i++ {
-	_, err := runAlgorithm(g)
-	if err != nil {
-		b.Fatal(err)
-	}
+_, err := runAlgorithm(g)
+if err != nil {
+b.Fatal(err)
+}
 }
 ```
 
@@ -1398,8 +1436,8 @@ Bad:
 
 ```go
 for i := 0; i < b.N; i++ {
-	g := buildGraph(b) // measures setup, not just algorithm
-	_, _ = runAlgorithm(g)
+g := buildGraph(b) // measures setup, not just algorithm
+_, _ = runAlgorithm(g)
 }
 ```
 

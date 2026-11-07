@@ -63,7 +63,7 @@ The library covers:
 * `mst` exact Prim/Kruskal MST/MSF, KMB original-edge graph Steiner approximation, and closed/fixed-end edge-covering walks;
 * `flow` max-flow / residual-network analysis;
 * `matrix` dense graph algebra: adjacency, incidence, metric closure, statistics, factorization, sanitation;
-* `dtw` deterministic Dynamic Time Warping for scalar, cost-matrix, and multivariate sequence alignment;
+* `dtw` deterministic Dynamic Time Warping, bounded outcomes, and globally exact fixed-length squared-DTW top-K window search;
 * `tsp` matrix-backed tour optimization with exact, approximate, matching, and local-search regimes;
 * `gridgraph` generated lattice topology;
 * `builder` deterministic fixtures for examples, tests, and benchmarks.
@@ -145,7 +145,8 @@ Read these files as a learning path. `doc.go` files define implemented package c
 | 5    | [`MST.md`](MST.md)                         | Exact Prim/Kruskal MST/MSF, KMB Steiner networks, closed/fixed-end tree walks, original IDs and separate numeric contracts. |
 | 6    | [`FLOW.md`](FLOW.md)                       | Capacity networks, residual graph state, Ford-Fulkerson, Edmonds-Karp, Dinic.                                              |
 | 7    | [`MATRICES.md`](MATRICES.md)               | Dense storage, graph adapters, zero-weight policy, metric closure, statistics, numeric sanitation.                         |
-| 8    | [`DTW.md`](DTW.md)                         | `Align`, `AlignCostMatrix`, `AlignMatrix`, windows, slope penalty, memory/path artifacts.                                  |
+| 8    | [`DTW.md`](DTW.md)                         | `Align`, `AlignCostMatrix`, `AlignMatrix`, `AlignBounded`, exact `Search`, numeric and path artifacts.                     |
+| 8a   | [`DTW_SEARCH.md`](DTW_SEARCH.md)            | Fixed-length exact top-K, certified LB_Keogh, workers, budgets, and partial-result law.                                  |
 | 9    | [`TSP.md`](TSP.md)                         | Matrix-backed tours, exact regimes, Christofides, Blossom matching, local search, timeouts.                                |
 | 10   | [`GRID_GRAPH.md`](GRID_GRAPH.md)           | Lattice topology for traversal/routing demos and pathfinding fixtures.                                                     |
 | 11   | [`FAQ_&_TIPS.md`](FAQ_%26_TIPS.md)         | Troubleshooting, package selection, testing/benchmark/documentation pitfalls.                                              |
@@ -604,6 +605,8 @@ Good questions:
 * “Do these two vibration signatures match despite phase drift?”
 * “Which phase was stretched?”
 * “Can I afford path recovery, or do I only need distance?”
+* “Which complete fixed-length windows are my exact top-K matches?” — use `dtw.Search`.
+* “Is a score within a known inclusive limit?” — use `dtw.AlignBounded`.
 
 ---
 
@@ -926,6 +929,8 @@ Do not use it as:
 | Covariance/correlation             | `matrix`              | statistical matrix artifact.                  |
 | Symmetric spectral analysis        | `matrix`              | eigenvalues/eigenvectors.                     |
 | Scalar sequence alignment          | `dtw.Align`           | DTW `Result` with distance/reachability.      |
+| Inclusive-limit scalar alignment    | `dtw.AlignBounded`    | Exact/above-limit/unreachable status.        |
+| Globally exact window top-K         | `dtw.Search`          | Sorted fixed-length squared-DTW matches.     |
 | Precomputed local-cost alignment   | `dtw.AlignCostMatrix` | DTW over caller-owned finite cost surface.    |
 | Multivariate time-series alignment | `dtw.AlignMatrix`     | squared-L2 row-cost alignment result.         |
 | Complete route matrix optimization | `tsp.SolveMatrix`     | tour, cost, exactness/timeout/ratio metadata. |
@@ -1053,7 +1058,7 @@ Use this tutorial as the entry point, then move into package-specific material:
 
 > If you are doing sequence comparison:
 >
->   [`DTW.md`](DTW.md) -> matrix sanitation/statistics sections
+>   [`DTW.md`](DTW.md) -> [`DTW_SEARCH.md`](DTW_SEARCH.md) -> matrix sanitation/statistics sections
 
 > If you are contributing:
 >
