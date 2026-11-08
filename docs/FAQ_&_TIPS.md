@@ -8,7 +8,8 @@
     This document is the practical troubleshooting and best-practices guide for
     lvlath users and contributors. It explains common mistakes, package-selection
     decisions, deterministic behavior, error classification, graph/matrix semantics,
-    testing practices, benchmark pitfalls, and documentation synchronization rules.
+    testing practices, causal time-series contracts, benchmark pitfalls,
+    and documentation synchronization rules.
     It is aligned with the lvlath Universal Engineering Standard (UES).
 
   Contract status:
@@ -20,7 +21,7 @@
   Scope:
     - Package selection and algorithm-choice guidance.
     - Common troubleshooting for core, bfs, dfs, dijkstra, matrix, flow, dtw, tsp,
-      gridgraph, builder, and examples.
+      gridgraph, builder, series, and examples.
     - Testing, benchmarking, documentation, and contribution best practices.
 
   License:
@@ -49,13 +50,14 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
 8. [DTW FAQ](#8-dtw-faq)
 9. [MST FAQ](#9-mst-faq)
 10. [TSP FAQ](#10-tsp-faq)
-11. [Builder and gridgraph tips](#10-builder-and-gridgraph-tips)
-12. [Errors and diagnostics](#11-errors-and-diagnostics)
-13. [Determinism and concurrency](#12-determinism-and-concurrency)
-14. [Testing tips](#13-testing-tips)
-15. [Benchmark tips](#14-benchmark-tips)
-16. [Documentation tips](#15-documentation-tips)
-17. [Quick recipes](#16-quick-recipes)
+11. [Builder and gridgraph tips](#11-builder-and-gridgraph-tips)
+12. [Errors and diagnostics](#12-errors-and-diagnostics)
+13. [Determinism and concurrency](#13-determinism-and-concurrency)
+14. [Testing tips](#14-testing-tips)
+15. [Benchmark tips](#15-benchmark-tips)
+16. [Documentation tips](#16-documentation-tips)
+17. [Quick recipes](#17-quick-recipes)
+18. [Series FAQ](#18-series-faq)
 
 ---
 
@@ -94,11 +96,27 @@ minimize weighted cost    -> Dijkstra
 connect all cheaply       -> MST
 maximize throughput       -> Flow
 compute all-pairs costs   -> Matrix metric closure
+validate grid/causal features -> Series
 align time-warped signals -> DTW
 build a closed tour       -> TSP
 ```
 
 The most common mistake is using BFS on a weighted routing problem. BFS answers “fewest edges,” not “cheapest total weight.”
+
+---
+
+### Q1.3. My input is a time series: should I start with `series` or `dtw`?
+
+Use `series` when the immediate question concerns exact integer-nanosecond
+cadence, missing whole grid slots, lagged observations, finite differences,
+relative/logarithmic returns, or complete sample-index windows. Its transforms
+**preserve the length** of the supplied array and publish a `Valid` mask.
+
+Use `dtw` when you need to compare patterns despite permitted local timing
+stretching under a specified alignment cost and window. It does not replace
+exact-grid checking. These packages are independent: an application may choose
+to validate a series first, but neither package implicitly resamples or fills
+gaps for the other. See [`SERIES.md`](SERIES.md) and [Series FAQ](#18-series-faq).
 
 ---
 
@@ -1388,6 +1406,8 @@ t.Fatalf("got %.12g, want %.12g", got, want)
 
 For matrix-wide comparison, use the package’s tolerant comparison surface where appropriate.
 
+For `series`, compare integer timestamps, gap counts, index ranges, and Valid masks **exactly**. For return-value or log-transformation oracles, base high-precision reference calculations on the original binary64 input values, not rounded printed decimals; use justified magnitude-aware error budgets rather than making epsilon a validity policy.
+
 ### Q14.5. How should tests handle map output?
 
 Do not print or compare maps through unstable iteration. Extract keys, sort them, then compare or print stable output.
@@ -1594,6 +1614,156 @@ Remember:
 ### Recipe G. Build reproducible tests
 
 Use `builder` or manually fixed topology. Sort output before printing. Check errors with `errors.Is`. Avoid time-based cancellation.
+
+### Recipe H. Validate a telemetry grid before causal transforms
+
+Use `series.Validate` with an explicit positive `CadenceNS` and reject gaps unless the downstream consumer has a clear gap policy. Then use `Lag`, `Difference`, `SimpleReturns`, or `LogReturns` with their returned `Valid` masks. Use `WindowRanges` for complete index windows. Never substitute zeros for skipped timestamps or invalid warmup.
+
+---
+
+## 18. Series FAQ
+
+### Q18.1. Does `series.Validate` infer cadence from timestamps?
+
+No. `GridOptions{}` or `GridOptions{CadenceNS: 0}` validates strict order
+and representable positive timestamp differences only. It deliberately does
+**not** derive a frequency, reconstruct a calendar, or report missing slots.
+
+For positive `CadenceNS = c`, every adjacent interval `d` must satisfy
+`d > 0`, `d <= math.MaxInt64`, and `d % c == 0`. `AllowGaps` changes only
+what happens to **whole** missing slots; it cannot permit a nonmultiple.
+
+```text
+[0, 10, 20], cadence 0  -> order-only success
+[0, 10, 20], cadence 10 -> exact-grid success
+[0, 10, 30], cadence 10 -> one gap if AllowGaps=true
+[0, 10, 25], cadence 10 -> ErrGap even if AllowGaps=true
+```
+
+### Q18.2. Does a reported `Gap` insert a missing observation?
+
+No. `Gap{AfterIndex: i, MissingCount: m}` reports `m` absent lattice
+slots between supplied observations `i` and `i+1`. The returned
+`ValidationResult.Samples` counts **only supplied pairs**, and the original
+`[]float64` remains unchanged. `ValidationResult.Gaps` is a detached,
+non-nil slice on success, even when empty.
+
+If a model requires uninterrupted sampling, use `AllowGaps: false` or handle
+reported gaps explicitly before calling it. Calling `Lag` or `SimpleReturns`
+on the original array uses adjacent **supplied indices**, including pairs
+separated by a timestamp gap.
+
+### Q18.3. Why is a returned zero insufficient to tell whether a result exists?
+
+All transforms preserve input length. Positions lacking history contain
+`Values[i] == 0` and `Valid[i] == false`; valid computations can also
+legitimately produce zero. These cases are different:
+
+```text
+values = [2, 2, 4]
+Difference(values, 1)
+  Values = [0, 0, 2]
+  Valid  = [false, true, true]
+              ^
+         valid zero difference
+```
+
+Keep the two result slices together. A mask is not a NaN fill, a timestamp
+gap report, or a reason to mutate observations. Both slices are detached
+from caller input.
+
+### Q18.4. How do the domains of simple and log returns differ?
+
+`SimpleReturns` computes the adjacent relative change
+`x[i]/x[i-1] - 1`, requiring only **used previous denominators** to be
+nonzero. Negative finite values are allowed mathematically; a zero in the
+last position is permitted because no successor uses it as a denominator.
+A singleton zero is also accepted and produces one invalid warmup cell.
+
+`LogReturns` computes `ln(x[i]) - ln(x[i-1])` and requires **all** input
+values to be strictly positive, even for a singleton. It therefore rejects
+zero, negative zero, and negative observations with `ErrDomain`.
+Both operations reject NaN and infinity with `ErrNonFinite` before domain
+checks and return nil results on errors.
+
+### Q18.5. Why does `LogReturns` not compute `math.Log(curr/prev)`?
+
+The intermediate ratio can overflow or underflow when both operands are
+valid, finite, strictly positive `float64` values. For `prev=1e-300` and
+`curr=1e300`, the ratio overflows but the correct log difference is finite.
+
+`LogReturns` uses the difference of logarithms for distant positive pairs,
+and a stable `math.Log1p` relative-change path for nearby values. The latter
+also avoids losing a very small nonzero change when two separately rounded
+logarithms would be equal. This improves numerical behavior without claiming
+exact real-number arithmetic or introducing an epsilon validity threshold.
+
+### Q18.6. What errors should I expect, and which one takes precedence?
+
+`series` owns `ErrInvalidOption`, `ErrNilInput`, `ErrEmptyInput`,
+`ErrShape`, `ErrNonFinite`, `ErrOrder`, `ErrGap`, `ErrDomain`, and
+`ErrOverflow`. Classify through `errors.Is`.
+
+`Validate` checks options first, then nil inputs, mismatched lengths,
+equally empty inputs, and **all** nonfinite observations before walking
+consecutive timestamps. Timestamp pairs are then checked in index order:
+strict order, signed delta representability, exact cadence, and gap policy.
+
+For `Lag`/`Difference`, lag validation precedes nil/empty/finite checks.
+`SimpleReturns` checks all denominators before computing any pair;
+`LogReturns` checks the entire positive domain first. Hence a domain error
+takes precedence over an arithmetic overflow elsewhere in that call.
+There is no error-producing partial result or silent fallback.
+
+### Q18.7. What does `ErrOverflow` mean when all inputs are finite?
+
+It can describe an unrepresentable **result** rather than invalid input:
+
+* Signed timestamps `math.MinInt64 -> 0` are ordered, but their difference
+  exceeds `math.MaxInt64` nanoseconds.
+* A finite difference such as `math.MaxFloat64 - (-math.MaxFloat64)`
+  overflows float64.
+* Extreme simple returns can overflow division from a small nonzero base.
+* `WindowRanges` can count a mathematically valid number of windows whose
+  required `[]Range` byte size is not representable as a Go `int`.
+
+This does not mean `series` guarantees that all representable allocations
+will succeed under an operating-system memory limit. It checks arithmetic,
+not available RAM.
+
+### Q18.8. Are these operations causal and safe to call concurrently?
+
+Each transform at index `i` reads only elements at indices at most `i`,
+so appending future observations cannot change a successful output prefix
+**when both original and extended calls succeed**. For example, appending
+after a final zero can make a subsequent `SimpleReturns` fail because that
+zero becomes a denominator; the package then publishes no partial result.
+
+Independent calls can use the same input concurrently **if the caller never
+mutates it during those calls**. Returned gap, values, mask, and range
+slices are caller-owned, detached memory. Concurrent writes to the same
+result must be externally synchronized. There is no mutable streaming
+accumulator or implicit snapshot isolation.
+
+### Q18.9. Are `WindowRanges` outputs durations or sample positions?
+
+Sample positions only. `WindowRanges(8,3,2)` yields `[0,3)`, `[2,5)`,
+`[4,7)`, all complete and half-open; there is no trailing partial range.
+`WindowRanges(0,3,1)` returns a **non-nil empty** slice. Stride larger
+than width is valid and emits separated windows. To interpret indices in
+clock time, the application must separately inspect or validate timestamps.
+
+### Q18.10. Can I pipe the output directly into DTW, statistics, or a model?
+
+Only after checking domain requirements of the downstream consumer.
+`series` has no dependency on `dtw` or `matrix` and does not build a model.
+If a transform has warmup cells, a downstream algorithm must not consume
+those zero placeholders as genuine data. Likewise, a grid validated with
+`AllowGaps: true` is not automatically a uniformly sampled sequence.
+
+For the full proofs, numeric examples, error tables, and tested workflows,
+read [`SERIES.md`](SERIES.md), [`series/doc.go`](../series/doc.go), and
+[`series/example_test.go`](../series/example_test.go).
 
 ---
 

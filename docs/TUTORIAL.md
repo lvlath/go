@@ -6,9 +6,9 @@
 
   Purpose:
     This tutorial is the first educational entry point for lvlath. It introduces
-    fundamental graph and matrix ideas, explains how lvlath maps mathematical
-    algorithms into deterministic Go packages, and helps readers move from basic
-    graph concepts to package-specific documentation. It does not duplicate every
+    fundamental graph, matrix, and causal time-series ideas; explains how lvlath
+    maps mathematical algorithms into deterministic Go packages, and helps readers move from basic
+    graph and series concepts to package-specific documentation. It does not duplicate every
     package specification; instead it teaches the mental model, core entities,
     options, result surfaces, and engineering discipline needed before reading
     docs/{PACKAGE}.md and {package}/doc.go files.
@@ -21,7 +21,7 @@
 
 > **hard math on an easy level**
 
-Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, and time-series alignment.
+Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, and time-series alignment.
 
 This tutorial is the beginning of the learning path. It introduces the objects and ideas that most packages share: graphs, matrices, options, result artifacts, error contracts, and deterministic algorithm execution.
 
@@ -37,10 +37,11 @@ This tutorial is the beginning of the learning path. It introduces the objects a
 6. [First Rich Graph: Build, Inspect, Traverse](#6-first-rich-graph-build-inspect-traverse)
 7. [Graph Algorithms on the Same Topology](#7-graph-algorithms-on-the-same-topology)
 8. [Matrix Foundations](#8-matrix-foundations)
-9. [Graph-to-Matrix Example: Routing, Closure, and Spectral-Ready Data](#9-graph-to-matrix-example-routing-closure-and-spectral-ready-data)
-10. [Algorithm Selection Guide](#10-algorithm-selection-guide)
-11. [Professional Best Practices](#11-professional-best-practices)
-12. [Where To Go Next](#12-where-to-go-next)
+9. [Graph-to-Matrix Example: Incident Routing, Closure, and Spectral-Ready Data](#9-graph-to-matrix-example-incident-routing-closure-and-spectral-ready-data)
+10. [Series Foundations: Exact Grids and Causal Features](#10-series-foundations-exact-grids-and-causal-features)
+11. [Algorithm Selection Guide](#11-algorithm-selection-guide)
+12. [Professional Best Practices](#12-professional-best-practices)
+13. [Where To Go Next](#13-where-to-go-next)
 
 ---
 
@@ -64,6 +65,7 @@ The library covers:
 * `flow` max-flow / residual-network analysis;
 * `matrix` dense graph algebra: adjacency, incidence, metric closure, statistics, factorization, sanitation;
 * `dtw` deterministic Dynamic Time Warping, bounded outcomes, and globally exact fixed-length squared-DTW top-K window search;
+* `series` exact integer-nanosecond grid validation, causal lag/difference/returns, and complete index windows;
 * `tsp` matrix-backed tour optimization with exact, approximate, matching, and local-search regimes;
 * `gridgraph` generated lattice topology;
 * `builder` deterministic fixtures for examples, tests, and benchmarks.
@@ -82,6 +84,8 @@ cover edges of one tree    *mst.WalkResult             repeated passage IDs, clo
 flow network               residual *core.Graph        capacity state after flow
 dense operator             *matrix.Dense               row-major numeric artifact
 warping alignment          *dtw.Result                 distance, reachability, path
+causal sample transform    *series.TransformResult     detached Values + Valid mask
+timestamp-grid inspection  *series.ValidationResult    exact cadence / missing slots
 closed tour                *tsp.Result                 cost, exactness, timeout, ratio
 ```
 
@@ -102,6 +106,8 @@ A shortest-path formula is easy. A reliable Go package must also answer:
 * Is a DTW path recoverable under the selected memory mode?
 * Is a TSP result exact, approximate, locally improved, or merely a timed-out incumbent?
 * Does the returned result own its data, or does it alias the input?
+* Does a time-series zero mean a computed value or an invalid warmup cell?
+* Are timestamp gaps merely recorded, or has the application really resampled its data?
 
 `lvlath` treats those questions as the API, not as afterthoughts.
 
@@ -126,9 +132,9 @@ A shortest-path formula is easy. A reliable Go package must also answer:
    result, or a dense absence sentinel. Arithmetic overflow is a separate error and
    must not be silently converted into another domain state.
 
-5. **Graph and matrix workflows compose**
+5. **Graph, matrix, and time-series workflows compose**
 
-   `core` owns topology. `matrix` turns topology into dense artifacts. `dijkstra`, `mst`, `flow`, `tsp`, and `dtw` solve different mathematical questions without collapsing their result meanings.
+   `core` owns topology. `matrix` turns topology into dense artifacts. `series` validates ordered observations and produces causal masks without depending on those packages. `dijkstra`, `mst`, `flow`, `tsp`, and `dtw` solve different mathematical questions without collapsing their result meanings.
 
 ---
 
@@ -136,22 +142,23 @@ A shortest-path formula is easy. A reliable Go package must also answer:
 
 Read these files as a learning path. `doc.go` files define implemented package contracts; `docs/*.md` files teach the theory, diagrams, pitfalls, and recipes.
 
-| Step | Document                                   | What you learn                                                                                                             |
-|:-----|:-------------------------------------------|:---------------------------------------------------------------------------------------------------------------------------|
-| 1    | [`CORE.md`](CORE.md)                       | Graph capabilities, deterministic topology, ownership, locks, graph invariants.                                            |
-| 2    | [`BFS.md`](BFS.md)                         | Hop-distance traversal, `Result`, components, filters, partial-result behavior.                                            |
-| 3    | [`DFS.md`](DFS.md)                         | Finish order, DFS forest, deterministic cycle witnesses, topological sort.                                                 |
+| Step | Document                                   | What you learn                                                                                                              |
+|:-----|:-------------------------------------------|:----------------------------------------------------------------------------------------------------------------------------|
+| 1    | [`CORE.md`](CORE.md)                       | Graph capabilities, deterministic topology, ownership, locks, graph invariants.                                             |
+| 2    | [`BFS.md`](BFS.md)                         | Hop-distance traversal, `Result`, components, filters, partial-result behavior.                                             |
+| 3    | [`DFS.md`](DFS.md)                         | Finish order, DFS forest, deterministic cycle witnesses, topological sort.                                                  |
 | 4    | [`DIJKSTRA.md`](DIJKSTRA.md)               | Full SSSP vs target Dijkstra/A*, consistent/balanced potentials, original EdgeIDs, exact cutoff, walls and error contracts. |
 | 5    | [`MST.md`](MST.md)                         | Exact Prim/Kruskal MST/MSF, KMB Steiner networks, closed/fixed-end tree walks, original IDs and separate numeric contracts. |
-| 6    | [`FLOW.md`](FLOW.md)                       | Capacity networks, residual graph state, Ford-Fulkerson, Edmonds-Karp, Dinic.                                              |
-| 7    | [`MATRICES.md`](MATRICES.md)               | Dense storage, graph adapters, zero-weight policy, metric closure, statistics, numeric sanitation.                         |
-| 8    | [`DTW.md`](DTW.md)                         | `Align`, `AlignCostMatrix`, `AlignMatrix`, `AlignBounded`, exact `Search`, numeric and path artifacts.                     |
-| 8a   | [`DTW_SEARCH.md`](DTW_SEARCH.md)            | Fixed-length exact top-K, certified LB_Keogh, workers, budgets, and partial-result law.                                  |
-| 9    | [`TSP.md`](TSP.md)                         | Matrix-backed tours, exact regimes, Christofides, Blossom matching, local search, timeouts.                                |
-| 10   | [`GRID_GRAPH.md`](GRID_GRAPH.md)           | Lattice topology for traversal/routing demos and pathfinding fixtures.                                                     |
-| 11   | [`FAQ_&_TIPS.md`](FAQ_%26_TIPS.md)         | Troubleshooting, package selection, testing/benchmark/documentation pitfalls.                                              |
-| 12   | [`lvlath_UES.md`](lvlath_UES.md)           | Universal engineering standard for package quality and contribution discipline.                                            |
-| 13   | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | Branching, tests, linting, examples, docs, benchmark, and PR workflow.                                                     |
+| 6    | [`FLOW.md`](FLOW.md)                       | Capacity networks, residual graph state, Ford-Fulkerson, Edmonds-Karp, Dinic.                                               |
+| 7    | [`MATRICES.md`](MATRICES.md)               | Dense storage, graph adapters, zero-weight policy, metric closure, statistics, numeric sanitation.                          |
+| 8    | [`SERIES.md`](SERIES.md)                   | Exact signed-nanosecond grids, causal arrays, masks, overflow, and index windows.                                           |
+| 9    | [`DTW.md`](DTW.md)                         | `Align`, `AlignCostMatrix`, `AlignMatrix`, `AlignBounded`, exact `Search`, numeric and path artifacts.                      |
+| 9a   | [`DTW_SEARCH.md`](DTW_SEARCH.md)           | Fixed-length exact top-K, certified LB_Keogh, workers, budgets, and partial-result law.                                     |
+| 10   | [`TSP.md`](TSP.md)                         | Matrix-backed tours, exact regimes, Christofides, Blossom matching, local search, timeouts.                                 |
+| 11   | [`GRID_GRAPH.md`](GRID_GRAPH.md)           | Lattice topology for traversal/routing demos and pathfinding fixtures.                                                      |
+| 12   | [`FAQ_&_TIPS.md`](FAQ_%26_TIPS.md)         | Troubleshooting, package selection, testing/benchmark/documentation pitfalls.                                               |
+| 13   | [`lvlath_UES.md`](lvlath_UES.md)           | Universal engineering standard for package quality and contribution discipline.                                             |
+| 14   | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | Branching, tests, linting, examples, docs, benchmark, and PR workflow.                                                      |
 
 Suggested route:
 
@@ -163,7 +170,8 @@ Working on optimization:
   DIJKSTRA -> MST -> FLOW -> TSP
 
 Working on numeric/time-series workflows:
-  MATRICES -> DTW -> TSP
+  SERIES -> DTW -> MATRICES
+  MATRICES -> TSP
 
 Contributing:
   lvlath_UES -> CONTRIBUTING -> package doc.go -> docs/{PACKAGE}.md
@@ -212,6 +220,12 @@ Think of `lvlath` as a contract stack.
                          │ dtw                      │       │ builder / gridgraph      │
                          │ temporal alignment       │       │ reproducible input worlds│
                          └──────────────────────────┘       └──────────────────────────┘
+
+                         ┌───────────────────────────────────────────────┐
+                         │ series                                       │
+                         │ exact time-grid checks, causal arrays/masks  │
+                         │ standalone; no core/matrix/dtw dependency    │
+                         └───────────────────────────────────────────────┘
 ```
 
 ### Repository laws
@@ -234,7 +248,7 @@ Think of `lvlath` as a contract stack.
 
 5. **Numeric values need domain context**
 
-   `0`, `+Inf`, `NaN`, negative weights, and missing edges are interpreted differently by different packages. Correct code respects the package contract instead of forcing one universal meaning.
+   `0`, `+Inf`, `NaN`, negative weights, and missing edges are interpreted differently by different packages. In `series`, an invalid warmup is represented by `Values[i] == 0` **and** `Valid[i] == false`, while timestamp gaps are separate records. Correct code respects these different contracts.
 
 ---
 
@@ -608,6 +622,8 @@ Good questions:
 * “Which complete fixed-length windows are my exact top-K matches?” — use `dtw.Search`.
 * “Is a score within a known inclusive limit?” — use `dtw.AlignBounded`.
 
+For exact timestamps and causal preprocessing **before** alignment, use `series`; it does not perform DTW or infer a resampling policy.
+
 ---
 
 ## 8. Matrix Foundations
@@ -697,6 +713,7 @@ Sanitation/statistics:
 * Spectral analysis starts from adjacency or symmetrized adjacency.
 * Flow/cut analysis can use incidence-style structural thinking.
 * DTW can align matrix rows as multivariate time steps through `dtw.AlignMatrix`.
+* `series` works directly on 1-D arrays and exact nanosecond timestamps; it has no matrix dependency or implicit timestamp resampler.
 
 ---
 
@@ -871,6 +888,7 @@ func main() {
 | `mst`       | Exact full-vertex MST/MSF, or KMB for required service terminals; walk covers all edges of a selected tree. |
 | `flow`      | Maximum capacity from ingress tier to storage tier on a capacity version of this topology. |
 | `matrix`    | Adjacency, incidence, closure, spectral features, statistics, sanitation.                  |
+| `series`    | Validate a service telemetry grid and prepare causal differences/returns before comparing signals. |
 | `dtw`       | Compare incident telemetry signature against historical outages.                           |
 | `tsp`       | Plan a closed inspection / maintenance route over a complete distance matrix.              |
 | `gridgraph` | Model the same incident over a datacenter floor or network zone map.                       |
@@ -895,7 +913,151 @@ Do not use it as:
 
 ---
 
-## 10. Algorithm Selection Guide
+## 10. Series Foundations: Exact Grids and Causal Features
+
+`series` is the boundary between **the supplied order of observations** and
+the time grid that an application expects. It answers two different questions:
+
+1. **Grid validity**: Are signed nanosecond timestamps strictly increasing,
+   representable as positive `int64` differences, and (when requested) aligned
+   to an exact positive cadence?
+2. **Causal preprocessing**: Which values can be computed from current and
+   earlier supplied samples, and which positions still lack enough history?
+
+The second answer is carried by both `Values` and `Valid`; never discard the
+validity mask and then interpret every zero as a real observation.
+
+### Integer grid versus sample index
+
+```text
+Original sample index:    0      1      2               3      4
+Timestamp in ns:          0     10     20              40     50
+Expected 10-ns grid:      *------*------*------o--------*------*
+                                            ^
+                                      missing 30-ns slot
+
+Grid validation:  Gap{AfterIndex: 2, MissingCount: 1}
+Lag(values, 1):   uses the previous SUPPLIED index, not the 30-ns slot
+```
+
+`series.Validate` will reject that grid with `AllowGaps: false`. With
+`AllowGaps: true`, it succeeds and reports the missing whole slot. Neither
+mode interpolates or changes the input values. `CadenceNS == 0` checks strict
+order and delta representability only; it never guesses a frequency.
+
+For cadence `c > 0`, each adjacent positive delta `d` must satisfy the exact
+integer rule `d % c == 0`. The number of missing slots is `d/c - 1`.
+Even if two timestamps are ordered, their mathematical difference may exceed
+`math.MaxInt64`; `Validate` then returns `ErrOverflow`, not a wrapped delta.
+
+### Causal transforms preserve length
+
+For a finite array `x`, `Lag(x,k)` reads `x[i-k]` for `i >= k` and
+`Difference(x,k)` reads `x[i] - x[i-k]` for a strictly positive lag.
+`SimpleReturns` computes `x[i]/x[i-1] - 1` when its previous denominator is
+nonzero; `LogReturns` computes `ln(x[i]) - ln(x[i-1])` when **all** inputs are
+positive. Both returns operations mark their first output position invalid.
+
+```text
+Input:                [2, 4, 4, 8]
+Difference(lag=1):
+  Values:             [0, 2, 0, 4]
+  Valid:              [F, T, T, T]
+                        ^     ^
+                 no history   computed zero
+```
+
+The output for index `i` uses no future values. Appending more observations
+cannot change an already computed prefix **when both full calls succeed**.
+This qualification matters for returns: appending after a terminal zero can
+make `SimpleReturns` fail because that zero becomes a used denominator.
+
+### Executable grid-and-mask example
+
+```go
+package main
+
+import (
+	"errors"
+	"fmt"
+
+	"github.com/lvlath/go/series"
+)
+
+func main() {
+	times := []int64{0, 10, 20, 40, 50}
+	values := []float64{2, 4, 4, 8, 0}
+
+	grid, err := series.Validate(times, values, series.GridOptions{
+		CadenceNS: 10,
+		AllowGaps: true,
+	})
+	if err != nil {
+		fmt.Println("validate:", err)
+		return
+	}
+
+	difference, err := series.Difference(values, 1)
+	if err != nil {
+		fmt.Println("difference:", err)
+		return
+	}
+	returns, err := series.SimpleReturns(values)
+	if err != nil {
+		fmt.Println("returns:", err)
+		return
+	}
+
+	fmt.Println("gaps:", grid.Gaps)
+	fmt.Println("difference:", difference.Values, difference.Valid)
+	fmt.Println("simple returns:", returns.Values, returns.Valid)
+
+	_, err = series.Validate(times, values, series.GridOptions{CadenceNS: 10})
+	fmt.Println("strict cadence rejected:", errors.Is(err, series.ErrGap))
+}
+```
+
+Output:
+
+```text
+gaps: [{2 1}]
+difference: [0 2 0 4 -8] [false true true true true]
+simple returns: [0 1 0 1 -1] [false true true true true]
+strict cadence rejected: true
+```
+
+This example intentionally computes an adjacent-index return **across** the
+missing timestamp slot; it does not assert that such a return is appropriate
+for every downstream model. If uninterrupted cadence matters, require
+`AllowGaps: false` or segment the input explicitly.
+
+### Complete windows and subsequent analysis
+
+`WindowRanges(8,3,2)` returns half-open `[0,3)`, `[2,5)`, `[4,7)`;
+no partial tail is emitted. The arguments describe **sample indices**, not
+durations. Windows can overlap, touch, or be separated, according to stride.
+When no complete range exists, the successful return is empty **and non-nil**.
+
+To compose packages, keep the boundaries explicit:
+
+```text
+signed timestamps --Validate--> gap policy / alignment proof
+                                       |
+finite samples -----Lag/Difference/Returns-----> Values + Valid
+                                       |
+                               caller chooses valid data
+                                       |
+                         WindowRanges / dtw / matrix / model
+```
+
+`series` never synthesizes samples, fills gaps, constructs a DTW alignment,
+computes rolling statistics, or provides a streaming buffer. For proofs,
+error precedence, float64 stability, and ownership rules, continue to
+[`SERIES.md`](SERIES.md) and [`series/doc.go`](../series/doc.go).
+
+---
+
+## 11. Algorithm Selection Guide
 
 ### If the input is a graph
 
@@ -928,9 +1090,12 @@ Do not use it as:
 | Feature centering/normalization    | `matrix`              | transformed matrix plus metadata.             |
 | Covariance/correlation             | `matrix`              | statistical matrix artifact.                  |
 | Symmetric spectral analysis        | `matrix`              | eigenvalues/eigenvectors.                     |
+| Exact nanosecond cadence checks    | `series.Validate`     | sample count + ordered gap metadata.          |
+| Causal lag/difference/returns      | `series`              | length-preserving values + validity mask.     |
+| Complete fixed index windows       | `series.WindowRanges` | ordered half-open sample-index intervals.     |
 | Scalar sequence alignment          | `dtw.Align`           | DTW `Result` with distance/reachability.      |
-| Inclusive-limit scalar alignment    | `dtw.AlignBounded`    | Exact/above-limit/unreachable status.        |
-| Globally exact window top-K         | `dtw.Search`          | Sorted fixed-length squared-DTW matches.     |
+| Inclusive-limit scalar alignment   | `dtw.AlignBounded`    | Exact/above-limit/unreachable status.         |
+| Globally exact window top-K        | `dtw.Search`          | Sorted fixed-length squared-DTW matches.      |
 | Precomputed local-cost alignment   | `dtw.AlignCostMatrix` | DTW over caller-owned finite cost surface.    |
 | Multivariate time-series alignment | `dtw.AlignMatrix`     | squared-L2 row-cost alignment result.         |
 | Complete route matrix optimization | `tsp.SolveMatrix`     | tour, cost, exactness/timeout/ratio metadata. |
@@ -948,9 +1113,9 @@ Do not use it as:
 
 ---
 
-## 11. Professional Best Practices
+## 12. Professional Best Practices
 
-### 11.1. Start from the objective, not the function name
+### 12.1. Start from the objective, not the function name
 
 ```text
 min hops                          -> bfs
@@ -962,24 +1127,25 @@ cover all edges of a given tree   -> mst.SteinerWalk
 max feasible throughput           -> flow
 all-pairs distances               -> matrix metric closure
 dense topology/statistics         -> matrix
+exact timestamp grid / causal arrays -> series
 time-warped sequence similarity   -> dtw
 closed tour cost                  -> tsp
 ```
 
-### 11.2. Model graph capabilities honestly
+### 12.2. Model graph capabilities honestly
 
 Do not enable options “just in case.” A directed weighted multi-edge graph is not more correct than a simple graph; it is a different domain model.
 
-### 11.3. Keep topology stable while algorithms run
+### 12.3. Keep topology stable while algorithms run
 
 `core` protects storage. Algorithm meaning still assumes the topology is not being changed underneath the run. Clone, freeze, or synchronize if reproducibility matters.
 
-### 11.4. Prefer policy over destructive graph edits
+### 12.4. Prefer policy over destructive graph edits
 
 * Use filters, wall thresholds, max-distance cutoffs, forest mode, metric closure, matrix options, DTW windows, and TSP time limits instead of rewriting input data to simulate one run.
 * Use Dijkstra finite wall thresholds for degraded links; do not encode a failed link as a `+Inf` graph-edge weight.
 
-### 11.5. Preserve result meaning
+### 12.5. Preserve result meaning
 
 Do not collapse rich result artifacts into anonymous tuples. Inspect the fields that matter:
 
@@ -993,7 +1159,7 @@ Do not collapse rich result artifacts into anonymous tuples. Inspect the fields 
 * DTW: `Reachable`, `PathTracked`, `MemoryMode`;
 * TSP: `Exact`, `Optimal`, `TimedOut`, `ApproximationRatio`.
 
-### 11.6. Separate numeric domains explicitly
+### 12.6. Separate numeric domains explicitly
 
 The same `float64` value can have different meanings in different package domains.
 
@@ -1006,15 +1172,15 @@ The same `float64` value can have different meanings in different package domain
 
 Never transfer a sentinel from one domain into another implicitly.
 
-### 11.7. Sanitize before statistics and spectral workflows
+### 12.7. Sanitize before statistics and spectral workflows
 
 Raw telemetry can contain `NaN`, `Inf`, spikes, and unit-scale drift. Use sanitation and normalization before covariance, correlation, eigen analysis, or multivariate DTW.
 
-### 11.8. Preserve zero-weight edges deliberately
+### 12.8. Preserve zero-weight edges deliberately
 
 A zero-cost replication or transfer edge is real topology. Use zero-preserving matrix policy when absence must be distinguishable from finite zero.
 
-### 11.9. Be honest about exactness and guarantees
+### 12.9. Be honest about exactness and guarantees
 
 * Prim/Kruskal MST is exact for its full-vertex finite-weight domain.
 * KMB graph Steiner is a polynomial-time approximation for finite nonnegative edges, not an exact optimality certificate.
@@ -1027,7 +1193,7 @@ A zero-cost replication or transfer edge is real topology. Use zero-preserving m
 * 2-opt/3-opt are improvements, not optimality certificates.
 * DTW distance is not generally a metric.
 
-### 11.10. Make examples deterministic and inspectable
+### 12.10. Make examples deterministic and inspectable
 
 Avoid unstable map printing, time-flaky cancellation, hidden random seeds, and helper-heavy examples that obscure public calls. A good example shows:
 
@@ -1035,12 +1201,12 @@ Avoid unstable map printing, time-flaky cancellation, hidden random seeds, and h
 build input -> choose policy -> run algorithm -> inspect result fields
 ```
 
-### 11.11. Benchmark the shape you claim
+### 12.11. Benchmark the shape you claim
 
 Sparse graph traversal, dense matrix kernels, flow residual pressure, DTW full-matrix mode, TSP exact search, and local search are different regimes. Benchmark them separately and name the regime clearly.
 
 
-## 12. Where To Go Next
+## 13. Where To Go Next
 
 Use this tutorial as the entry point, then move into package-specific material:
 
@@ -1052,13 +1218,17 @@ Use this tutorial as the entry point, then move into package-specific material:
 >
 >   [`DIJKSTRA.md`](DIJKSTRA.md) -> [`MST.md`](MST.md) -> [`FLOW.md`](FLOW.md) -> [`TSP.md`](TSP.md)
 
+> If you are validating telemetry or preparing causal features:
+>
+>   [`SERIES.md`](SERIES.md) -> `series/example_test.go` -> [`DTW.md`](DTW.md)
+
 > If you are doing numeric graph analytics:
 >
 >   [`CORE.md`](CORE.md) -> [`MATRICES.md`](MATRICES.md) -> examples/matrix_*.go
 
 > If you are doing sequence comparison:
 >
->   [`DTW.md`](DTW.md) -> [`DTW_SEARCH.md`](DTW_SEARCH.md) -> matrix sanitation/statistics sections
+>   [`SERIES.md`](SERIES.md) -> [`DTW.md`](DTW.md) -> [`DTW_SEARCH.md`](DTW_SEARCH.md) -> matrix sanitation/statistics sections
 
 > If you are contributing:
 >
