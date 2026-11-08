@@ -1,22 +1,23 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2025-2026 katalvlaran
+
+// External transform tests validate finite arithmetic, masks, and causality.
+// They use public facades without accessing private kernels or state.
+
 package series_test
 
 import (
 	"errors"
 	"math"
 	"math/big"
-	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/lvlath/go/series"
 )
 
-func assertTransform(t *testing.T, got *series.TransformResult, wantV []float64, wantM []bool) {
-	t.Helper()
-	if !reflect.DeepEqual(got.Values, wantV) || !reflect.DeepEqual(got.Valid, wantM) {
-		t.Fatalf("got (%v,%v), want (%v,%v)", got.Values, got.Valid, wantV, wantM)
-	}
-}
-
+// TestTransforms_Fixtures checks exact lag, difference, and simple-return values.
+// It also verifies all-invalid masks when the lag exceeds the input length.
 func TestTransforms_Fixtures(t *testing.T) {
 	lag, err := series.Lag([]float64{2, 4, 8}, 1)
 	if err != nil {
@@ -42,6 +43,8 @@ func TestTransforms_Fixtures(t *testing.T) {
 	}
 }
 
+// TestTransforms_PrefixInvariant checks causality under future observations.
+// Both numeric values and masks of the existing prefix must remain unchanged.
 func TestTransforms_PrefixInvariant(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -62,13 +65,15 @@ func TestTransforms_PrefixInvariant(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !reflect.DeepEqual(before.Values, after.Values[:len(prefix)]) || !reflect.DeepEqual(before.Valid, after.Valid[:len(prefix)]) {
+			if !slices.Equal(before.Values, after.Values[:len(prefix)]) || !slices.Equal(before.Valid, after.Valid[:len(prefix)]) {
 				t.Fatalf("future changed prefix: before=%+v after=%+v", before, after)
 			}
 		})
 	}
 }
 
+// TestLogReturns_ExtremePositiveValues checks finite logarithmic return magnitudes.
+// The counterexample proves direct ratio formation would overflow float64.
 func TestLogReturns_ExtremePositiveValues(t *testing.T) {
 	result, err := series.LogReturns([]float64{1e-300, 1e300})
 	if err != nil {
@@ -84,6 +89,8 @@ func TestLogReturns_ExtremePositiveValues(t *testing.T) {
 	}
 }
 
+// TestTransformResult_Detached proves input/output memory isolation.
+// Returned values and masks are caller-owned and must not alias source data.
 func TestTransformResult_Detached(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -102,7 +109,7 @@ func TestTransformResult_Detached(t *testing.T) {
 			}
 			valuesCopy := append([]float64(nil), got.Values...)
 			input[0] = 100
-			if !reflect.DeepEqual(got.Values, valuesCopy) {
+			if !slices.Equal(got.Values, valuesCopy) {
 				t.Fatal("result aliases input")
 			}
 			got.Values[0], got.Valid[0] = 300, true
@@ -113,6 +120,8 @@ func TestTransformResult_Detached(t *testing.T) {
 	}
 }
 
+// TestTransforms_InvalidAndOverflow protects options, domain, and numeric errors.
+// Every failed call must return nil and preserve its package-owned sentinel.
 func TestTransforms_InvalidAndOverflow(t *testing.T) {
 	checks := []struct {
 		name string
@@ -145,6 +154,8 @@ func TestTransforms_InvalidAndOverflow(t *testing.T) {
 	}
 }
 
+// TestDifference_IndependentRationalOracle uses exact rational float inputs.
+// The independent oracle checks subtraction results within scale-aware tolerance.
 func TestDifference_IndependentRationalOracle(t *testing.T) {
 	inputs := [][]float64{{0.1, 0.3, 0.8, 1.2}, {math.MaxFloat64, math.MaxFloat64 / 2, 0}, {-5, 7, -11}}
 	for _, input := range inputs {
@@ -164,6 +175,8 @@ func TestDifference_IndependentRationalOracle(t *testing.T) {
 	}
 }
 
+// TestTransforms_Singletons anchors the one-element warmup contract.
+// A positive singleton is valid input despite having no adjacent return pair.
 func TestTransforms_Singletons(t *testing.T) {
 	for _, fn := range []func([]float64) (*series.TransformResult, error){series.SimpleReturns, series.LogReturns} {
 		got, err := fn([]float64{2})

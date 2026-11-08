@@ -1,14 +1,22 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2025-2026 katalvlaran
+
+// External grid tests lock exact timestamp order, gap, and overflow contracts.
+// Their fixtures assert returned metadata and errors only through public API.
+
 package series_test
 
 import (
 	"errors"
 	"math"
-	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/lvlath/go/series"
 )
 
+// TestValidate_DuplicateAndGap separates ordering, off-grid, and whole-gap policy.
+// The table checks both failure identity and ordered gap metadata on success.
 func TestValidate_DuplicateAndGap(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -40,13 +48,16 @@ func TestValidate_DuplicateAndGap(t *testing.T) {
 				}
 				return
 			}
-			if got.Samples != len(tc.vals) || !reflect.DeepEqual(got.Gaps, tc.gaps) {
-				t.Fatalf("result = %+v; expected samples=%d gaps=%v", got, len(tc.vals), tc.gaps)
+			if got == nil || got.Samples != len(tc.vals) {
+				t.Fatalf("result = %+v; expected samples=%d", got, len(tc.vals))
 			}
+			assertGaps(t, got.Gaps, tc.gaps)
 		})
 	}
 }
 
+// TestValidate_Int64DeltaOverflow anchors unrepresentable signed intervals.
+// It also keeps the largest admissible positive delta accepted without cadence.
 func TestValidate_Int64DeltaOverflow(t *testing.T) {
 	for _, opts := range []series.GridOptions{{}, {CadenceNS: 1, AllowGaps: true}} {
 		got, err := series.Validate([]int64{math.MinInt64, math.MaxInt64}, []float64{1, 2}, opts)
@@ -56,11 +67,13 @@ func TestValidate_Int64DeltaOverflow(t *testing.T) {
 	}
 	// Exact largest representable delta is admissible without a cadence.
 	got, err := series.Validate([]int64{-1, math.MaxInt64 - 1}, []float64{1, 2}, series.GridOptions{})
-	if err != nil || got.Samples != 2 {
+	if err != nil || got == nil || got.Samples != 2 {
 		t.Fatalf("got=%v err=%v", got, err)
 	}
 }
 
+// TestValidate_InputPrecedenceAndFiniteness enforces the ordered validation gates.
+// Negative cadence and nonfinite input take precedence over later domain checks.
 func TestValidate_InputPrecedenceAndFiniteness(t *testing.T) {
 	cases := []struct {
 		times  []int64
@@ -84,17 +97,39 @@ func TestValidate_InputPrecedenceAndFiniteness(t *testing.T) {
 	}
 }
 
+// TestValidate_GapsAndInputsDetached verifies caller ownership of gap results.
+// Mutating the returned gap record cannot modify original timestamps or values.
 func TestValidate_GapsAndInputsDetached(t *testing.T) {
 	times, values := []int64{0, 10, 40}, []float64{1, 2, 3}
 	got, err := series.Validate(times, values, series.GridOptions{CadenceNS: 10, AllowGaps: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(got.Gaps, []series.Gap{{AfterIndex: 1, MissingCount: 2}}) {
-		t.Fatal(got.Gaps)
-	}
+	assertGaps(t, got.Gaps, []series.Gap{{AfterIndex: 1, MissingCount: 2}})
 	got.Gaps[0].MissingCount = 44
-	if !reflect.DeepEqual(times, []int64{0, 10, 40}) || !reflect.DeepEqual(values, []float64{1, 2, 3}) {
+	if !slices.Equal(times, []int64{0, 10, 40}) || !slices.Equal(values, []float64{1, 2, 3}) {
 		t.Fatal("inputs mutated")
 	}
+}
+
+// TestValidate_PrefixGapsRemainStable checks incremental grid construction.
+// Appending future timestamps may reveal a new trailing gap but cannot change
+// gaps already detected inside a previously valid input prefix.
+func TestValidate_PrefixGapsRemainStable(t *testing.T) {
+	opts := series.GridOptions{CadenceNS: 10, AllowGaps: true}
+	oldGrid, err := series.Validate([]int64{0, 10, 30, 40}, []float64{1, 2, 3, 4}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertGaps(t, oldGrid.Gaps, []series.Gap{{AfterIndex: 1, MissingCount: 1}})
+
+	newGrid, err := series.Validate([]int64{0, 10, 30, 40, 70}, []float64{1, 2, 3, 4, 5}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertGaps(t, newGrid.Gaps, []series.Gap{
+		{AfterIndex: 1, MissingCount: 1},
+		{AfterIndex: 3, MissingCount: 2},
+	})
+	assertGaps(t, newGrid.Gaps[:len(oldGrid.Gaps)], oldGrid.Gaps)
 }
