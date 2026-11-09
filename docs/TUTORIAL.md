@@ -6,7 +6,7 @@
 
   Purpose:
     This tutorial is the first educational entry point for lvlath. It introduces
-    fundamental graph, matrix, and causal time-series ideas; explains how lvlath
+    fundamental graph, matrix, stable-statistics, and causal time-series ideas; explains how lvlath
     maps mathematical algorithms into deterministic Go packages, and helps readers move from basic
     graph and series concepts to package-specific documentation. It does not duplicate every
     package specification; instead it teaches the mental model, core entities,
@@ -21,7 +21,7 @@
 
 > **hard math on an easy level**
 
-Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, and time-series alignment.
+Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, stable statistical reductions, fitted feature scaling, and time-series alignment.
 
 This tutorial is the beginning of the learning path. It introduces the objects and ideas that most packages share: graphs, matrices, options, result artifacts, error contracts, and deterministic algorithm execution.
 
@@ -39,9 +39,10 @@ This tutorial is the beginning of the learning path. It introduces the objects a
 8. [Matrix Foundations](#8-matrix-foundations)
 9. [Graph-to-Matrix Example: Incident Routing, Closure, and Spectral-Ready Data](#9-graph-to-matrix-example-incident-routing-closure-and-spectral-ready-data)
 10. [Series Foundations: Exact Grids and Causal Features](#10-series-foundations-exact-grids-and-causal-features)
-11. [Algorithm Selection Guide](#11-algorithm-selection-guide)
-12. [Professional Best Practices](#12-professional-best-practices)
-13. [Where To Go Next](#13-where-to-go-next)
+11. [Stats Foundations: Stable Moments and Fitted Scaling](#11-stats-foundations-stable-moments-and-fitted-scaling)
+12. [Algorithm Selection Guide](#12-algorithm-selection-guide)
+13. [Professional Best Practices](#13-professional-best-practices)
+14. [Where To Go Next](#14-where-to-go-next)
 
 ---
 
@@ -66,6 +67,7 @@ The library covers:
 * `matrix` dense graph algebra: adjacency, incidence, metric closure, statistics, factorization, sanitation;
 * `dtw` deterministic Dynamic Time Warping, bounded outcomes, and globally exact fixed-length squared-DTW top-K window search;
 * `series` exact integer-nanosecond grid validation, causal lag/difference/returns, and complete index windows;
+* `stats` stable Welford/Chan moments, mergeable partitions, and immutable fitted feature standardization;
 * `tsp` matrix-backed tour optimization with exact, approximate, matching, and local-search regimes;
 * `gridgraph` generated lattice topology;
 * `builder` deterministic fixtures for examples, tests, and benchmarks.
@@ -86,6 +88,8 @@ dense operator             *matrix.Dense               row-major numeric artifac
 warping alignment          *dtw.Result                 distance, reachability, path
 causal sample transform    *series.TransformResult     detached Values + Valid mask
 timestamp-grid inspection  *series.ValidationResult    exact cadence / missing slots
+streaming statistics      *stats.Summary               exact-binary-input mean / scaled variance
+train-only scaling        *stats.ScaleFitResult        detached fit metadata / immutable model
 closed tour                *tsp.Result                 cost, exactness, timeout, ratio
 ```
 
@@ -108,6 +112,8 @@ A shortest-path formula is easy. A reliable Go package must also answer:
 * Does the returned result own its data, or does it alias the input?
 * Does a time-series zero mean a computed value or an invalid warmup cell?
 * Are timestamp gaps merely recorded, or has the application really resampled its data?
+* Can a variance be computed without cancellation or premature overflow?
+* Are inference features normalized with fixed training parameters, or was the model accidentally refitted?
 
 `lvlath` treats those questions as the API, not as afterthoughts.
 
@@ -134,7 +140,7 @@ A shortest-path formula is easy. A reliable Go package must also answer:
 
 5. **Graph, matrix, and time-series workflows compose**
 
-   `core` owns topology. `matrix` turns topology into dense artifacts. `series` validates ordered observations and produces causal masks without depending on those packages. `dijkstra`, `mst`, `flow`, `tsp`, and `dtw` solve different mathematical questions without collapsing their result meanings.
+   `core` owns topology. `matrix` turns topology into dense artifacts. `series` validates ordered observations and produces causal masks without depending on those packages. `stats` provides stable scalar reductions and immutable fitted feature scaling on matrix inputs; it does not fill gaps or refit during inference. `dijkstra`, `mst`, `flow`, `tsp`, and `dtw` solve different mathematical questions without collapsing their result meanings.
 
 ---
 
@@ -152,6 +158,7 @@ Read these files as a learning path. `doc.go` files define implemented package c
 | 6    | [`FLOW.md`](FLOW.md)                       | Capacity networks, residual graph state, Ford-Fulkerson, Edmonds-Karp, Dinic.                                               |
 | 7    | [`MATRICES.md`](MATRICES.md)               | Dense storage, graph adapters, zero-weight policy, metric closure, statistics, numeric sanitation.                          |
 | 8    | [`SERIES.md`](SERIES.md)                   | Exact signed-nanosecond grids, causal arrays, masks, overflow, and index windows.                                           |
+| 8a   | [`STATS.md`](STATS.md)                     | Welford/Chan moments, exact binary-input mean, scaled variance, immutable fitted scaling and error laws.                    |
 | 9    | [`DTW.md`](DTW.md)                         | `Align`, `AlignCostMatrix`, `AlignMatrix`, `AlignBounded`, exact `Search`, numeric and path artifacts.                      |
 | 9a   | [`DTW_SEARCH.md`](DTW_SEARCH.md)           | Fixed-length exact top-K, certified LB_Keogh, workers, budgets, and partial-result law.                                     |
 | 10   | [`TSP.md`](TSP.md)                         | Matrix-backed tours, exact regimes, Christofides, Blossom matching, local search, timeouts.                                 |
@@ -170,7 +177,8 @@ Working on optimization:
   DIJKSTRA -> MST -> FLOW -> TSP
 
 Working on numeric/time-series workflows:
-  SERIES -> DTW -> MATRICES
+  SERIES -> STATS -> DTW -> MATRICES
+  MATRICES -> STATS -> DTW
   MATRICES -> TSP
 
 Contributing:
@@ -222,9 +230,15 @@ Think of `lvlath` as a contract stack.
                          └──────────────────────────┘       └──────────────────────────┘
 
                          ┌───────────────────────────────────────────────┐
-                         │ series                                       │
-                         │ exact time-grid checks, causal arrays/masks  │
-                         │ standalone; no core/matrix/dtw dependency    │
+                         │ series                                        │
+                         │ exact time-grid checks, causal arrays/masks   │
+                         │ standalone; no core/matrix/dtw dependency     │
+                         └───────────────────────────────────────────────┘
+
+                         ┌───────────────────────────────────────────────┐
+                         │ stats                                         │
+                         │ Welford / Chan, immutable fitted scaling      │
+                         │ consumes matrix.Matrix; no series import      │
                          └───────────────────────────────────────────────┘
 ```
 
@@ -248,7 +262,7 @@ Think of `lvlath` as a contract stack.
 
 5. **Numeric values need domain context**
 
-   `0`, `+Inf`, `NaN`, negative weights, and missing edges are interpreted differently by different packages. In `series`, an invalid warmup is represented by `Values[i] == 0` **and** `Valid[i] == false`, while timestamp gaps are separate records. Correct code respects these different contracts.
+   `0`, `+Inf`, `NaN`, negative weights, and missing edges are interpreted differently by different packages. In `series`, an invalid warmup is represented by `Values[i] == 0` **and** `Valid[i] == false`, while timestamp gaps are separate records. Correct code respects these different contracts. A statistical result must also distinguish exact binary-input mean accumulation from approximate scaled second moments, and a fitted model must never adapt to heldout values.
 
 ---
 
@@ -714,6 +728,7 @@ Sanitation/statistics:
 * Flow/cut analysis can use incidence-style structural thinking.
 * DTW can align matrix rows as multivariate time steps through `dtw.AlignMatrix`.
 * `series` works directly on 1-D arrays and exact nanosecond timestamps; it has no matrix dependency or implicit timestamp resampler.
+* `stats` streams finite scalar data and fits immutable per-feature transforms over `matrix.Matrix`; it never changes the matrix or infers a validity mask.
 
 ---
 
@@ -880,19 +895,19 @@ func main() {
 
 ### How the same incident graph connects to other lvlath packages
 
-| Package     | Incident-response use                                                                      |
-|:------------|:-------------------------------------------------------------------------------------------|
-| `bfs`       | Hop blast radius: “which services are within 2 calls of `edge`?”                           |
-| `dfs`       | Dependency cycle audit before deployment.                                                  |
-| `dijkstra`  | Cheapest failover route from ingress to storage or backup.                                 |
+| Package     | Incident-response use                                                                                       |
+|:------------|:------------------------------------------------------------------------------------------------------------|
+| `bfs`       | Hop blast radius: “which services are within 2 calls of `edge`?”                                            |
+| `dfs`       | Dependency cycle audit before deployment.                                                                   |
+| `dijkstra`  | Cheapest failover route from ingress to storage or backup.                                                  |
 | `mst`       | Exact full-vertex MST/MSF, or KMB for required service terminals; walk covers all edges of a selected tree. |
-| `flow`      | Maximum capacity from ingress tier to storage tier on a capacity version of this topology. |
-| `matrix`    | Adjacency, incidence, closure, spectral features, statistics, sanitation.                  |
-| `series`    | Validate a service telemetry grid and prepare causal differences/returns before comparing signals. |
-| `dtw`       | Compare incident telemetry signature against historical outages.                           |
-| `tsp`       | Plan a closed inspection / maintenance route over a complete distance matrix.              |
-| `gridgraph` | Model the same incident over a datacenter floor or network zone map.                       |
-| `builder`   | Generate repeatable larger incident fixtures for tests and benchmarks.                     |
+| `flow`      | Maximum capacity from ingress tier to storage tier on a capacity version of this topology.                  |
+| `matrix`    | Adjacency, incidence, closure, spectral features, statistics, sanitation.                                   |
+| `series`    | Validate a service telemetry grid and prepare causal differences/returns before comparing signals.          |
+| `dtw`       | Compare incident telemetry signature against historical outages.                                            |
+| `tsp`       | Plan a closed inspection / maintenance route over a complete distance matrix.                               |
+| `gridgraph` | Model the same incident over a datacenter floor or network zone map.                                        |
+| `builder`   | Generate repeatable larger incident fixtures for tests and benchmarks.                                      |
 
 ### Spectral interpretation
 
@@ -1057,48 +1072,222 @@ error precedence, float64 stability, and ownership rules, continue to
 
 ---
 
-## 11. Algorithm Selection Guide
+## 11. Stats Foundations: Stable Moments and Fitted Scaling
+
+`stats` is the layer for **stable scalar reductions** and **training-only feature calibration**. It complements `matrix` (storage and algebra) and `series` (timestamp validation and causal masks); it does not subsume their responsibilities.
+
+A common data pipeline has three distinct mathematical stages:
+
+```text
+    raw time-stamped observations
+                  |
+      series.Validate / Difference
+                  |
+          Values + Valid mask
+                  |
+        explicit caller filtering
+                  |
+        +---------+-------------------+
+        |                             |
+        v                             v
+  stats.Moments                 matrix.Matrix
+  Update / Merge               rows=samples
+        |                       cols=features
+        v                             |
+  Summary(ddof)                        v
+                             FitStandardizer(training)
+                                       |
+                               immutable Model
+                              /              \
+                       heldout matrix    production batch
+                             |                |
+                          Transform        Transform
+                              \              /
+                         standardized features
+```
+
+**There is no implicit missing-value filter or refit.** A `series.TransformResult` may contain placeholder zeros with `Valid=false`; `stats` sees only numeric values and therefore requires the caller to select valid observations first.
+
+### 11.1. Why ordinary variance calculations can fail
+
+Subtracting raw second moments, `E[x*x] - E[x]*E[x]`, is mathematically sound in real arithmetic but susceptible to catastrophic floating-point cancellation. For values near `1e12` with a spread of just one or two units, the two large terms can round to the same value even though the variance is positive.
+
+`Moments.Update` uses the centered Welford recurrence:
+
+$$\mu' = \mu + \frac{x-\mu}{n+1},\qquad M'_2=M_2+\frac{n(x-\mu)^2}{n+1}.$$
+
+![Welford update](https://latex.codecogs.com/svg.image?%5Cmu%5Cprime%3D%5Cmu%2B%5Cfrac%7Bx-%5Cmu%7D%7Bn%2B1%7D%2C%5Cquad%20M_2%5Cprime%3DM_2%2B%5Cfrac%7Bn%28x-%5Cmu%29%5E2%7D%7Bn%2B1%7D)
+
+`Moments.Merge` combines two completed partitions using Chan–Golub–LeVeque:
+
+$$M_{2,A\cup B}=M_{2,A}+M_{2,B}+\frac{n_A n_B}{n_A+n_B}(\mu_B-\mu_A)^2.$$
+
+Internally, `M2` uses compensated extended-exponent arithmetic. A separate fixed-width exact binary sum protects the final mean. The resulting `Variance` is still an **approximate** floating-point central moment, not an exact rational variance or a universal error-bound certificate.
+
+The population variance divides `M2` by `n` (`ddof=0`); sample variance divides by `n-1` (`ddof=1`). Both require `n > ddof`.
+
+### 11.2. Ordinary batches versus independent partitions
+
+```go
+package main
+
+import (
+	"fmt"
+
+	"github.com/lvlath/go/stats"
+)
+
+func main() {
+	values := []float64{1e12 + 1, 1e12 + 2, 1e12 + 3}
+	summary, err := stats.SummarizeSample(values)
+	if err != nil {
+		fmt.Println("summary:", err)
+		return
+	}
+	fmt.Printf("count=%d mean=%.0f variance=%.0f\n",
+		summary.Count, summary.Mean, summary.Variance)
+	// Output: count=3 mean=1000000000002 variance=1
+}
+```
+
+For streaming input, declare `var moments stats.Moments` and call `Update` on each finite observation. For parallel work, give each worker an **independent** accumulator and combine finished states through `Merge`. Do not call `Update` or `Merge` concurrently on the same mutable accumulator. A fixed merge order improves reproducibility of rounded `M2`.
+
+### 11.3. Fit once, transform heldout data without leakage
+
+Training matrices use **rows as observations** and **columns as features**. `ScaleOptions{}` selects population variance and `RejectConstant`. If a training feature is constant but should remain usable, choose `UnitScaleConstant` explicitly: it retains the feature's training mean, assigns scale `1`, and maps a new value to the deviation from the **training** mean.
+
+```go
+package main
+
+import (
+	"fmt"
+
+	"github.com/lvlath/go/matrix"
+	"github.com/lvlath/go/stats"
+)
+
+func main() {
+	train, err := matrix.NewDense(4, 2)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	for row, features := range [4][2]float64{{10, 5}, {12, 5}, {14, 5}, {16, 5}} {
+		for col, value := range features {
+			if err := train.Set(row, col, value); err != nil {
+				fmt.Println(err)
+				return
+			}
+		}
+	}
+
+	fit, err := stats.FitPopulationStandardizer(train, stats.UnitScaleConstant)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	heldout, err := matrix.NewDense(1, 2)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	for col, value := range []float64{18, 7} {
+		if err := heldout.Set(0, col, value); err != nil {
+			fmt.Println(err)
+			return
+		}
+	}
+
+	standardized, err := fit.Model.Transform(heldout)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	constantDelta, err := standardized.At(0, 1)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Printf("constant=%t trainingMean=%.0f heldoutDelta=%.0f\n",
+		fit.Constant[1], fit.Means[1], constantDelta)
+	// Output: constant=true trainingMean=5 heldoutDelta=2
+}
+```
+
+What this demonstrates:
+
+* `FitPopulationStandardizer` is an explicit wrapper over the canonical `FitStandardizer`, with `DDOF=0`; `FitSampleStandardizer` selects `DDOF=1`.
+* `ScaleFitResult.Means`, `.Scales`, and `.Constant` are detached metadata, not live aliases into `Model`.
+* `Transform` does not adjust the training mean on heldout samples, and each successful call allocates its own output matrix.
+* `InverseTransform` reconstructs values with `math.FMA`; ordinary rounding prevents a universal bitwise round-trip guarantee.
+* A `0×d` inference batch is legal when `d` equals the fitted feature count; fitting a `0×d` matrix is not.
+
+### 11.4. The error and numeric boundary
+
+| Situation | Contract |
+|:--|:--|
+| `NaN` or `±Inf` input | `stats.ErrNonFinite`, not a successful infinite statistic |
+| Nil slice, receiver, or supported typed-nil matrix | `stats.ErrNilInput` |
+| Empty non-nil scalar batch or zero-extent training matrix | `stats.ErrEmptyInput` |
+| Invalid `ddof` or constant policy | `stats.ErrInvalidOption` before inspecting data |
+| `n <= ddof` | `stats.ErrInsufficientSamples` |
+| Constant training feature with default policy | `stats.ErrZeroVariance` |
+| Count overflow or unrepresentable *final* result | `stats.ErrOverflow` |
+| Inference column count differs from training | `stats.ErrShape` |
+
+`Summary` divides extended-range `M2` before converting variance to `float64`. `FitStandardizer` takes the square root in the scaled domain. An intermediate `M2` or unsquared variance greater than `MaxFloat64` does not automatically make a representable summary or scale invalid. Conversely, a strictly positive but tiny variance may round to zero when published; fitted constancy is evaluated from internal `M2`, not from the rounded summary or an arbitrary epsilon.
+
+**Concurrency and ownership:** `Moments` mutation is not goroutine-safe. Fitted `Standardizer` inference is safe for simultaneous calls as long as callers keep their input matrices unchanged throughout each call; the model does not snapshot them, and inference scans inputs twice. All returned output matrices are detached.
+
+For detailed derivations, ASCII diagrams, independent-oracle tests, and end-to-end scenarios, continue to [`STATS.md`](STATS.md), [`stats/doc.go`](../stats/doc.go), and [`stats/example_test.go`](../stats/example_test.go).
+
+---
+
+## 12. Algorithm Selection Guide
 
 ### If the input is a graph
 
-| Problem                                | Package                  | Main output                                                                             |
-|:---------------------------------------|:-------------------------|:----------------------------------------------------------------------------------------|
-| Reachability by hop count              | `bfs`                    | BFS `Result` with depth, parent, visited/order state.                                   |
-| Weak components                        | `bfs`                    | component artifact and deterministic membership.                                        |
-| DFS forest / finish order              | `dfs`                    | DFS `Result` with finish-order semantics.                                               |
-| Cycle witness                          | `dfs`                    | deterministic witness, not exhaustive enumeration.                                      |
-| Topological execution order            | `dfs`                    | DAG order or cycle error.                                                               |
-| Weighted route from one source         | `dijkstra.Dijkstra`      | all known distances, `+Inf` unreachable, optional predecessor tracking                |
-| One weighted target / consistent A*    | `dijkstra.Search` family | one original-cost `PathResult` and ordered original `EdgeIDs`                         |
-| Runtime weighted walls/cutoffs         | `dijkstra`               | `+Inf` publication without mutating topology.                                           |
-| Strict connected backbone              | `mst.Kruskal` / `mst.Prim` | Exact full-vertex MST `Result`.                                                          |
-| Component-wise backbones               | `mst` with forest policy | Explicit exact minimum spanning forest.                                                 |
-| Connect only required graph terminals  | `mst.SteinerTree`        | KMB approximate original-edge `SteinerResult` on nonnegative graph.                     |
-| Cover every edge in a selected tree    | `mst.SteinerWalk`        | Closed/fixed-end `WalkResult` with repeated original EdgeIDs and actual passage cost.   |
-| Max throughput                         | `flow`                   | max-flow value and residual graph.                                                      |
-| Grid/lattice topology                  | `gridgraph`              | generated graph world.                                                                  |
-| Dense topology artifacts               | `matrix`                 | adjacency, incidence, degree vector, metric closure.                                    |
-| Complete tour over graph-derived costs | `tsp.SolveGraph`         | TSP `Result` after graph-to-matrix adaptation.                                          |
-| Reproducible fixture graph             | `builder`                | deterministic generated graph.                                                          |
+| Problem                                | Package                    | Main output                                                                           |
+|:---------------------------------------|:---------------------------|:--------------------------------------------------------------------------------------|
+| Reachability by hop count              | `bfs`                      | BFS `Result` with depth, parent, visited/order state.                                 |
+| Weak components                        | `bfs`                      | component artifact and deterministic membership.                                      |
+| DFS forest / finish order              | `dfs`                      | DFS `Result` with finish-order semantics.                                             |
+| Cycle witness                          | `dfs`                      | deterministic witness, not exhaustive enumeration.                                    |
+| Topological execution order            | `dfs`                      | DAG order or cycle error.                                                             |
+| Weighted route from one source         | `dijkstra.Dijkstra`        | all known distances, `+Inf` unreachable, optional predecessor tracking                |
+| One weighted target / consistent A*    | `dijkstra.Search` family   | one original-cost `PathResult` and ordered original `EdgeIDs`                         |
+| Runtime weighted walls/cutoffs         | `dijkstra`                 | `+Inf` publication without mutating topology.                                         |
+| Strict connected backbone              | `mst.Kruskal` / `mst.Prim` | Exact full-vertex MST `Result`.                                                       |
+| Component-wise backbones               | `mst` with forest policy   | Explicit exact minimum spanning forest.                                               |
+| Connect only required graph terminals  | `mst.SteinerTree`          | KMB approximate original-edge `SteinerResult` on nonnegative graph.                   |
+| Cover every edge in a selected tree    | `mst.SteinerWalk`          | Closed/fixed-end `WalkResult` with repeated original EdgeIDs and actual passage cost. |
+| Max throughput                         | `flow`                     | max-flow value and residual graph.                                                    |
+| Grid/lattice topology                  | `gridgraph`                | generated graph world.                                                                |
+| Dense topology artifacts               | `matrix`                   | adjacency, incidence, degree vector, metric closure.                                  |
+| Complete tour over graph-derived costs | `tsp.SolveGraph`           | TSP `Result` after graph-to-matrix adaptation.                                        |
+| Reproducible fixture graph             | `builder`                  | deterministic generated graph.                                                        |
 
 ### If the input is numeric data
 
-| Problem                            | Package               | Main output                                   |
-|:-----------------------------------|:----------------------|:----------------------------------------------|
-| Dense algebra                      | `matrix`              | matrix result with shape/error policy.        |
-| Numeric cleaning                   | `matrix`              | sanitized matrix.                             |
-| Feature centering/normalization    | `matrix`              | transformed matrix plus metadata.             |
-| Covariance/correlation             | `matrix`              | statistical matrix artifact.                  |
-| Symmetric spectral analysis        | `matrix`              | eigenvalues/eigenvectors.                     |
-| Exact nanosecond cadence checks    | `series.Validate`     | sample count + ordered gap metadata.          |
-| Causal lag/difference/returns      | `series`              | length-preserving values + validity mask.     |
-| Complete fixed index windows       | `series.WindowRanges` | ordered half-open sample-index intervals.     |
-| Scalar sequence alignment          | `dtw.Align`           | DTW `Result` with distance/reachability.      |
-| Inclusive-limit scalar alignment   | `dtw.AlignBounded`    | Exact/above-limit/unreachable status.         |
-| Globally exact window top-K        | `dtw.Search`          | Sorted fixed-length squared-DTW matches.      |
-| Precomputed local-cost alignment   | `dtw.AlignCostMatrix` | DTW over caller-owned finite cost surface.    |
-| Multivariate time-series alignment | `dtw.AlignMatrix`     | squared-L2 row-cost alignment result.         |
-| Complete route matrix optimization | `tsp.SolveMatrix`     | tour, cost, exactness/timeout/ratio metadata. |
+| Problem                                    | Package                 | Main output                                                      |
+|:-------------------------------------------|:------------------------|:-----------------------------------------------------------------|
+| Dense algebra                              | `matrix`                | matrix result with shape/error policy.                           |
+| Stable mean and population/sample variance | `stats.Summarize`       | detached `Summary`, exact binary-input mean and scaled variance. |
+| Streaming/partitioned moments              | `stats.Moments`         | error-atomic Welford updates and Chan merges.                    |
+| Training-only feature scaling              | `stats.FitStandardizer` | immutable model and detached fit metadata.                       |
+| Numeric cleaning                           | `matrix`                | sanitized matrix.                                                |
+| Matrix-native normalization                | `matrix`                | matrix-specific transforms under their own contract.             |
+| Covariance/correlation                     | `matrix`                | statistical matrix artifact.                                     |
+| Symmetric spectral analysis                | `matrix`                | eigenvalues/eigenvectors.                                        |
+| Exact nanosecond cadence checks            | `series.Validate`       | sample count + ordered gap metadata.                             |
+| Causal lag/difference/returns              | `series`                | length-preserving values + validity mask.                        |
+| Complete fixed index windows               | `series.WindowRanges`   | ordered half-open sample-index intervals.                        |
+| Scalar sequence alignment                  | `dtw.Align`             | DTW `Result` with distance/reachability.                         |
+| Inclusive-limit scalar alignment           | `dtw.AlignBounded`      | Exact/above-limit/unreachable status.                            |
+| Globally exact window top-K                | `dtw.Search`            | Sorted fixed-length squared-DTW matches.                         |
+| Precomputed local-cost alignment           | `dtw.AlignCostMatrix`   | DTW over caller-owned finite cost surface.                       |
+| Multivariate time-series alignment         | `dtw.AlignMatrix`       | squared-L2 row-cost alignment result.                            |
+| Complete route matrix optimization         | `tsp.SolveMatrix`       | tour, cost, exactness/timeout/ratio metadata.                    |
 
 ### If the goal is documentation or testing
 
@@ -1113,9 +1302,9 @@ error precedence, float64 stability, and ownership rules, continue to
 
 ---
 
-## 12. Professional Best Practices
+## 13. Professional Best Practices
 
-### 12.1. Start from the objective, not the function name
+### 13.1. Start from the objective, not the function name
 
 ```text
 min hops                          -> bfs
@@ -1126,26 +1315,28 @@ approx terminal-only backbone     -> mst.SteinerTree
 cover all edges of a given tree   -> mst.SteinerWalk
 max feasible throughput           -> flow
 all-pairs distances               -> matrix metric closure
-dense topology/statistics         -> matrix
+dense topology/covariance         -> matrix
+streaming mean/variance             -> stats.Moments / stats.Summarize
+train-only standardization          -> stats.FitStandardizer
 exact timestamp grid / causal arrays -> series
 time-warped sequence similarity   -> dtw
 closed tour cost                  -> tsp
 ```
 
-### 12.2. Model graph capabilities honestly
+### 13.2. Model graph capabilities honestly
 
 Do not enable options “just in case.” A directed weighted multi-edge graph is not more correct than a simple graph; it is a different domain model.
 
-### 12.3. Keep topology stable while algorithms run
+### 13.3. Keep topology stable while algorithms run
 
 `core` protects storage. Algorithm meaning still assumes the topology is not being changed underneath the run. Clone, freeze, or synchronize if reproducibility matters.
 
-### 12.4. Prefer policy over destructive graph edits
+### 13.4. Prefer policy over destructive graph edits
 
 * Use filters, wall thresholds, max-distance cutoffs, forest mode, metric closure, matrix options, DTW windows, and TSP time limits instead of rewriting input data to simulate one run.
 * Use Dijkstra finite wall thresholds for degraded links; do not encode a failed link as a `+Inf` graph-edge weight.
 
-### 12.5. Preserve result meaning
+### 13.5. Preserve result meaning
 
 Do not collapse rich result artifacts into anonymous tuples. Inspect the fields that matter:
 
@@ -1157,9 +1348,10 @@ Do not collapse rich result artifacts into anonymous tuples. Inspect the fields 
 * Tree walk: ordered `Vertices` and repeated `EdgeIDs`, distinct `NetworkWeight` and `Distance`;
 * Flow: residual graph;
 * DTW: `Reachable`, `PathTracked`, `MemoryMode`;
+* Stats: `Summary.Count/Mean/Variance`, `ScaleFitResult.Model`, detached metadata and constant flags;
 * TSP: `Exact`, `Optimal`, `TimedOut`, `ApproximationRatio`.
 
-### 12.6. Separate numeric domains explicitly
+### 13.6. Separate numeric domains explicitly
 
 The same `float64` value can have different meanings in different package domains.
 
@@ -1169,18 +1361,19 @@ The same `float64` value can have different meanings in different package domain
 * Dijkstra options may use `+Inf` to mean “unlimited”.
 * Matrix policies may use `+Inf` for absence or unreachable pairs.
 * Arithmetic overflow must remain an error, not an unreachable sentinel.
+* Stats rejects nonfinite observations and unrepresentable final statistics with distinct errors; `M2` may exceed binary64 range internally.
 
 Never transfer a sentinel from one domain into another implicitly.
 
-### 12.7. Sanitize before statistics and spectral workflows
+### 13.7. Sanitize before statistics and spectral workflows
 
-Raw telemetry can contain `NaN`, `Inf`, spikes, and unit-scale drift. Use sanitation and normalization before covariance, correlation, eigen analysis, or multivariate DTW.
+Raw telemetry can contain `NaN`, `Inf`, spikes, and unit-scale drift. Clean or reject them at a deliberate input-policy boundary. Use `stats.FitStandardizer` **only on training data** when fitted feature coordinates must be reused for heldout analysis or multivariate DTW; distinguish this from matrix-specific one-batch normalization and covariance/correlation.
 
-### 12.8. Preserve zero-weight edges deliberately
+### 13.8. Preserve zero-weight edges deliberately
 
 A zero-cost replication or transfer edge is real topology. Use zero-preserving matrix policy when absence must be distinguishable from finite zero.
 
-### 12.9. Be honest about exactness and guarantees
+### 13.9. Be honest about exactness and guarantees
 
 * Prim/Kruskal MST is exact for its full-vertex finite-weight domain.
 * KMB graph Steiner is a polynomial-time approximation for finite nonnegative edges, not an exact optimality certificate.
@@ -1192,8 +1385,9 @@ A zero-cost replication or transfer edge is real topology. Use zero-preserving m
 * Christofides’ `1.5` ratio requires metric input and exact Blossom matching.
 * 2-opt/3-opt are improvements, not optimality certificates.
 * DTW distance is not generally a metric.
+* Stats mean is correctly rounded from the exact binary-input sum, but its compensated Welford/Chan variance is approximate; no universal `M2` error certificate is implied.
 
-### 12.10. Make examples deterministic and inspectable
+### 13.10. Make examples deterministic and inspectable
 
 Avoid unstable map printing, time-flaky cancellation, hidden random seeds, and helper-heavy examples that obscure public calls. A good example shows:
 
@@ -1201,12 +1395,12 @@ Avoid unstable map printing, time-flaky cancellation, hidden random seeds, and h
 build input -> choose policy -> run algorithm -> inspect result fields
 ```
 
-### 12.11. Benchmark the shape you claim
+### 13.11. Benchmark the shape you claim
 
 Sparse graph traversal, dense matrix kernels, flow residual pressure, DTW full-matrix mode, TSP exact search, and local search are different regimes. Benchmark them separately and name the regime clearly.
 
 
-## 13. Where To Go Next
+## 14. Where To Go Next
 
 Use this tutorial as the entry point, then move into package-specific material:
 
@@ -1220,15 +1414,15 @@ Use this tutorial as the entry point, then move into package-specific material:
 
 > If you are validating telemetry or preparing causal features:
 >
->   [`SERIES.md`](SERIES.md) -> `series/example_test.go` -> [`DTW.md`](DTW.md)
+>   [`SERIES.md`](SERIES.md) -> [`STATS.md`](STATS.md) -> [`stats/example_test.go`](../stats/example_test.go) -> [`DTW.md`](DTW.md)
 
 > If you are doing numeric graph analytics:
 >
->   [`CORE.md`](CORE.md) -> [`MATRICES.md`](MATRICES.md) -> examples/matrix_*.go
+>   [`CORE.md`](CORE.md) -> [`MATRICES.md`](MATRICES.md) -> [`STATS.md`](STATS.md) -> examples/matrix_*.go
 
 > If you are doing sequence comparison:
 >
->   [`SERIES.md`](SERIES.md) -> [`DTW.md`](DTW.md) -> [`DTW_SEARCH.md`](DTW_SEARCH.md) -> matrix sanitation/statistics sections
+>   [`SERIES.md`](SERIES.md) -> [`STATS.md`](STATS.md) -> [`DTW.md`](DTW.md) -> [`DTW_SEARCH.md`](DTW_SEARCH.md)
 
 > If you are contributing:
 >
