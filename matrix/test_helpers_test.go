@@ -1,17 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2025-2026 katalvlaran
 
-// Package matrix_test contains test helpers
-//
-// Purpose:
-//   - Provide small, deterministic test fixtures and utilities for builders/kernels.
-//   - Keep all data finite and well-formed to avoid numeric-policy interference.
+// Package matrix_test provides one home for shared external test fixtures,
+// numerical assertions, independent rational oracles, and benchmark setup.
+// Every helper uses public Matrix operations, not reflection or privileged kernels.
 
 package matrix_test
 
 import (
 	"errors"
 	"math"
+	"math/big"
 	"math/rand"
 	"testing"
 
@@ -680,4 +679,320 @@ func onesVec(n int) []float64 {
 	}
 
 	return v
+}
+
+// ---------- Shared statistics, factorization, oracle, and benchmark helpers ----------
+
+// statsTestDense creates a fully owning Dense input and fails immediately on
+// fixture errors. A separate constructor is used for zero-column matrices.
+func statsTestDense(t testing.TB, values [][]float64) *matrix.Dense {
+	t.Helper()
+	if len(values) == 0 {
+		t.Fatal("use NewDense explicitly for a matrix with no rows")
+	}
+	cols := len(values[0])
+	out, err := matrix.NewDense(len(values), cols)
+	if err != nil {
+		t.Fatalf("NewDense: %v", err)
+	}
+	for i, row := range values {
+		if len(row) != cols {
+			t.Fatalf("row %d has width %d, expected %d", i, len(row), cols)
+		}
+		for j, value := range row {
+			if err = out.Set(i, j, value); err != nil {
+				t.Fatalf("Set(%d,%d): %v", i, j, err)
+			}
+		}
+	}
+	return out
+}
+
+// statsTestValue inspects a published result using Matrix.At, not private
+// storage or reflection. An unexpected accessor error always fails the test.
+func statsTestValue(t testing.TB, input matrix.Matrix, i, j int) float64 {
+	t.Helper()
+	got, err := input.At(i, j)
+	if err != nil {
+		t.Fatalf("At(%d,%d): %v", i, j, err)
+	}
+	return got
+}
+
+// statsTestClose uses an absolute-plus-relative error budget. Non-finite
+// results are never accepted as close to finite expected values.
+func statsTestClose(t testing.TB, got, want, absTol, relTol float64) {
+	t.Helper()
+	if math.IsNaN(got) || math.IsInf(got, 0) || math.Abs(got-want) > absTol+relTol*math.Abs(want) {
+		t.Fatalf("got %.17g, want %.17g (absolute %.3g, relative %.3g)", got, want, absTol, relTol)
+	}
+}
+
+// statsTestFallback intentionally hides *Dense from the implementation.
+// Its At method executes the generic Matrix path; it can also inject a
+// caller-owned error, proving that reductions do not discard its identity.
+type statsTestFallback struct {
+	matrix.Matrix
+	failure error
+	failRow int
+	failCol int
+}
+
+func (m *statsTestFallback) At(i, j int) (float64, error) {
+	if m.failure != nil && i == m.failRow && j == m.failCol {
+		return 0, m.failure
+	}
+	return m.Matrix.At(i, j)
+}
+
+func (m *statsTestFallback) Clone() matrix.Matrix {
+	return &statsTestFallback{Matrix: m.Matrix.Clone(), failure: m.failure, failRow: m.failRow, failCol: m.failCol}
+}
+
+// errStatisticsShapeAccess is returned if a kernel touches a synthetic matrix
+// before rejecting an impossible shape. Shape tests verify that this error is
+// never observed; no test fixture needs a panic to detect early access.
+var errStatisticsShapeAccess = errors.New("matrix test: invalid synthetic data access")
+
+// statsTestShapeOnly proves that shape validation executes before any At call
+// or quadratic covariance allocation. The test never creates huge backing data.
+type statsTestShapeOnly struct{ rows, cols int }
+
+func (m statsTestShapeOnly) Rows() int { return m.rows }
+func (m statsTestShapeOnly) Cols() int { return m.cols }
+func (m statsTestShapeOnly) At(_, _ int) (float64, error) {
+	return 0, errStatisticsShapeAccess
+}
+func (m statsTestShapeOnly) Set(_, _ int, _ float64) error { return errStatisticsShapeAccess }
+func (m statsTestShapeOnly) Clone() matrix.Matrix          { return m }
+
+// statisticsOracleMoments computes the exact rational mean and sample
+// covariance of float64 observations, interpreting each source float64 as
+// an exact binary fraction. It deliberately never invokes a matrix routine.
+// Complexity: O(n*d*d) rational operations for small verification fixtures.
+func statisticsOracleMoments(observations [][]float64) ([]*big.Rat, [][]*big.Rat) {
+	rows, cols := len(observations), len(observations[0])
+	means := make([]*big.Rat, cols)
+	for j := range means {
+		means[j] = new(big.Rat)
+		for i := 0; i < rows; i++ {
+			means[j].Add(means[j], new(big.Rat).SetFloat64(observations[i][j]))
+		}
+		means[j].Quo(means[j], big.NewRat(int64(rows), 1))
+	}
+	moments := make([][]*big.Rat, cols)
+	for j := 0; j < cols; j++ {
+		moments[j] = make([]*big.Rat, cols)
+		for k := 0; k < cols; k++ {
+			value := new(big.Rat)
+			for i := 0; i < rows; i++ {
+				left := new(big.Rat).Sub(new(big.Rat).SetFloat64(observations[i][j]), means[j])
+				right := new(big.Rat).Sub(new(big.Rat).SetFloat64(observations[i][k]), means[k])
+				value.Add(value, new(big.Rat).Mul(left, right))
+			}
+			moments[j][k] = value.Quo(value, big.NewRat(int64(rows-1), 1))
+		}
+	}
+	return means, moments
+}
+
+// statisticsOracleFloat rounds an exact value once at the float64 output
+// boundary. The actual oracle reductions retain full rational precision.
+func statisticsOracleFloat(value *big.Rat) float64 {
+	out, _ := new(big.Float).SetPrec(statisticsOraclePrecision).SetRat(value).Float64()
+	return out
+}
+
+// statisticsOracleCorrelation computes a Pearson coefficient independently
+// from exact rational moments, with a high-precision square root. A constant
+// column receives correlation zero, matching the package's explicit policy.
+func statisticsOracleCorrelation(cov [][]*big.Rat, j, k int) float64 {
+	if cov[j][j].Sign() == 0 || cov[k][k].Sign() == 0 {
+		return 0
+	}
+	numerator := new(big.Float).SetPrec(statisticsOraclePrecision).SetRat(cov[j][k])
+	left := new(big.Float).SetPrec(statisticsOraclePrecision).SetRat(cov[j][j])
+	right := new(big.Float).SetPrec(statisticsOraclePrecision).SetRat(cov[k][k])
+	denominator := new(big.Float).SetPrec(statisticsOraclePrecision).Sqrt(new(big.Float).SetPrec(statisticsOraclePrecision).Mul(left, right))
+	result, _ := new(big.Float).SetPrec(statisticsOraclePrecision).Quo(numerator, denominator).Float64()
+	return result
+}
+
+// factorFixture builds a caller-owned finite Dense from a nonempty rectangular
+// fixture; unexpected construction failures invalidate the test setup itself.
+// Complexity: O(rows*cols) time and memory.
+func factorFixture(t testing.TB, values [][]float64) *matrix.Dense {
+	t.Helper()
+	return statsTestDense(t, values)
+}
+
+// factorCell observes a Matrix using its public accessor, preserving the
+// black-box testing boundary and failing clearly if its shape is inconsistent.
+func factorCell(t testing.TB, input matrix.Matrix, row, col int) float64 {
+	t.Helper()
+	return statsTestValue(t, input, row, col)
+}
+
+// factorNear checks the absolute-plus-relative error budget against a known
+// mathematical solution. It rejects all non-finite values before comparison.
+func factorNear(t testing.TB, got, want, absolute, relative float64) {
+	t.Helper()
+	statsTestClose(t, got, want, absolute, relative)
+}
+
+// factorErrorIs classifies an error through errors.Is, never by matching text.
+func factorErrorIs(t testing.TB, err, sentinel error) {
+	t.Helper()
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("error = %v; expected errors.Is(..., %v)", err, sentinel)
+	}
+}
+
+// factorOracleRationalMatrix copies finite binary64 entries into exact rational
+// values: every observation is interpreted as the represented binary fraction,
+// not the decimal number printed by a Go formatter.
+func factorOracleRationalMatrix(source [][]float64) [][]*big.Rat {
+	out := make([][]*big.Rat, len(source))
+	for i, row := range source {
+		out[i] = make([]*big.Rat, len(row))
+		for j, value := range row {
+			out[i][j] = new(big.Rat).SetFloat64(value)
+		}
+	}
+	return out
+}
+
+// factorOracleRationalSolve independently performs exact Gauss-Jordan
+// elimination on an augmented rational matrix. The test oracle's pivot policy
+// is irrelevant to the production LU algorithm and cannot mask its failures.
+// Complexity: O(n^3) exact rational operations and O(n^2) storage.
+func factorOracleRationalSolve(a [][]*big.Rat, b []*big.Rat) ([]*big.Rat, bool) {
+	n := len(a)
+	augmented := make([][]*big.Rat, n)
+	for i := 0; i < n; i++ {
+		augmented[i] = make([]*big.Rat, n+1)
+		for j := 0; j < n; j++ {
+			augmented[i][j] = new(big.Rat).Set(a[i][j])
+		}
+		augmented[i][n] = new(big.Rat).Set(b[i])
+	}
+	for k := 0; k < n; k++ {
+		pivot := -1
+		for i := k; i < n; i++ {
+			if augmented[i][k].Sign() != 0 {
+				pivot = i
+				break
+			}
+		}
+		if pivot == -1 {
+			return nil, false
+		}
+		augmented[k], augmented[pivot] = augmented[pivot], augmented[k]
+		divisor := new(big.Rat).Set(augmented[k][k])
+		for j := k; j <= n; j++ {
+			augmented[k][j].Quo(augmented[k][j], divisor)
+		}
+		for i := 0; i < n; i++ {
+			if i == k {
+				continue
+			}
+			multiplier := new(big.Rat).Set(augmented[i][k])
+			for j := k; j <= n; j++ {
+				term := new(big.Rat).Mul(multiplier, augmented[k][j])
+				augmented[i][j].Sub(augmented[i][j], term)
+			}
+		}
+	}
+	solution := make([]*big.Rat, n)
+	for i := range solution {
+		solution[i] = new(big.Rat).Set(augmented[i][n])
+	}
+	return solution, true
+}
+
+// factorOracleLeastSquares constructs the exact rational normal-equation
+// system only for the independent test oracle. The production QR solver must
+// use Householder reflections instead; this deliberately different route
+// prevents two implementations from agreeing on the same numerical mistake.
+func factorOracleLeastSquares(a [][]float64, b []float64) ([]*big.Rat, bool) {
+	m, n := len(a), len(a[0])
+	gram := make([][]*big.Rat, n)
+	rhs := make([]*big.Rat, n)
+	for j := 0; j < n; j++ {
+		gram[j] = make([]*big.Rat, n)
+		rhs[j] = new(big.Rat)
+		for k := 0; k < n; k++ {
+			gram[j][k] = new(big.Rat)
+			for i := 0; i < m; i++ {
+				term := new(big.Rat).Mul(new(big.Rat).SetFloat64(a[i][j]), new(big.Rat).SetFloat64(a[i][k]))
+				gram[j][k].Add(gram[j][k], term)
+			}
+		}
+		for i := 0; i < m; i++ {
+			term := new(big.Rat).Mul(new(big.Rat).SetFloat64(a[i][j]), new(big.Rat).SetFloat64(b[i]))
+			rhs[j].Add(rhs[j], term)
+		}
+	}
+	return factorOracleRationalSolve(gram, rhs)
+}
+
+// factorOracleFailingMatrix deliberately injects an accessor error while
+// wrapping a real Dense. It hides the concrete *Dense fast path from callers.
+type factorOracleFailingMatrix struct {
+	matrix.Matrix
+	fault error
+}
+
+func (m *factorOracleFailingMatrix) At(i, j int) (float64, error) {
+	if i == 1 && j == 0 {
+		return 0, m.fault
+	}
+	return m.Matrix.At(i, j)
+}
+
+func (m *factorOracleFailingMatrix) Clone() matrix.Matrix {
+	return &factorOracleFailingMatrix{Matrix: m.Matrix.Clone(), fault: m.fault}
+}
+
+// factorBenchmarkDense constructs a deterministic well-conditioned tall design.
+// A positive diagonal block guarantees full column rank for each requested
+// shape, while lower rows exercise real Householder reflector application.
+func factorBenchmarkDense(b *testing.B, rows, cols int) *matrix.Dense {
+	b.Helper()
+	input, err := matrix.NewDense(rows, cols)
+	if err != nil {
+		b.Fatal(err)
+	}
+	for i := 0; i < rows; i++ {
+		for j := 0; j < cols; j++ {
+			coefficient := float64((i*19+j*47+13)%101-50) / float64(cols)
+			if i == j {
+				coefficient += float64(cols)
+			}
+			if err = input.Set(i, j, coefficient); err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+	return input
+}
+
+// statsBenchFixture constructs deterministic, finite observations outside
+// the timed section. Column offsets avoid artificial all-zero outputs while
+// row-dependent terms expose the O(rows*cols*cols) covariance regime.
+func statsBenchFixture(b *testing.B, rows, cols int) *matrix.Dense {
+	b.Helper()
+	input, err := matrix.NewDense(rows, cols)
+	if err != nil {
+		b.Fatal(err)
+	}
+	for i := 0; i < rows; i++ {
+		for j := 0; j < cols; j++ {
+			value := float64((i*7919+j*1237+97)%2029-1014) / 64
+			if err = input.Set(i, j, value); err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+	return input
 }

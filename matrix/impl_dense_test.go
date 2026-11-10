@@ -569,3 +569,19 @@ func TestApply_AllowsPosInfWhenConfigured(t *testing.T) {
 		t.Fatalf("Apply identity (allowInfDistances): %v", err)
 	}
 }
+
+// TestNewDenseCheckedElementCount proves constructors reject overflowing
+// positive shape products through ErrInvalidDimensions, before allocation.
+// Zero-element shapes remain legal even when one dimension is very large.
+func TestNewDenseCheckedElementCount(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	if got, err := matrix.NewDense(maxInt, 2); got != nil || !errors.Is(err, matrix.ErrInvalidDimensions) {
+		t.Fatalf("NewDense overflowing shape: got=%v err=%v", got, err)
+	}
+	if got, err := matrix.NewPreparedDense(maxInt, 2); got != nil || !errors.Is(err, matrix.ErrInvalidDimensions) {
+		t.Fatalf("NewPreparedDense overflowing shape: got=%v err=%v", got, err)
+	}
+	if got, err := matrix.NewDense(0, maxInt); err != nil || got == nil || got.Rows() != 0 || got.Cols() != maxInt {
+		t.Fatalf("NewDense zero-domain shape: got=%v err=%v", got, err)
+	}
+}

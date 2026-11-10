@@ -24,7 +24,10 @@
 //	- Add / Sub / Hadamard / Scale / Transpose - element-wise ops and transforms.
 //	- Mul / MatVec - matrix×matrix and matrix×vector.
 //	- Eigen (Jacobi) - symmetric eigen-decomposition (values + eigenvectors).
-//	- LU / Inverse / QR - basic factorizations without pivoting (deterministic).
+//	- LU / QR - compatibility decompositions without pivoting (square matrices).
+//	- FactorLU / FactorQR / FactorCholesky - reusable detached numerical factors.
+//	- SolveLeastSquares / factor.Solve - full-rank systems with true residual norms.
+//	- Inverse - legacy inversion without pivoting; not a replacement for Solve.
 //	- FloydWarshall - APSP in-place (k→i→j); +Inf=no edge; diag=0.
 //
 //	Graph-related
@@ -55,14 +58,19 @@
 //
 // # Complexity (typical)
 //
-// - Add / Sub / Hadamard / Scale / Transpose: O(rc) time, O(rc) space
-// - Mul:                                      O(rnc) time, O(rc) space
-// - MatVec:                                   O(rc) time, O(r) space
-// - Eigen (Jacobi):                           O(maxIter*n³) time, O(n²) space
-// - LU / Inverse / QR:                        O(n³) time, O(n²) space
-// - FloydWarshall:                            O(n³) time, O(1) extra (in-place)
-// - DegreeVector / RowSums / ColSums:         O(n²) time, O(n) space
-// - Covariance / Correlation:                 O(rc + c²) time, O(rc + c²) space
+//   - Add / Sub / Hadamard / Scale / Transpose: O(rc) time, O(rc) space
+//   - Mul:                                      O(rnc) time, O(rc) space
+//   - MatVec:                                   O(rc) time, O(r) space
+//   - Eigen (Jacobi):                           O(maxIter*n³) time, O(n²) space
+//   - Legacy LU / Inverse / QR:                 O(n³) time, O(n²) space
+//   - FactorLU / FactorCholesky:                O(n³) time, O(n²) retained space
+//   - FactorQR (m>=n):                          O(m*n²+n³) time, O(m*n) retained space
+//   - Reusable Solve:                           O(n²*r) triangular solve, plus
+//     exact residual computation
+//   - FloydWarshall:                            O(n³) time, O(1) extra (in-place)
+//   - DegreeVector / RowSums / ColSums:         O(n²) time, O(n) space
+//   - Covariance / Correlation:                 O(r*c²) time, O(c²+c) workspace;
+//     exact rescue may add big-number work
 //
 // # Options (adjacency/incidence builders)
 //
@@ -77,14 +85,21 @@
 //   - ErrNilMatrix, ErrDimensionMismatch, ErrNotSymmetric, ErrSingular,
 //     ErrUnknownVertex, ErrGraphNil, ErrMatrixNotImplemented, ErrEigenFailed,
 //     ErrBadShape (invalid shapes like empty adjacency/incidence),
+//     ErrOverflow, ErrRankDeficient, ErrNotPositiveDefinite,
+//     ErrIllConditioned, ErrInvalidOption,
 //     and policy-specific sentinels defined in this package.
 //
 // # Best practices
 //
-// - Prefer *Dense to unlock flat-slice fast paths and minimize interface dispatch.
-// - Use +Inf for “no edge”; keep diagonal 0 for APSP/MetricClosure semantics.
-// - Stabilize tests: repeat runs and compare with AllClose at agreed ε.
-// - Sanitize before stats: ReplaceInfNaN / Clip harden pipelines against NaNs/Inf/outliers.
+//   - Prefer *Dense to unlock flat-slice fast paths and minimize interface dispatch.
+//   - Use +Inf for “no edge”; keep diagonal 0 for APSP/MetricClosure semantics.
+//   - Stabilize tests: repeat runs and compare with AllClose at agreed ε.
+//   - CenterColumns, Covariance, Correlation, and NormalizeRowsL2 require finite
+//     observations. Their arithmetic overflow is distinct from a nonfinite input.
+//   - Sample covariance and correlation require at least two rows, even at zero columns.
+//     At two or more rows, zero-feature results have shape 0x0 and empty metadata.
+//   - A constant column has zero Pearson correlation with every column, including itself.
+//   - For untrusted numeric inputs use ReplaceInfNaN / Clip explicitly before statistics.
 //
 // # Determinism & Reproducibility
 //

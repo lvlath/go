@@ -3,6 +3,7 @@
 package matrix_test
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"math/rand"
@@ -432,5 +433,186 @@ func BenchmarkStatsAndSanitize(b *testing.B) {
 				sinkB = ok
 			}
 		})
+	}
+}
+
+// --- factorization bench tests ---
+
+// BenchmarkFactorLU_Order100 measures reusable row-pivoted decomposition
+// including its O(n^3) measured condition estimate, excluding matrix setup.
+func BenchmarkFactorLU_Order100(b *testing.B) {
+	input := factorBenchmarkDense(b, 100, 100)
+	ctx := context.Background()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for iteration := 0; iteration < b.N; iteration++ {
+		if _, err := matrix.FactorLU(ctx, input, matrix.FactorOptions{}); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkFactorQR_Tall1000x100 measures pivoted Householder QR and measured
+// kappa_1(R) on a tall regression regime, with direct versus At fallback paths.
+func BenchmarkFactorQR_Tall1000x100(b *testing.B) {
+	for _, backend := range []string{"Dense", "Fallback"} {
+		b.Run(backend, func(b *testing.B) {
+			input := factorBenchmarkDense(b, 1000, 100)
+			var source matrix.Matrix = input
+			if backend == "Fallback" {
+				source = &statsTestFallback{Matrix: input}
+			}
+			ctx := context.Background()
+			b.ReportAllocs()
+			b.ResetTimer()
+			for iteration := 0; iteration < b.N; iteration++ {
+				if _, err := matrix.FactorQR(ctx, source, matrix.FactorOptions{}); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkFactorCholesky_Order100 measures SPD triangular construction and
+// its condition estimate on a positive definite diagonal-plus-rank-one system.
+func BenchmarkFactorCholesky_Order100(b *testing.B) {
+	const dimension = 100
+	input, err := matrix.NewDense(dimension, dimension)
+	if err != nil {
+		b.Fatal(err)
+	}
+	for i := 0; i < dimension; i++ {
+		for j := 0; j < dimension; j++ {
+			value := float64((i%7)+1) * float64((j%7)+1) / 100
+			if i == j {
+				value += dimension
+			}
+			if err = input.Set(i, j, value); err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+	ctx := context.Background()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for iteration := 0; iteration < b.N; iteration++ {
+		if _, err = matrix.FactorCholesky(ctx, input, 0, 0); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkFactorsRepeatedSolve measures independent Solve workspace and exact
+// residual evaluation after factoring once, for several RHS counts.
+func BenchmarkFactorsRepeatedSolve(b *testing.B) {
+	for _, columns := range []int{1, 8} {
+		b.Run(fmt.Sprintf("rhs%d", columns), func(b *testing.B) {
+			input := factorBenchmarkDense(b, 100, 100)
+			rhs := factorBenchmarkDense(b, 100, columns)
+			ctx := context.Background()
+			factor, err := matrix.FactorLU(ctx, input, matrix.FactorOptions{})
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for iteration := 0; iteration < b.N; iteration++ {
+				if _, err = factor.Solve(ctx, rhs); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+// --- statistics stability bench tests ---
+
+// BenchmarkStatisticsCovariance tracks the expected quadratic feature cost
+// and any additional accessor overhead. Every iteration measures exactly
+// one successful covariance computation; fixture construction is excluded.
+func BenchmarkStatisticsCovariance(b *testing.B) {
+	for _, shape := range []struct{ rows, cols int }{
+		{100, 1}, {100, 16}, {100, 128},
+		{10000, 1}, {10000, 16}, {10000, 128},
+	} {
+		baseName := fmt.Sprintf("n%d_d%d", shape.rows, shape.cols)
+		b.Run(baseName+"/Dense", func(b *testing.B) {
+			input := statsBenchFixture(b, shape.rows, shape.cols)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for iteration := 0; iteration < b.N; iteration++ {
+				if _, _, err := matrix.Covariance(input); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+		b.Run(baseName+"/Fallback", func(b *testing.B) {
+			input := &statsTestFallback{Matrix: statsBenchFixture(b, shape.rows, shape.cols)}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for iteration := 0; iteration < b.N; iteration++ {
+				if _, _, err := matrix.Covariance(input); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkStatisticsCancellationRescue isolates the predictable overhead
+// of exact rational reconstruction when large cross-products almost cancel.
+// It must not be compared to a Dense benchmark with different observations.
+func BenchmarkStatisticsCancellationRescue(b *testing.B) {
+	input := statsBenchFixture(b, 100, 2)
+	// Replace the fixture with the specific cancellation regime, before the
+	// timer, so that the same exact path is measured on each iteration.
+	for i := 0; i < 100; i++ {
+		first := 1e150
+		if i%2 == 1 {
+			first = -first
+		}
+		second := 1.0
+		if i == 99 {
+			first = 1
+			second = -99
+		}
+		if err := input.Set(i, 0, first); err != nil {
+			b.Fatal(err)
+		}
+		if err := input.Set(i, 1, second); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for iteration := 0; iteration < b.N; iteration++ {
+		if _, _, err := matrix.Covariance(input); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkStatisticsConstantColumns protects the no-rescue fast path for
+// nonzero but constant observations. A zero cross-moment caused by constant
+// columns requires no big-integer reconstruction of the same known zero.
+func BenchmarkStatisticsConstantColumns(b *testing.B) {
+	input, err := matrix.NewDense(100, 16)
+	if err != nil {
+		b.Fatal(err)
+	}
+	for i := 0; i < 100; i++ {
+		for j := 0; j < 16; j++ {
+			if err = input.Set(i, j, float64(j+1)*1e150); err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for iteration := 0; iteration < b.N; iteration++ {
+		if _, _, err = matrix.Covariance(input); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

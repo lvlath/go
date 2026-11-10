@@ -218,7 +218,7 @@ var (
 //     by a nil backing slice.
 //
 // Implementation:
-//   - Stage 1: validate rows>=0 && cols>=0; negative dimensions are rejected.
+//   - Stage 1: validate rows>=0, cols>=0 and checked rows*cols arithmetic.
 //   - Stage 2: handle zero-sized matrices as a dedicated fast-path.
 //   - Stage 3: allocate a contiguous zero-filled buffer for non-zero shapes.
 //
@@ -234,7 +234,7 @@ var (
 //
 // Returns:
 //   - *Dense: newly allocated matrix with the requested shape.
-//   - error : ErrInvalidDimensions when rows<0 or cols<0.
+//   - error : ErrInvalidDimensions when dimensions are negative or their product overflows int.
 //
 // Errors:
 //   - ErrInvalidDimensions (shape contract violation).
@@ -258,13 +258,15 @@ var (
 //   - Zero-sized matrices are often useful as neutral elements in
 //     pipelines; treat them as valid, not as errors.
 func NewDense(rows, cols int) (*Dense, error) {
-	// Reject negative dimensions: they are always invalid.
-	if rows < 0 || cols < 0 {
-		return nil, ErrInvalidDimensions
+	// A checked element count rejects negative or overflowing shapes before
+	// the runtime receives any slice length; zero-sized shapes remain legal.
+	elements, err := matrixCheckedElementCount(rows, cols)
+	if err != nil {
+		return nil, err
 	}
 
 	// Zero-sized shapes are legal and represented by a nil buffer.
-	if rows == 0 || cols == 0 {
+	if elements == 0 {
 		return &Dense{
 			r:                 rows,
 			c:                 cols,
@@ -275,7 +277,7 @@ func NewDense(rows, cols int) (*Dense, error) {
 	}
 
 	// Non-zero shape: allocate a contiguous flat buffer; make() zero-fills it.
-	buf := make([]float64, rows*cols)
+	buf := make([]float64, elements)
 
 	return &Dense{
 		r:                 rows,
@@ -288,7 +290,7 @@ func NewDense(rows, cols int) (*Dense, error) {
 
 // newDenseWithPolicy constructs a Dense matrix with an explicit NaN/Inf policy.
 // Implementation:
-//   - Stage 1: Validate dimensions (r,c >= 0).
+//   - Stage 1: Validate dimensions and checked row-major element count.
 //   - Stage 2: Fast-path zero-sized shapes (nil buffer).
 //   - Stage 3: Allocate row-major buffer.
 //
@@ -304,7 +306,7 @@ func NewDense(rows, cols int) (*Dense, error) {
 //   - *Dense: allocated matrix.
 //
 // Errors:
-//   - ErrInvalidDimensions: if r < 0 or c < 0.
+//   - ErrInvalidDimensions: negative shape or product that exceeds MaxInt.
 //
 // Determinism:
 //   - Deterministic allocation.
@@ -319,12 +321,15 @@ func NewDense(rows, cols int) (*Dense, error) {
 //   - Use validateNaNInf=true and allowInfDistances=true for APSP/MetricClosure
 //     distance matrices and finite weighted adjacency matrices that encode absence as +Inf.
 func newDenseWithPolicy(rows, cols int, validateNaNInf, allowInfDistances bool) (*Dense, error) {
-	if rows < 0 || cols < 0 {
-		return nil, ErrInvalidDimensions
+	// Use the identical shape arithmetic as NewDense; this constructor differs
+	// only in its per-instance numeric policy, not in its memory safety rules.
+	elements, err := matrixCheckedElementCount(rows, cols)
+	if err != nil {
+		return nil, err
 	}
 
 	// Represent zero-sized matrices with a nil backing slice (consistent with NewDense).
-	if rows == 0 || cols == 0 {
+	if elements == 0 {
 		return &Dense{
 			r:                 rows,
 			c:                 cols,
@@ -334,7 +339,7 @@ func newDenseWithPolicy(rows, cols int, validateNaNInf, allowInfDistances bool) 
 		}, nil
 	}
 	// Prepare: allocate row-major storage (runtime zero-fills).
-	buf := make([]float64, rows*cols)
+	buf := make([]float64, elements)
 
 	return &Dense{
 		r:                 rows,

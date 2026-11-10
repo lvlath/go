@@ -146,7 +146,7 @@ func (m *Standardizer) apply(input matrix.Matrix, inverse bool) (matrix.Matrix, 
 			if !finite(result) {
 				return nil, ErrOverflow
 			}
-			if err := out.Set(row, col, result); err != nil {
+			if err = out.Set(row, col, result); err != nil {
 				return nil, err
 			}
 		}

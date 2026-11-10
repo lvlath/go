@@ -322,7 +322,7 @@ func TestCovariance_RowsLessThan2_Error(t *testing.T) {
 func TestCovariance_ZeroFeaturesReturnsZeroByZero(t *testing.T) {
 	t.Parallel()
 
-	X, err := matrix.NewDense(1, 0)
+	X, err := matrix.NewDense(2, 0)
 	if err != nil {
 		t.Fatalf("NewDense: %v", err)
 	}
@@ -443,7 +443,7 @@ func TestCorrelation_RowsLessThan2_Error(t *testing.T) {
 func TestCorrelation_ZeroFeaturesReturnsZeroByZero(t *testing.T) {
 	t.Parallel()
 
-	X, err := matrix.NewDense(1, 0)
+	X, err := matrix.NewDense(2, 0)
 	if err != nil {
 		t.Fatalf("NewDense: %v", err)
 	}

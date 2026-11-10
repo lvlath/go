@@ -41,7 +41,7 @@ const (
 	outOKCorrelationSymmetric = "okCorrelationSymmetric" // Tag for correlation symmetry check.
 )
 
-// ExampleShowcasePipeline demonstrates "matrix as infrastructure" in a safety-critical telemetry pipeline:
+// Example_showcasePipeline demonstrates "matrix as infrastructure" in a safety-critical telemetry pipeline:
 // raw ingestion (NaN/Inf possible) → sanitize → statistics → symmetric repair → eigen → ridge inverse → LU/QR checks.
 // Scenario:
 //   - You operate a real-time analytics loop (telemetry → features → risk / control decision).
@@ -86,7 +86,7 @@ const (
 // AI-Hints:
 //   - If you build features for ML/risk, put ReplaceInfNaN BEFORE any stats (means, covariances, PCA).
 //   - Prefer Dense inputs for fast paths when you run this in a hot loop.
-func ExampleShowcasePipeline() {
+func Example_showcasePipeline() {
 	// ---- Stage 1: Raw ingestion with explicit raw-policy ----
 	const (
 		constSamples  = 6 // Define sample count deterministically.
@@ -271,7 +271,7 @@ func ExampleShowcasePipeline() {
 	// okQR=true
 }
 
-// ExampleMiniFEASpringChain solves a small 1D spring-chain system to mimic a Mini-FEA workflow:
+// Example_miniFEASpringChain solves a small 1D spring-chain system to mimic a Mini-FEA workflow:
 // assembly via View → boundary conditions via Induced → solve via LU/QR → residual verification.
 // Scenario:
 //   - You approximate a mechanical chain (springs) or a 1D structural bar discretization.
@@ -314,7 +314,7 @@ func ExampleShowcasePipeline() {
 // AI-Hints:
 //   - Always check residuals (or AllClose on Kx vs f) in examples and production.
 //   - If you later scale to large systems, keep the same stage discipline; only swap kernels.
-func ExampleMiniFEASpringChain() {
+func Example_miniFEASpringChain() {
 	const (
 		constNodes   = 5              // Define the number of nodes deterministically.
 		constDOF     = constNodes     // Define 1 DOF per node for 1D axial displacements.
@@ -451,7 +451,7 @@ func ExampleMiniFEASpringChain() {
 	// okSolutionsClose=true
 }
 
-// ExampleStressTestFactorModel demonstrates a credit portfolio stress-test pipeline:
+// Example_stressTestFactorModel demonstrates a credit portfolio stress-test pipeline:
 // raw ingestion (NaN/Inf possible) → sanitize → factor shock Δ = B*S → PD via logistic → Expected Loss aggregation.
 // Scenario:
 //   - You run a portfolio / risk system where exposures (X), factors (F), and residuals define outcomes.
@@ -487,7 +487,7 @@ func ExampleMiniFEASpringChain() {
 // AI-Hints:
 //   - Treat Clip/ReplaceInfNaN as mandatory guards before stress math.
 //   - Use AllClose for regression testing: it encodes numeric tolerance policy explicitly.
-func ExampleStressTestFactorModel() {
+func Example_stressTestFactorModel() {
 	const (
 		constBorrowers = 8 // Define portfolio size deterministically.
 		constFactors   = 3 // Define factor count deterministically.

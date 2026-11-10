@@ -21,6 +21,8 @@
 package matrix
 
 import (
+	"context"
+	"errors"
 	"math"
 
 	"github.com/lvlath/go/core"
@@ -496,16 +498,43 @@ func AllClose(a, b Matrix, rtol, atol float64) (bool, error) {
 	return ewAllClose(a, b, rtol, atol)
 }
 
-// ---------- Statistics (public surface → internal implementations) ----------
+// ---------- Statistics (canonical public facades) ----------
 
-// CenterColumns returns a centered copy: Xc = X − mean(X, by columns) and the column means.
-// Returns Xc and the column means (length = Cols(X)).
-// Implementation: ColSums + divide by rows to get means; then ewBroadcastSubCols.
-// Determinism: fixed loops and pure compositions. O(r*c).
-// Time: O(r*c). Space: O(r*c).
+// CenterColumns materializes the deviations of each observation from its column mean.
+// The returned column means use a compensated, scale-aware reduction, and the centered
+// matrix is independent of the original nonempty input.
+// Implementation:
+//   - Stage 1: validate input presence, size arithmetic, and finite observations.
+//   - Stage 2: establish per-column scales and compensated means, recovering
+//     cancellation-sensitive means from exact binary values when necessary.
+//   - Stage 3: materialize finite centered coordinates in a new owning Dense.
 //
-// AI-Hints: feed means into PCA/Regression; reuse for z-scoring.
-func CenterColumns(X Matrix) (Matrix, []float64, error) { return centerColumns(X) }
+// Behavior highlights:
+//   - Empty element domains preserve the established no-op matrix alias policy.
+//   - The Dense fast path reads row-major storage without interface dispatch.
+//
+// Inputs:
+//   - X: caller-owned matrix with nonnegative dimensions and finite observations.
+//
+// Returns:
+//   - Matrix: detached centered Dense for nonempty X; otherwise X itself.
+//   - []float64: fresh column means of length X.Cols(), including zero-feature cases.
+//
+// Errors:
+//   - ErrNilMatrix: absent matrix; ErrInvalidDimensions: invalid size arithmetic.
+//   - ErrNaNInf: nonfinite input; ErrOverflow: unrepresentable mean or centered cell.
+//   - Wrapped Matrix.At errors from generic input implementations.
+//
+// Determinism: observation rows ascending, then original column indices ascending.
+// Complexity: Time O(rows*cols), Space O(rows*cols+cols) including the output.
+// Notes: Concurrent mutation of X while the computation runs is unsupported.
+// AI-Hints:
+//   - A rounded mean may not represent the exact center of adjacent huge values;
+//     use the returned centered matrix instead of subtracting the means again.
+//   - Prefer *Dense for the direct-slice read path without changing the numeric contract.
+func CenterColumns(X Matrix) (Matrix, []float64, error) {
+	return statisticsCenterColumns(X)
+}
 
 // CenterRows returns a centered copy: Xc[i,*] = X[i,*] − mean(X[i,*]) for each row.
 // Returns Xc and the row means. O(r*c).
@@ -535,58 +564,274 @@ func CenterRows(X Matrix) (Matrix, []float64, error) { return centerRows(X) }
 // AI-Hints: produce row-stochastic matrices for Markov chains.
 func NormalizeRowsL1(X Matrix) (Matrix, []float64, error) { return normalizeRowsL1(X) }
 
-// NormalizeRowsL2 returns Y where each row i is scaled to L2-norm 1 when possible.
+// NormalizeRowsL2 normalizes finite matrix rows by their Euclidean lengths.
+// It reports the original row norms and preserves all-zero rows unchanged.
+// Implementation:
+//   - Stage 1: validate the input and each cell, checking shape arithmetic.
+//   - Stage 2: accumulate per-row scaled sums of squares without forming x*x.
+//   - Stage 3: materialize the normalized Dense and detached norm slice.
 //
-// Degenerate rows:
-//   - If a row has exact L2 norm 0, it is left unchanged.
-//   - The returned norm for that row is 0.
+// Behavior highlights:
+//   - A one-element row containing 1e308 has norm 1e308 and normalized value 1.
+//   - Empty element domains retain their original matrix identity by no-op policy.
 //
-// Zero-shape law:
-//   - 0×N and N×0 inputs are valid no-op transforms.
-//   - Returned norms length is Rows(X).
+// Inputs:
+//   - X: read-only finite matrix with nonnegative rows and columns.
 //
-// Numeric safety:
-//   - Non-finite computed norms are rejected as ErrNaNInf instead of being treated
-//     as degenerate rows.
+// Returns:
+//   - Matrix: detached normalized rows for nonempty input; otherwise X itself.
+//   - []float64: fresh norms, one per row; zero for an all-zero row.
 //
-// Time: O(r*c). Space: O(r*c). Deterministic.
+// Errors:
+//   - ErrNilMatrix, ErrInvalidDimensions or ErrNaNInf for invalid inputs.
+//   - ErrOverflow when a required finite norm does not fit float64; preserves
+//     the historical ErrNaNInf norm-error classification through errors.Is.
+//   - Wrapped Matrix.At errors for generic implementations.
 //
-// AI-Hints: common for cosine similarity / spectral features.
-func NormalizeRowsL2(X Matrix) (Matrix, []float64, error) { return normalizeRowsL2(X) }
+// Determinism: increasing row index; each row scans columns in ascending order.
+// Complexity: Time O(rows*cols), Space O(rows*cols+rows) including output.
+// Notes: Input remains unmodified; concurrent mutation by the caller is unsupported.
+// AI-Hints:
+//   - Do not calculate sum(x*x) or multiply by 1/norm: both fail for extreme
+//     finite magnitudes; the implementation uses scaled ratios instead.
+//   - *Dense enables a direct row-major read path without altering error laws.
+func NormalizeRowsL2(X Matrix) (Matrix, []float64, error) {
+	out, norms, err := statisticsNormalizeRowsL2(X)
+	if err != nil && errors.Is(err, ErrOverflow) {
+		return nil, nil, matrixErrorf(opNormalizeRowsL2, errors.Join(err, ErrNaNInf))
+	}
+	if err != nil {
+		return nil, nil, matrixErrorf(opNormalizeRowsL2, err)
+	}
+	return out, norms, nil
+}
 
-// Covariance computes sample covariance of columns:
+// Covariance computes the sample covariance of observation columns.
+// For rows >= 2 it returns a c-by-c matrix of unbiased second central moments,
+// C[j,k] = sum_i ((x[i,j]-mean[j])*(x[i,k]-mean[k]))/(rows-1).
+// Implementation:
+//   - Stage 1: validate input presence, checked shape, and sample count.
+//   - Stage 2: compute compensated, scaled upper-triangle centered products;
+//     recover cross-moments exactly when large opposing terms conceal a result.
+//   - Stage 3: divide before rescaling and mirror each computed cell bitwise.
 //
-//	Cov = (Xcᵀ Xc)/(r-1)
+// Behavior highlights:
+//   - Uses O(cols*cols+cols) auxiliary state; no centered input, transpose or Gram copy.
+//   - For rows >= 2 and zero columns, returns a 0-by-0 Dense and empty means.
 //
-// Zero-feature law:
-//   - If Cols(X)==0, returns a valid 0×0 covariance and empty means.
+// Inputs:
+//   - X: finite rows-by-cols observation matrix, rows >= 2, cols >= 0.
 //
-// Sample-size law:
-//   - If Cols(X)>0, Rows(X) must be >=2.
+// Returns:
+//   - Matrix: independently owned, bitwise symmetric c-by-c covariance Dense.
+//   - []float64: detached column means, length cols.
 //
-// Returns Cov and column means.
+// Errors:
+//   - ErrNilMatrix, ErrInvalidDimensions, ErrDimensionMismatch (rows < 2).
+//   - ErrNaNInf for invalid observations; ErrOverflow for unrepresentable output.
+//   - Wrapped Matrix.At failures from a non-Dense implementation.
 //
-// Time: O(r*c + r*c²). Space: O(r*c + c²).
-//
-// Notes:
-//   - Requires r >= 2 to avoid division by zero; else ErrDimensionMismatch.
-//   - Uses CenterColumns then reuses canonical kernels (Transpose/Mul/Scale).
-func Covariance(X Matrix) (Matrix, []float64, error) { return covariance(X) }
+// Determinism: rows ascending; feature pairs j <= k ascending; one accumulator per pair.
+// Complexity: Time O(rows*cols^2) normally; exact cancellation recovery incurs
+// additional arbitrary-precision work. Space O(cols^2+cols), excluding result.
+// Notes: No partial covariance or means are published on any error.
+// AI-Hints:
+//   - An intermediate Gram matrix may overflow even if the sample covariance
+//     fits float64; never replace scaled products with raw Xc^T*Xc.
+//   - Correlation operates independently: it can be representable when covariance is not.
+func Covariance(X Matrix) (Matrix, []float64, error) {
+	out, means, err := statisticsCovariance(X)
+	if err != nil {
+		return nil, nil, matrixErrorf(opCovariance, err)
+	}
+	return out, means, nil
+}
 
-// Correlation computes Pearson correlation of columns via z-scoring:
+// Correlation computes Pearson coefficients directly from centered column moments.
+// Unlike division of a materialized covariance, this operation can succeed
+// when finite observations have an unrepresentable intermediate covariance.
+// Implementation:
+//   - Stage 1: validate sample count, dimensions and finite observations.
+//   - Stage 2: compute compensated upper-triangle moments and per-column norms.
+//   - Stage 3: form coefficients from normalized moments and mirror each pair.
 //
-//	Z = (X - mean) / std
-//	Corr = (Zᵀ Z)/(r-1)
+// Behavior highlights:
+//   - Constant features have an exactly zero row, column and diagonal.
+//   - A nonconstant feature has diagonal correlation exactly one.
 //
-// Zero-feature law:
-//   - If Cols(X)==0, returns valid 0×0 correlation and empty means/stds.
+// Inputs:
+//   - X: finite rows-by-cols matrix with at least two observation rows.
 //
-// Sample-size law:
-//   - If Cols(X)>0, Rows(X) must be >=2.
+// Returns:
+//   - Matrix: detached c-by-c Pearson correlation Dense.
+//   - []float64: detached column means; []float64: detached sample deviations.
 //
-// Degenerate columns:
-//   - std==0 columns are mapped to zero columns in Z, producing zero correlation
-//     rows/columns for those features.
+// Errors:
+//   - ErrNilMatrix, ErrInvalidDimensions, ErrDimensionMismatch (rows < 2).
+//   - ErrNaNInf for nonfinite input, ErrOverflow for unrepresentable mandatory
+//     statistics or an out-of-range coefficient beyond the roundoff bound.
+//   - Wrapped Matrix.At errors for generic backends.
 //
-// Time: O(r*c + r*c²). Space: O(r*c + c²).
-func Correlation(X Matrix) (Matrix, []float64, []float64, error) { return correlation(X) }
+// Determinism: row-major accumulation; upper feature pairs evaluated once.
+// Complexity: Time O(rows*cols^2), with exact cancellation rescue when needed;
+// Space O(cols^2+cols) beyond the result and detached metadata.
+// Notes: Independent inputs and outputs; no factorization or inverse is involved.
+// AI-Hints:
+//   - Do not divide Covariance outputs by standard deviations: covariance may
+//     overflow while dimensionless Pearson correlations remain finite.
+//   - *Dense uses direct row-major data access; zero-variance columns stay zero.
+func Correlation(X Matrix) (Matrix, []float64, []float64, error) {
+	out, means, stds, err := statisticsCorrelation(X)
+	if err != nil {
+		return nil, nil, nil, matrixErrorf(opCorrelation, err)
+	}
+	return out, means, stds, nil
+}
+
+// FactorLU builds a reusable deterministic partial-pivoting LU factor.
+// It solves full-rank square systems via P*A=L*U without mutating the input.
+// Implementation:
+//   - Stage 1: reject nil/canceled ctx, invalid options, and invalid shape.
+//   - Stage 2: delegate to the scaled partial-pivoting factor kernel.
+//   - Stage 3: publish only a complete factor with measured kappa_1(A).
+//
+// Behavior highlights: Exact ties prefer the smallest original row index.
+// Inputs: ctx non-nil; a finite square n-by-n Matrix (n>=1), read-only;
+// opts finite relative rank tolerance and optional condition limit.
+// Returns: Detached immutable *LUFactor or nil on error/cancellation.
+// Errors: ErrInvalidOption, ErrNilMatrix, ErrNonSquare, ErrBadShape,
+// ErrNaNInf, ErrRankDeficient (possibly with ErrSingular), ErrIllConditioned,
+// ErrOverflow, context error, or wrapped Matrix.At error.
+// Determinism: k ascending; pivot rows ordered by magnitude then original ID.
+// Complexity: O(n^3) time including 1-norm condition evaluation; O(n^2) storage.
+// Notes: Does not change the legacy two-matrix LU(A) signature.
+// AI-Hints: Use FactorLU+Solve for pivoted systems; old LU(A) is not this API.
+func FactorLU(ctx context.Context, a Matrix, opts FactorOptions) (*LUFactor, error) {
+	if err := factorContextErr(ctx); err != nil {
+		return nil, err
+	}
+	if err := factorValidatedOptions(opts); err != nil {
+		return nil, err
+	}
+	return factorLUKernel(ctx, a, opts)
+}
+
+// FactorQR builds a reusable column-pivoted Householder QR factor.
+// It accepts tall full-column-rank matrices for ordinary least-squares solves.
+// Implementation:
+//   - Stage 1: check context, numeric options, input shape and finite data.
+//   - Stage 2: select deterministic column pivots, storing compact reflectors.
+//   - Stage 3: reject rank loss and publish measured kappa_1(R) diagnostics.
+//
+// Behavior highlights: R is triangular in pivoted-column coordinates;
+// no full Q or normal-equation Gram matrix is created.
+// Inputs: ctx non-nil; a finite m-by-n Matrix with m>=n>=1, read-only;
+// opts finite relative rank cutoff and optional condition limit.
+// Returns: Detached immutable *QRFactor, or nil on error/cancellation.
+// Errors: ErrInvalidOption, ErrNilMatrix, ErrBadShape, ErrNaNInf,
+// ErrRankDeficient, ErrIllConditioned, ErrOverflow, context error, At error.
+// Determinism: Pivot columns by trailing norm, ties by original column ID.
+// Complexity: O(m*n^2+n^3) time including condition evaluation; O(m*n) memory.
+// Notes: The existing QR(A) output orientation is not changed by this API.
+// AI-Hints: No minimum-norm rank-deficient or wide mode is offered without SVD.
+func FactorQR(ctx context.Context, a Matrix, opts FactorOptions) (*QRFactor, error) {
+	if err := factorContextErr(ctx); err != nil {
+		return nil, err
+	}
+	if err := factorValidatedOptions(opts); err != nil {
+		return nil, err
+	}
+	return factorQRKernel(ctx, a, opts)
+}
+
+// FactorCholesky builds a reusable Cholesky factor of an accepted SPD matrix.
+// Its symmetry tolerances allow an explicitly documented symmetric midpoint,
+// not a hidden diagonal shift or regularization of an indefinite matrix.
+// Implementation:
+//   - Stage 1: validate context and both nonnegative finite tolerances.
+//   - Stage 2: verify pairwise symmetry and normalize a detached accepted matrix.
+//   - Stage 3: compute an SPD lower factor and measured kappa_1(acceptedA).
+//
+// Behavior highlights: Exact symmetry is required when both tolerances are 0.
+// Inputs: ctx non-nil; a finite square n-by-n Matrix, read-only;
+// absTol finite >=0 in coefficient units; relTol finite >=0 dimensionless.
+// Returns: Immutable *CholeskyFactor or nil on error/cancellation.
+// Errors: ErrInvalidOption, ErrNilMatrix, ErrNonSquare, ErrAsymmetry,
+// ErrNotPositiveDefinite, ErrOverflow, ErrNaNInf, context and At errors.
+// Determinism: Pair scan and factor triangles use ascending row/column indices.
+// Complexity: O(n^3) time including condition evaluation; O(n^2) memory.
+// Notes: Residuals after Solve refer to the accepted symmetric midpoint matrix.
+// AI-Hints: A positive diagonal alone is not a sufficient SPD test.
+func FactorCholesky(ctx context.Context, a Matrix, absTol, relTol float64) (*CholeskyFactor, error) {
+	if err := factorContextErr(ctx); err != nil {
+		return nil, err
+	}
+	if math.IsNaN(absTol) || math.IsInf(absTol, 0) || absTol < 0 ||
+		math.IsNaN(relTol) || math.IsInf(relTol, 0) || relTol < 0 {
+		return nil, ErrInvalidOption
+	}
+	return factorCholeskyKernel(ctx, a, absTol, relTol)
+}
+
+// SolveLeastSquares computes a full-column-rank least-squares solution.
+// It is a convenience composition of FactorQR and (*QRFactor).Solve with
+// identical rank, residual, condition, and cancellation semantics.
+// Implementation:
+//   - Stage 1: validate context and FactorOptions through FactorQR.
+//   - Stage 2: build one column-pivoted Householder factor of the input.
+//   - Stage 3: solve each RHS and return a single detached SolveResult.
+//
+// Behavior highlights: No explicit inverse, pseudo-inverse, or SVD is constructed.
+// Inputs: ctx non-nil; a finite m-by-n Matrix (m>=n>=1); b finite m-by-r
+// Matrix (r>=1); opts rank cutoff and optional condition limit.
+// Returns: Detached n-by-r SolveResult or nil on any failure.
+// Errors: Same errors as FactorQR and QRFactor.Solve; context cancellation
+// never publishes a partial matrix or residual metadata.
+// Determinism: QR pivot order and RHS column order are both fixed.
+// Complexity: O(m*n^2+n^3+m*n*r) arithmetic plus exact residual evaluation;
+// O(m*n+n*r) factor and solution storage.
+// Notes: Fit algorithms requiring minimum-norm wide solutions need SVD instead.
+// AI-Hints: Never route deficient matrices silently into normal equations.
+func SolveLeastSquares(ctx context.Context, a, b Matrix, opts FactorOptions) (*SolveResult, error) {
+	// All public inputs must be checked before the expensive QR factorization:
+	// context -> options -> both nils -> both shapes -> both finite scans.
+	if err := factorContextErr(ctx); err != nil {
+		return nil, err
+	}
+	if err := factorValidatedOptions(opts); err != nil {
+		return nil, err
+	}
+	if err := ValidateNotNil(a); err != nil {
+		return nil, err
+	}
+	if err := ValidateNotNil(b); err != nil {
+		return nil, err
+	}
+	rows, cols, err := factorInputShape(a)
+	if err != nil {
+		return nil, err
+	}
+	bRows, bCols, err := factorInputShape(b)
+	if err != nil {
+		return nil, err
+	}
+	if rows < cols {
+		return nil, ErrBadShape
+	}
+	if bRows != rows {
+		return nil, ErrDimensionMismatch
+	}
+	// Validate without duplicating full m*n or m*r matrices; the owning
+	// factor constructor and Solve will subsequently take their snapshots.
+	if err = factorWalkFinite(ctx, a, rows, cols, nil); err != nil {
+		return nil, err
+	}
+	if err = factorWalkFinite(ctx, b, bRows, bCols, nil); err != nil {
+		return nil, err
+	}
+	factor, err := FactorQR(ctx, a, opts)
+	if err != nil {
+		return nil, err
+	}
+	return factor.Solve(ctx, b)
+}

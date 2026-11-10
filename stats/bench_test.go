@@ -63,7 +63,7 @@ func benchmarkDense(b *testing.B, rows, cols int) *matrix.Dense {
 	for row := 0; row < rows; row++ {
 		for col := 0; col < cols; col++ {
 			value := float64((row+3*col)%benchmarkFeatureModulus) + float64(col)
-			if err := input.Set(row, col, value); err != nil {
+			if err = input.Set(row, col, value); err != nil {
 				b.Fatal(err)
 			}
 		}

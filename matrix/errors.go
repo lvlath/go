@@ -124,6 +124,27 @@ var (
 	//   - A negative diagonal is not merely bad shape; mathematically it represents a
 	//   negative cycle witness.
 	ErrNegativeCycle = errors.New("matrix: negative cycle")
+
+	// ErrOverflow distinguishes unrepresentable finite arithmetic results from invalid inputs.
+	// Return it when required float64 outputs cannot be represented without infinity.
+	// Existing ErrNaNInf remains the classification for non-finite input data.
+	ErrOverflow = errors.New("matrix: arithmetic overflow")
+
+	// ErrInvalidOption reports a non-finite or out-of-domain factor option.
+	// Nil contexts also use this class; no algorithmic workspace is allocated.
+	ErrInvalidOption = errors.New("matrix: invalid factor option")
+
+	// ErrRankDeficient indicates rank loss relative to the selected diagonal cutoff.
+	// Exact singular LU pivots also retain ErrSingular via errors.Join.
+	ErrRankDeficient = errors.New("matrix: rank deficient")
+
+	// ErrNotPositiveDefinite reports a nonpositive Cholesky diagonal update.
+	// Symmetry alone does not imply positivity; no hidden diagonal shift occurs.
+	ErrNotPositiveDefinite = errors.New("matrix: matrix is not positive definite")
+
+	// ErrIllConditioned reports a measured 1-norm condition estimate above the limit.
+	// Equality is allowed and a zero limit never disables measurement.
+	ErrIllConditioned = errors.New("matrix: condition estimate exceeds limit")
 )
 
 // BACKWARD-COMPATIBILITY ALIASES (kept to avoid breaking current callers).

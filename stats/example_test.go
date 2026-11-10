@@ -93,7 +93,7 @@ func ExampleFitStandardizer() {
 	training := [4][2]float64{{10, 5}, {12, 5}, {14, 5}, {16, 5}}
 	for row, values := range training {
 		for col, value := range values {
-			if err := train.Set(row, col, value); err != nil {
+			if err = train.Set(row, col, value); err != nil {
 				panic(err)
 			}
 		}

@@ -381,7 +381,7 @@ func TestMoments_NilReceiverAndSelfMerge(t *testing.T) {
 	var empty stats.Moments
 	mustErrorIs(t, empty.Merge(&empty), stats.ErrInvalidOption)
 	mustErrorIs(t, empty.Merge(nil), stats.ErrNilInput)
-	if err := empty.Merge(stats.NewMoments()); err != nil {
+	if err = empty.Merge(stats.NewMoments()); err != nil {
 		t.Fatal(err)
 	}
 	_, err = empty.Summary(0)

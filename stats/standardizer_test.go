@@ -179,7 +179,7 @@ func TestStandardizer_InputMutationIsolation(t *testing.T) {
 	fit.Constant[0] = true
 
 	// Stage 2: a source modification must not affect already fitted parameters.
-	if err := train.Set(0, 0, 999); err != nil {
+	if err = train.Set(0, 0, 999); err != nil {
 		t.Fatal(err)
 	}
 	holdout := mustDense(t, [][]float64{{5}})
@@ -192,7 +192,7 @@ func TestStandardizer_InputMutationIsolation(t *testing.T) {
 	}
 
 	// Stage 3: result storage is per-call and cannot affect the next result.
-	if err := first.Set(0, 0, 19); err != nil {
+	if err = first.Set(0, 0, 19); err != nil {
 		t.Fatal(err)
 	}
 	second, err := fit.Model.Transform(holdout)

@@ -26,6 +26,47 @@ import (
 	"github.com/lvlath/go/core"
 )
 
+// matrixCheckedElementCount validates a row-major element count before allocation.
+// It distinguishes legal zero-shaped matrices from impossible dimensions and
+// prevents signed integer overflow from wrapping a positive element product.
+// Implementation:
+//   - Stage 1: reject negative row or column counts.
+//   - Stage 2: handle any zero-element domain without allocating storage.
+//   - Stage 3: check the quotient against MaxInt, then compute the product.
+//
+// Behavior highlights:
+//   - The helper is independent of the Matrix backend and allocation policy.
+//
+// Inputs:
+//   - rows, cols: nonnegative shape components; zero is valid.
+//
+// Returns:
+//   - int: exact number of elements, including zero for empty domains.
+//   - error: ErrInvalidDimensions for negative or overflowing sizes.
+//
+// Errors:
+//   - ErrInvalidDimensions for an impossible element count.
+//
+// Determinism: Fixed sign and quotient checks, with no allocation.
+// Complexity: Time O(1), Space O(1).
+// Notes: A representable element count does not guarantee enough RAM for make.
+// AI-Hints:
+//   - Never form rows*cols before checking rows <= MaxInt/cols.
+//   - This guard protects shape arithmetic; it is not an OOM recovery strategy.
+func matrixCheckedElementCount(rows, cols int) (int, error) {
+	if rows < 0 || cols < 0 {
+		return 0, ErrInvalidDimensions
+	}
+	if rows == 0 || cols == 0 {
+		return 0, nil
+	}
+	maxInt := int(^uint(0) >> 1)
+	if rows > maxInt/cols {
+		return 0, ErrInvalidDimensions
+	}
+	return rows * cols, nil
+}
+
 // distanceMatrixAllowsInfByDefault fixes the distance/APSP convention:
 //
 //   - ordinary Dense matrices reject +Inf by default;
