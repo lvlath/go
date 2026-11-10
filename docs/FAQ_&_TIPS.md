@@ -2,6 +2,8 @@
   SPDX-License-Identifier: AGPL-3.0-only
   Copyright (C) 2025-2026 katalvlaran
 
+  File: docs/FAQ_&_TIPS.md
+  Package reference: matrix and the wider lvlath package family
   lvlath - FAQ & Tips
 
   Purpose:
@@ -637,11 +639,67 @@ View.Set writes into the base Dense.
 
 Use `Induced` when the submatrix needs independent lifetime or safe mutation.
 
-### Q6.8. Why does covariance require at least two rows for positive features?
+### Q6.8. Why does covariance require at least two rows, even with no features?
 
-Sample covariance divides by `rows - 1`. With positive feature count and one row, sample covariance is not defined under that formula.
+`Covariance` and `Correlation` are **sample** statistics with denominator `rows-1`. Their canonical validation rejects every `rows<2` matrix with `ErrDimensionMismatch`, including `1×0` and `0×0`. A `2×0` (or taller, zero-column) input produces an owning `0×0` result and empty means/deviation slices. This fixes validation precedence before the zero-feature fast path; it does not change the `NewDense` zero-shape law.
 
-For zero features (`cols == 0`), a valid `0×0` covariance is a structural result.
+### Q6.9. Why does `Covariance([1e308,1e308])` not overflow?
+
+A raw floating sum overflows **before** division, even though the mean `1e308` and variance zero are representable. `matrix.Covariance` uses scaled, compensated centering. Likewise, `[-1e154,0,1e154]` has finite sample variance near `1e308`, although the Gram sum before dividing by `n-1` could overflow. **Only a truly unrepresentable final output is an `ErrOverflow`**, never a successful `+Inf` covariance.
+
+The implementation keeps one upper-triangle accumulator and writes its value into both symmetric positions, preserving bit-identical symmetry. Exceptional cross-moment cancellation is recovered from the original exact binary64 inputs using a `math/big` path. There is no universal correctly-rounded guarantee for every finite input, so numerical oracles remain important.
+
+### Q6.10. Can `Correlation` succeed when `Covariance` fails?
+
+Yes. Correlation is dimensionless and is computed from **normalized centered moments**, not by dividing a materialized covariance matrix. Two perfectly anticorrelated channels of magnitude `1e200` have Pearson coefficient `-1`, even if the covariance exceeds finite binary64. Their standard deviations may still be representable. For a constant feature, the entire correlation row and column—including the diagonal—is exactly zero; for nonconstant features the diagonal is one.
+
+### Q6.11. Does `CenterColumns` always return a detached matrix?
+
+For an input containing addressable elements, yes: it publishes a new owning Dense and detached means. For valid zero-element shapes, the historical no-op policy returns the **original Matrix instance**; only the means slice is fresh. The same aliasing exception applies to `NormalizeRowsL2`. Do not mutate the return as though it were independent when `Rows()==0 || Cols()==0`.
+
+The centered cells may use more accurate internal mean information than the rounded public means. Recomputing `x - means[j]` in your application can lose an ULP-scale deviation.
+
+### Q6.12. How do `ErrNaNInf` and `ErrOverflow` differ?
+
+`ErrNaNInf` means a finite-only operation received invalid **input data**. `ErrOverflow` means the required arithmetic result or diagnostic could not be published as finite binary64. Neither means "missing edge" or "unreachable graph vertex". The `NormalizeRowsL2` error for a truly overflowing norm matches `ErrOverflow` and, for compatibility, the historical `ErrNaNInf` classification under `errors.Is`; do not apply that joined classification to unrelated operations.
+
+### Q6.13. Which solver should I use: LU, QR or Cholesky?
+
+| Input problem                        | API                                         | Refusal instead of fallback                                       |
+|:-------------------------------------|:--------------------------------------------|:------------------------------------------------------------------|
+| Square, full-rank linear system      | `FactorLU` → `Solve`                        | `ErrRankDeficient` (exact singular LU also matches `ErrSingular`) |
+| Tall, full-column-rank least squares | `FactorQR` → `Solve` or `SolveLeastSquares` | `ErrBadShape` for wide; `ErrRankDeficient` for deficient          |
+| Symmetric positive-definite system   | `FactorCholesky` → `Solve`                  | `ErrAsymmetry` vs `ErrNotPositiveDefinite`                        |
+
+`LUDecompose` is historical **unpivoted** LU; a zero first pivot may reject a solvable square matrix. Historical `QRDecompose` returns a square-only `A≈QᵀR` convention. Neither should be mistaken for the new reusable factor structs. New QR stores compact Householder reflectors, chooses stable original-column pivots and **does not** form normal equations or a full `Q` in `Solve`.
+
+### Q6.14. How do I interpret `FactorOptions`?
+
+`RankTolerance==0` chooses relative `2^-52*max(rows,cols)`; a positive finite value sets the relative pivoted-diagonal cutoff. Exact equality with the threshold counts as deficiency. `ConditionLimit==0` disables *hard rejection*, not condition measurement; a positive finite value must be at least one. Only an estimate **strictly larger** than the limit triggers `ErrIllConditioned`.
+
+These are numerical policies, not a way to make duplicate predictors independent. Never weaken rank tolerance until a singular model merely happens to return coefficients.
+
+### Q6.15. What does `ConditionEstimate` measure?
+
+For LU and Cholesky it measures `kappa_1(A)` of the accepted system; for QR it measures `kappa_1(R)` of the triangular factor. It computes matrix 1-norms and solves each unit basis RHS to estimate the inverse 1-norm, with **O(n³)** additional work. It is not a diagonal ratio, an exact algebraic certificate, or `kappa_2`.
+
+`ResidualNorms[k]` is the original-coordinate Euclidean norm of `A*x_k-b_k`, computed using an exact binary-input accumulation and a high-precision final square root. For Cholesky with accepted asymmetry it uses the **accepted symmetric midpoint** rather than the raw matrix. A small residual alone does not certify small coefficient error when the system is ill-conditioned.
+
+### Q6.16. Can I share a factor between goroutines?
+
+Yes, a successfully constructed `LUFactor`, `QRFactor`, or `CholeskyFactor` retains private immutable factor data. Each `Solve` invocation owns its workspace and output, so concurrent solves are safe **when RHS inputs are stable throughout each call**. You must not mutate input `Dense` buffers or overlapping `View`s during reads. An immutable factor does not turn `Dense.Set` into a goroutine-safe operation.
+
+Cancellation is cooperative: pass a non-nil context, and on cancellation expect no partial `SolveResult`. A nil context is `ErrInvalidOption`.
+
+### Q6.17. Why does QR use more time or memory than I expected?
+
+The QR constructor recomputes the trailing norms on each pivot; it is *not* a literal LAPACK `DGEQP3` norm-downdate implementation. It also computes `ConditionEstimate` by basis solves (`O(n³)`) before publishing the factor. `Solve` computes high-precision original-coordinate residuals, adding multi-precision work on top of the triangular solves. Benchmark factor construction and repeated solutions **separately**; consider factor reuse rather than recomputing the same calibration model.
+
+### Q6.18. Does a failed Cholesky imply a symmetric matrix is unusable?
+
+Not necessarily. First distinguish `ErrAsymmetry` (the pairwise symmetry contract failed) from `ErrNotPositiveDefinite` (a nonpositive Cholesky pivot). Tolerances `absTol, relTol` only permit *small asymmetry*, not a shift of negative eigenvalues. If the physical matrix is indefinite, changing to a different solver is an explicit modeling decision; do not silently add diagonal jitter or hide the failure.
+
+For mathematics, zero-shape tables, pseudocode, and real calibration examples, read [`MATRICES.md`](MATRICES.md#1011-reusable-factorizations-different-problems-different-contracts).
 
 ---
 
@@ -1397,11 +1455,11 @@ error tests:
 
 No. Use the standard library and package-specific helpers. This keeps failure messages precise and avoids dependency weight.
 
-### Q14.3. When is `reflect.DeepEqual` acceptable?
+### Q14.3. Should matrix tests use reflection or `reflect.DeepEqual`?
 
-Use explicit structural helpers when the domain matters. For example, prefer path comparison helpers, matrix cell checks, sorted domain checks, and numeric tolerance helpers.
+No. The `matrix` codebase follows a zero-reflection policy, including external `matrix_test` tests and fixtures. Use explicit shape comparisons, `At`-based element checks, `math.Float64bits` for required bitwise symmetry/determinism, and magnitude-aware numerical oracles. Concrete `*Dense` fast paths use type assertions, not runtime reflection.
 
-`reflect.DeepEqual` is acceptable only when it genuinely expresses the whole contract and produces understandable failure output.
+Other packages may have their own testing policy, but reflection is never required to prove matrix contracts. Explicit failure messages are more useful than a generic structural-difference dump.
 
 ### Q14.4. How should numeric tests compare floats?
 

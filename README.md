@@ -61,7 +61,7 @@ It is built for people who need algorithmic tools they can explain in a code rev
 * `core.Graph` gives deterministic, thread-safe topology with explicit capabilities;
 * traversal packages publish meaningful result artifacts, not incidental internal state;
 * weighted routing keeps `+Inf`, unknown targets, disabled path tracking, and unreachable targets separate;
-* `matrix` turns topology into dense numeric objects without erasing zero-weight or metric-closure semantics;
+* `matrix` turns topology into dense numeric objects without erasing zero-weight or metric-closure semantics, and provides stable covariance plus reusable pivoted linear-system solvers;
 * `series` checks exact timestamp grids and exposes mask-aware causal transformations without interpolation;
 * `stats` provides scaled Welford/Chan moments and immutable training-only feature standardization without refit;
 * flow, MST, TSP, DTW, grid, and builder packages extend the same discipline into optimization, alignment, fixtures, and examples.
@@ -160,7 +160,7 @@ lvlath/
 ├── series/                # exact timestamp grids, causal transforms, complete index windows
 ├── stats/                 # scaled Welford/Chan moments and immutable fitted scaling
 ├── gridgraph/             # 2D lattice graph generation
-├── matrix/                # dense graph algebra and statistics
+├── matrix/                # dense graph algebra, stable statistics, pivoted factors and solves
 ├── tsp/                   # tour construction, local search, exact small-instance routing
 ├── builder/               # deterministic fixtures and graph generators
 │
@@ -177,7 +177,7 @@ lvlath/
 │   ├── SERIES.md
 │   ├── STATS.md
 │   ├── GRID_GRAPH.md
-│   ├── MATRICES.md
+│   ├── MATRICES.md     # canonical complete matrix reference
 │   ├── TSP.md
 │   ├── lvlath_UES.md
 │   └── FAQ_&_TIPS.md
@@ -286,7 +286,7 @@ Composition rule:
 | `series`    | Exact signed-nanosecond grid checks, causal lag/difference/returns, and complete index windows.                                                | Detached validity masks, checked integer intervals, and explicit whole-slot gaps without interpolation.                  | Telemetry preparation, causal features, window scheduling, signal-quality gates.               |
 | `stats`     | Stable scalar mean/variance, mergeable Welford/Chan states, train-only fitted feature standardization.                                         | Exact binary-input mean and scaled second moments, detached fitted metadata, immutable inference without refit.          | Telemetry aggregation, distributed metrics, ML feature preparation, anomaly-score calibration. |
 | `gridgraph` | 2D lattice graph generation with neighborhood and obstacle-style workflows.                                                                    | Avoids manual wiring for pathfinding maps and teaching graphs.                                                           | Grid routing, maps, demos, benchmark fixtures.                                                 |
-| `matrix`    | Dense row-major matrices, adjacency/incidence, metric closure, APSP, algebra, LU/QR/Eigen, covariance/correlation, sanitation.                 | Connects graph topology to numeric workflows without losing zero/`+Inf`/metric semantics.                                | Spectral analysis, graph features, routing matrices, risk/ML preprocessing.                    |
+| `matrix`    | Dense algebra, graph adapters, scaled covariance/Pearson/L2, pivoted LU/QR, Cholesky, and multi-RHS solves.                                    | Deterministic pivots, detached factors, real condition diagnostics and true residual norms.                              | Graph features, calibration, linear systems and numerical preprocessing.                       |
 | `tsp`       | Tour optimization toolkit: practical approximation/local search/exact small-instance strategies.                                               | Bridges exactness and practicality for route planning.                                                                   | Delivery tours, inspection routes, metric routing experiments.                                 |
 | `builder`   | Deterministic graph and data generators.                                                                                                       | Produces reproducible examples, tests, and benchmarks.                                                                   | Golden tests, performance fixtures, tutorials.                                                 |
 
@@ -431,6 +431,66 @@ func main() {
 
 For the full derivations, overflow cases, error precedence, ownership, ASCII diagrams, and integration with `series` masks or multivariate DTW, read [`docs/STATS.md`](docs/STATS.md) and [`stats/doc.go`](stats/doc.go). The five canonical executable examples live in [`stats/example_test.go`](stats/example_test.go).
 
+### Matrix: stable cross-feature statistics and reusable linear solvers
+
+`github.com/lvlath/go/matrix` is both the graph-to-dense representation layer and the numerical layer for full-rank linear systems. Its finite-only statistical kernels are distinct from graph distance matrices that use `+Inf` as an absence marker. For **sample** statistics, rows are observations and columns are features; `Covariance`/`Correlation` require at least two rows, even when the matrix has no feature columns.
+
+| Need                                              | Public API                              | Essential contract                                                              |
+|:--------------------------------------------------|:----------------------------------------|:--------------------------------------------------------------------------------|
+| Demean many feature columns                       | `matrix.CenterColumns`                  | Scale-aware mean; detached nonempty result; zero-element no-op aliases input    |
+| Compute sample cross-feature variability          | `matrix.Covariance`                     | Divides by `n-1` before restoring large scales; bit-identical symmetric cells   |
+| Compare correlated features across extreme scales | `matrix.Correlation`                    | Direct Pearson; constant columns have zero row and diagonal                     |
+| Unit-length finite feature rows                   | `matrix.NormalizeRowsL2`                | Scaled sum of squares; reports original row norms; true overflow returns error  |
+| Solve a square full-rank system                   | `matrix.FactorLU`                       | Deterministic row-pivoted `PA=LU`; reusable and detached                        |
+| Fit a tall full-column-rank model                 | `matrix.FactorQR` / `SolveLeastSquares` | Column-pivoted Householder; no normal-equation or minimum-norm fallback         |
+| Solve a symmetric SPD system                      | `matrix.FactorCholesky`                 | Explicit symmetry tolerance; positive definiteness checked during factorization |
+
+For every successful new factor solve, `SolveResult` includes a detached solution, numerical rank, one original-coordinate L2 residual per right-hand side, and a **measured** 1-norm condition diagnostic. LU and Cholesky report `kappa_1(A)` of their accepted matrices; QR reports `kappa_1(R)`. Building this diagnostic uses basis-vector solves and is not free. Reusing a factor for successive RHS batches avoids repeatedly paying the factorization cost.
+
+The three current solver domains are intentionally strict. QR rejects wide and rank-deficient inputs; Cholesky rejects matrices outside the accepted symmetry/SPD domain; LU reports numerical rank loss. No silent SVD, ridge, diagonal jitter or alternate objective is introduced. Existing `LUDecompose`/`QRDecompose` are **legacy unpivoted and square-only** interfaces with distinct output conventions.
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/lvlath/go/matrix"
+)
+
+func main() {
+	design, err := matrix.NewDense(3, 2)
+	if err != nil {
+		fmt.Println("design:", err)
+		return
+	}
+	if err := design.Fill([]float64{1, 0, 1, 1, 1, 2}); err != nil {
+		fmt.Println("design data:", err)
+		return
+	}
+	rhs, err := matrix.NewDense(3, 1)
+	if err != nil {
+		fmt.Println("rhs:", err)
+		return
+	}
+	if err := rhs.Fill([]float64{8, 11, 14}); err != nil {
+		fmt.Println("rhs data:", err)
+		return
+	}
+	fit, err := matrix.SolveLeastSquares(context.Background(), design, rhs, matrix.FactorOptions{})
+	if err != nil {
+		fmt.Println("least squares:", err)
+		return
+	}
+	fmt.Printf("unknowns=%d, rank=%d, rhs=%d\n", fit.Solution.Rows(), fit.Rank, len(fit.ResidualNorms))
+
+	// Output: unknowns=2, rank=2, rhs=1
+}
+```
+
+For larger runnable scenarios with checked errors, see [`docs/MATRICES.md`](docs/MATRICES.md#108-go-usage-examples) and [`matrix/example_test.go`](matrix/example_test.go). For why exact binary-input residuals can be expensive, and where `ErrNaNInf`, `ErrOverflow`, `ErrRankDeficient`, `ErrAsymmetry`, and `ErrNotPositiveDefinite` differ, see the [solver reference](docs/MATRICES.md#1013-error-classification-and-decision-table).
+
 ### Weighted shortest paths: choose the result domain
 
 `github.com/lvlath/go/dijkstra` now exposes **two distinct API families**, not four variants of the same return type:
@@ -478,7 +538,7 @@ Target methods require **exactly representable binary64 stored costs and heurist
 | Series primitives    | [`docs/SERIES.md`](docs/SERIES.md)           | Exact integer grids, causal transforms, result masks, numeric safeguards, index windows.                            |
 | Stable statistics    | [`docs/STATS.md`](docs/STATS.md)             | Welford/Chan, exact mean sum, scaled M2, fitted scaling, sentinels, immutable inference.                            |
 | Grid spec            | [`docs/GRID_GRAPH.md`](docs/GRID_GRAPH.md)   | Grid/lattice graph modeling and pathfinding-oriented construction.                                                  |
-| Matrix spec          | [`docs/MATRICES.md`](docs/MATRICES.md)       | Dense matrix model, graph adapters, metric closure, zero-shape/statistics/numeric policy.                           |
+| Matrix spec          | [`docs/MATRICES.md`](docs/MATRICES.md)       | Canonical dense/graph/statistics/factorization reference; [`MATRIX.md`](docs/MATRIX.md) is a navigation alias.      |
 | TSP spec             | [`docs/TSP.md`](docs/TSP.md)                 | Tour optimization, exact vs approximate methods, metric assumptions.                                                |
 | Engineering standard | [`docs/lvlath_UES.md`](docs/lvlath_UES.md)   | Repository engineering standard and quality expectations.                                                           |
 | FAQ                  | [`docs/FAQ_&_TIPS.md`](docs/FAQ_%26_TIPS.md) | Troubleshooting, common pitfalls, usage tips.                                                                       |
@@ -899,7 +959,7 @@ Determinism is not "sort something at the end." It is a cross-package contract.
 * `dijkstra` uses deterministic frontier behavior and strict-improvement updates so equal-cost alternatives do not randomly overwrite witnesses.
 * `mst` applies `(Weight, Edge.ID)` order to Kruskal selection, uses a deterministic Prim heap, expands KMB terminal links to original edge identities, and validates caller-owned trees before a covering walk.
 * `flow` builds and consumes residual state through deterministic algorithm policy.
-* `matrix` uses fixed row-major loops and deterministic graph-adapter publication.
+* `matrix` uses fixed row-major loops and deterministic graph-adapter publication; LU/QR pivot ties prefer the smallest original index.
 * `stats` visits scalar samples in input order and matrix cells row-major; a caller fixes the merge-tree order when grouping floating-point moments.
 * `dtw` runs row-major DP and backtracks ties as diagonal, then vertical/up, then horizontal/left.
 * `series` scans samples in index order, reports gaps and ranges in that order, and preserves length and validity masks.
@@ -979,7 +1039,7 @@ incidence matrix:       columns are edge identities, not vertex-pair weights
 
 ### Concurrency
 
-`core` is thread-safe for graph storage and controlled mutation. Algorithm packages should be run against topology that is stable for the duration of the call unless the package explicitly documents otherwise. `matrix.Dense` does not contain locks; concurrent writes require external synchronization.
+`core` is thread-safe for graph storage and controlled mutation. Algorithm packages should be run against topology that is stable for the duration of the call unless the package explicitly documents otherwise. `matrix.Dense` does not contain locks; concurrent writes require external synchronization. Successfully built LU/QR/Cholesky factors retain detached immutable storage and support concurrent `Solve` with private per-call workspaces when RHS inputs remain stable.
 
 ---
 
@@ -1009,6 +1069,8 @@ incidence matrix:       columns are edge identities, not vertex-pair weights
 | "How do I calculate stable population/sample variance?"                       | `stats.Summarize`                                                 | Stable central moments and explicit DDOF denominator.                     |
 | "How do I combine independent streaming statistics?"                          | `stats.Moments.Update` / `Merge`                                  | Error-atomic, count-checked Welford/Chan partition reductions.            |
 | "How do I scale test features using only training data?"                      | `stats.FitStandardizer` followed by `Model.Transform`             | Frozen per-column means and scales, no inference refit.                   |
+| "How do I fit a full-rank tall calibration model?"                            | `matrix.SolveLeastSquares` / `FactorQR`                           | Pivoted Householder QR, rank refusal and residual diagnostics.            |
+| "How do I solve a reusable SPD coupling system?"                              | `matrix.FactorCholesky`                                           | Symmetry/SPD validation, measured condition and detached solutions.       |
 | "How do I compute topology features?"                                         | `matrix.NewAdjacencyMatrix`, `NewIncidenceMatrix`, `DegreeVector` | Matrix artifacts preserve topology policy.                                |
 | "How do I compute all-pairs route distances?"                                 | `matrix.BuildMetricClosure`                                       | Floyd-Warshall distance artifact with `+Inf` semantics.                   |
 | "How do I solve a complete inspection/delivery tour?"                         | `tsp.SolveMatrix`                                                 | TSP kernels consume matrix cost models.                                   |

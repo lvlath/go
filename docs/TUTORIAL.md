@@ -2,6 +2,10 @@
   SPDX-License-Identifier: AGPL-3.0-only
   Copyright (C) 2025-2026 katalvlaran
 
+  File: docs/TUTORIAL.md
+  Package reference: matrix and the wider lvlath package family
+  Contract status: learning guide; package doc.go and source define the public API.
+  Scope: graph, matrix, factorization, statistical and temporal workflows.
   lvlath - Repository Tutorial
 
   Purpose:
@@ -650,8 +654,8 @@ Graphs describe relationships. Matrices make those relationships computable.
 * metric closure / all-pairs shortest paths;
 * degree vectors and reductions;
 * row-major dense algebra;
-* LU, QR, inverse, symmetric eigen decomposition;
-* covariance, correlation, row normalization;
+* legacy unpivoted LU/QR, reusable pivoted LU/Householder QR, Cholesky, least-squares, inverse, and symmetric eigen decomposition;
+* stable sample covariance, direct Pearson correlation, and scale-aware L2 row normalization;
 * numeric sanitation and tolerant comparison.
 
 ### Matrix core capabilities
@@ -717,6 +721,95 @@ Metric closure:
 Sanitation/statistics:
   NaN and invalid Inf values must be cleaned or rejected before analysis.
 ```
+
+### Stable statistics and reusable factors: the numerical workflow
+
+Matrix-native statistics and linear solvers answer **different** questions:
+
+```text
+      observations X[n×d]               linear model A[m×p], RHS B[m×r]
+               │                                      │
+       ┌───────┴────────┐                ┌────────────┴──────────────┐
+CenterColumns       Covariance     square full rank           tall full rank
+       │                │                │                           │
+centered data       d×d moments       FactorLU                FactorQR
+       │                │                │                           │
+NormalizeRowsL2    Correlation    row pivot + Solve      Householder + Solve
+       │                │                └───────────┬───────────────┘
+feature geometry    pair relations             SolveResult
+                                       solution / rank / residuals /
+                                         condition estimate
+
+  Symmetric positive definite operator:
+      FactorCholesky -> reusable Solve -> accepted-A residuals
+```
+
+Use `Covariance` for a sample covariance **with denominator `rows-1`**; use `Correlation` to compare signed feature relationships even when an unscaled covariance is too large to represent. Both require `rows>=2`, including zero-feature requests. A constant feature has an all-zero correlation row and diagonal. `CenterColumns` and `NormalizeRowsL2` use stable finite-only reductions; on zero-element shapes their returned `Matrix` intentionally aliases the source.
+
+For linear systems, select by mathematical structure rather than convenience: pivoted `FactorLU` for square systems, `FactorQR` or `SolveLeastSquares` for tall full-column-rank least squares, and `FactorCholesky` **only** when symmetry and positive definiteness hold. The legacy `LUDecompose` and `QRDecompose` have different, historically preserved output conventions; they are not reusable solver factors. Numerical rank rejection (`ErrRankDeficient`) does not trigger a hidden pseudoinverse, and a positive diagonal is not a proof of SPD.
+
+### An executable calibration example
+
+Five field measurements follow a linear response law. The QR solver recovers the baseline and sensitivity without squaring the design's condition number through normal equations. The result also carries the actual original-coordinate residual and a measured `kappa_1(R)` diagnostic.
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/lvlath/go/matrix"
+)
+
+func main() {
+	design, err := matrix.NewDense(5, 2)
+	if err != nil {
+		fmt.Println("matrix:", err)
+		return
+	}
+	if err := design.Fill([]float64{1, 0, 1, 1, 1, 2, 1, 3, 1, 4}); err != nil {
+		fmt.Println("design:", err)
+		return
+	}
+	response, err := matrix.NewDense(5, 1)
+	if err != nil {
+		fmt.Println("response:", err)
+		return
+	}
+	if err := response.Fill([]float64{8, 11, 14, 17, 20}); err != nil {
+		fmt.Println("observations:", err)
+		return
+	}
+	fit, err := matrix.SolveLeastSquares(
+		context.Background(), design, response, matrix.FactorOptions{},
+	)
+	if err != nil {
+		fmt.Println("solve:", err)
+		return
+	}
+	intercept, err := fit.Solution.At(0, 0)
+	if err != nil {
+		fmt.Println("intercept:", err)
+		return
+	}
+	slope, err := fit.Solution.At(1, 0)
+	if err != nil {
+		fmt.Println("slope:", err)
+		return
+	}
+	fmt.Printf("baseline %.0f, slope %.0f, rank %d\n", intercept, slope, fit.Rank)
+	fmt.Printf("residual below 1e-12: %t\n", fit.ResidualNorms[0] < 1e-12)
+
+	// Output:
+	// baseline 8, slope 3, rank 2
+	// residual below 1e-12: true
+}
+```
+
+For repeated response batches with the same design, call `FactorQR` once and reuse `factor.Solve(ctx,B)`. Each call receives a separate workspace; inputs must remain unchanged during calculation. `FactorOptions{ConditionLimit: limit}` can reject a measured condition above `limit`; it does not regularize or improve a badly conditioned model.
+
+The full derivation, dimension rules, numerical limits, and the separate LU/QR/Cholesky conventions are in [`MATRICES.md`](MATRICES.md#1011-reusable-factorizations-different-problems-different-contracts).
 
 ### Matrix as bridge to other packages
 
@@ -857,31 +950,42 @@ func main() {
 	}
 	fmt.Println("distance-edge-backup:", distToBackup)
 
-	// Symmetrize builds an undirected-style operator from directed adjacency.
-	// That derived operator is suitable for symmetric spectral routines.
-	sym, err := matrix.Symmetrize(adj.Mat)
+	// The zero-preserving adjacency contains +Inf for missing relations.
+	// Spectral routines require a separate finite numerical operator.
+	binaryOptions, err := matrix.NewMatrixOptions(
+		matrix.WithDirected(), matrix.WithUnweighted(),
+	)
 	if err != nil {
-		fmt.Println(err)
+		fmt.Println("binary options:", err)
 		return
 	}
-
-	_, _, err = matrix.EigenSym(sym, 1e-10, 200)
+	binaryAdjacency, err := matrix.NewAdjacencyMatrix(g, binaryOptions)
 	if err != nil {
-		fmt.Println(err)
+		fmt.Println("binary adjacency:", err)
 		return
 	}
-	fmt.Println("spectral-ready:", true)
+	symmetricOperator, err := matrix.Symmetrize(binaryAdjacency.Mat)
+	if err != nil {
+		fmt.Println("symmetrize:", err)
+		return
+	}
+	eigenvalues, _, err := matrix.EigenSym(symmetricOperator, 1e-10, 2000)
+	if err != nil {
+		fmt.Println("spectral analysis:", err)
+		return
+	}
+	fmt.Println("spectral eigenvalues:", len(eigenvalues))
 
-	// Output:
+	// Illustrative output when the finite symmetric operator converges:
 	// vertices: 11
 	// degree-vector-len: 11
 	// replication-cost: 0
 	// distance-edge-backup: 5
-	// Eigen: ValidateSymmetric: diagonal[0,0]=+Inf: matrix: NaN or Inf encountered
+	// spectral eigenvalues: 11
 }
 ```
 
-[![Go Playground](https://img.shields.io/badge/Go_Playground-TUTORIAL_Graph_to_Matrix_Example-blue?logo=go)](https://go.dev/play/p/NkN7e4dOt_D)
+Run this code in a `main` package inside the repository module. The old Playground snapshot is intentionally not linked because it contains a different numerical-policy example.
 
 ### What this example proves
 
@@ -890,8 +994,8 @@ func main() {
 * `matrix.NewAdjacencyMatrix` gives string vertices deterministic dense coordinates.
 * `matrix.WithPreserveZeroWeights` keeps a real zero-cost edge distinct from absence.
 * `matrix.BuildMetricClosure` turns topology into shortest-distance data.
-* `matrix.Symmetrize` prepares a derived operator for symmetric spectral analysis.
-* `matrix.EigenSym` demonstrates that graph-derived matrices can become numeric-analysis inputs.
+* A zero-preserving distance/adjacency encoding containing `+Inf` is **not** a valid spectral input.
+* A separate finite binary adjacency can be symmetrized and passed to `matrix.EigenSym` as a derived operator. This does not make it a graph Laplacian or prove causality.
 
 ### How the same incident graph connects to other lvlath packages
 
@@ -1269,25 +1373,28 @@ For detailed derivations, ASCII diagrams, independent-oracle tests, and end-to-e
 
 ### If the input is numeric data
 
-| Problem                                    | Package                 | Main output                                                      |
-|:-------------------------------------------|:------------------------|:-----------------------------------------------------------------|
-| Dense algebra                              | `matrix`                | matrix result with shape/error policy.                           |
-| Stable mean and population/sample variance | `stats.Summarize`       | detached `Summary`, exact binary-input mean and scaled variance. |
-| Streaming/partitioned moments              | `stats.Moments`         | error-atomic Welford updates and Chan merges.                    |
-| Training-only feature scaling              | `stats.FitStandardizer` | immutable model and detached fit metadata.                       |
-| Numeric cleaning                           | `matrix`                | sanitized matrix.                                                |
-| Matrix-native normalization                | `matrix`                | matrix-specific transforms under their own contract.             |
-| Covariance/correlation                     | `matrix`                | statistical matrix artifact.                                     |
-| Symmetric spectral analysis                | `matrix`                | eigenvalues/eigenvectors.                                        |
-| Exact nanosecond cadence checks            | `series.Validate`       | sample count + ordered gap metadata.                             |
-| Causal lag/difference/returns              | `series`                | length-preserving values + validity mask.                        |
-| Complete fixed index windows               | `series.WindowRanges`   | ordered half-open sample-index intervals.                        |
-| Scalar sequence alignment                  | `dtw.Align`             | DTW `Result` with distance/reachability.                         |
-| Inclusive-limit scalar alignment           | `dtw.AlignBounded`      | Exact/above-limit/unreachable status.                            |
-| Globally exact window top-K                | `dtw.Search`            | Sorted fixed-length squared-DTW matches.                         |
-| Precomputed local-cost alignment           | `dtw.AlignCostMatrix`   | DTW over caller-owned finite cost surface.                       |
-| Multivariate time-series alignment         | `dtw.AlignMatrix`       | squared-L2 row-cost alignment result.                            |
-| Complete route matrix optimization         | `tsp.SolveMatrix`       | tour, cost, exactness/timeout/ratio metadata.                    |
+| Problem                                    | Package                                 | Main output                                                      |
+|:-------------------------------------------|:----------------------------------------|:-----------------------------------------------------------------|
+| Dense algebra                              | `matrix`                                | matrix result with shape/error policy.                           |
+| Stable mean and population/sample variance | `stats.Summarize`                       | detached `Summary`, exact binary-input mean and scaled variance. |
+| Streaming/partitioned moments              | `stats.Moments`                         | error-atomic Welford updates and Chan merges.                    |
+| Training-only feature scaling              | `stats.FitStandardizer`                 | immutable model and detached fit metadata.                       |
+| Numeric cleaning                           | `matrix`                                | sanitized matrix.                                                |
+| Matrix-native normalization                | `matrix`                                | matrix-specific transforms under their own contract.             |
+| Covariance/correlation                     | `matrix`                                | stable sample moments and direct Pearson coefficients.           |
+| Square linear solve with pivoting          | `matrix.FactorLU`                       | reusable factor, `P*A=L*U`, exact residual diagnostics.          |
+| Tall full-column-rank least squares        | `matrix.SolveLeastSquares` / `FactorQR` | Householder QR; numerical rank and `kappa_1(R)` measurement.     |
+| Symmetric positive-definite system         | `matrix.FactorCholesky`                 | accepted symmetric midpoint, SPD check, reusable solves.         |
+| Symmetric spectral analysis                | `matrix`                                | eigenvalues/eigenvectors.                                        |
+| Exact nanosecond cadence checks            | `series.Validate`                       | sample count + ordered gap metadata.                             |
+| Causal lag/difference/returns              | `series`                                | length-preserving values + validity mask.                        |
+| Complete fixed index windows               | `series.WindowRanges`                   | ordered half-open sample-index intervals.                        |
+| Scalar sequence alignment                  | `dtw.Align`                             | DTW `Result` with distance/reachability.                         |
+| Inclusive-limit scalar alignment           | `dtw.AlignBounded`                      | Exact/above-limit/unreachable status.                            |
+| Globally exact window top-K                | `dtw.Search`                            | Sorted fixed-length squared-DTW matches.                         |
+| Precomputed local-cost alignment           | `dtw.AlignCostMatrix`                   | DTW over caller-owned finite cost surface.                       |
+| Multivariate time-series alignment         | `dtw.AlignMatrix`                       | squared-L2 row-cost alignment result.                            |
+| Complete route matrix optimization         | `tsp.SolveMatrix`                       | tour, cost, exactness/timeout/ratio metadata.                    |
 
 ### If the goal is documentation or testing
 
