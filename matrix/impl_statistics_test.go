@@ -462,3 +462,42 @@ func TestCorrelation_ZeroFeaturesReturnsZeroByZero(t *testing.T) {
 		t.Fatalf("stds len: got %d, want 0", len(stds))
 	}
 }
+
+// TestNormalizeRowsL1_DenseFallbackParity verifies the public row-scaling
+// contract after removal of privileged tests for its private ewScaleRows kernel.
+// Implementation:
+//   - Stage 1: construct a matrix containing positive, signed and zero rows.
+//   - Stage 2: run the same public facade on Dense and an opaque Matrix wrapper.
+//   - Stage 3: compare normalized values and the detached original-row norms.
+//
+// Behavior highlights: zero rows remain exactly zero; no backend may change
+// signs or publish different scaling for the same mathematical input.
+// Inputs: a finite 4x3 matrix that remains unchanged throughout both calls.
+// Returns: an ordinary test failure if either backend differs or aliasing occurs.
+// Errors: any returned error rejects a valid finite matrix and fails the test.
+// Determinism: input rows and columns are visited in ascending index order.
+// Complexity: O(rows*cols) time, O(rows*cols) output and fixture space.
+// Notes: this is an externally observable replacement for private-kernel tests.
+// AI-Hints: do not introduce a privileged production test wrapper for the
+// private scaling kernel; use the public facade on both Matrix backends.
+func TestNormalizeRowsL1_DenseFallbackParity(t *testing.T) {
+	input := NewFilledDense(t, 4, 3, []float64{
+		3, -4, 0,
+		0, 0, 0,
+		1, -1, 2,
+		-2, -3, -5,
+	})
+	before := input.Clone()
+	denseOut, denseNorms, err := matrix.NormalizeRowsL1(input)
+	if err != nil {
+		t.Fatalf("Dense NormalizeRowsL1: %v", err)
+	}
+	genericOut, genericNorms, err := matrix.NormalizeRowsL1(hide{input})
+	if err != nil {
+		t.Fatalf("generic NormalizeRowsL1: %v", err)
+	}
+	CompareClose(t, denseOut, genericOut, 0, 0)
+	sliceClose(t, denseNorms, genericNorms, 0, 0)
+	sliceClose(t, denseNorms, []float64{7, 0, 4, 10}, 0, 0)
+	CompareClose(t, input, before, 0, 0)
+}

@@ -1,16 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2025-2026 katalvlaran
 
-// Package: matrix
+// Package matrix owns deterministic elementwise operations used by its
+// public algebra and statistics facades.
+// This file provides row-transform kernels and finite-data sanitation and
+// comparison operations without exposing private storage contracts.
 //
 // Purpose:
-//   - Provide small, *private* element-wise and broadcast kernels (ew*) to avoid
-//     duplicating tight loops across higher-level ops (stats, sanitize).
+//   - Provide the private row-wise centering/normalization kernels still needed
+//     by CenterRows and NormalizeRowsL1, plus the public sanitization and comparison
+//     kernels used by Clip, ReplaceInfNaN and AllClose.
+//   - Column-centering is owned by the stable statistics implementation; no
+//     redundant elementwise column-offset or scaling kernel is retained.
 //   - Keep all loops deterministic and cache-friendly with Dense fast-paths.
 //
 // Design:
 //   - All ew* are UNEXPORTED by design (internal micro-kernels).
-//   - Public API uses these via thin wrappers (e.g., stats.go, ops_sanitize_compare.go).
+//   - Public facades in api.go delegate to these kernels when applicable.
 //
 // Determinism & Performance:
 //   - Fixed loop orders (i→j or flat 0..n-1).
@@ -25,8 +31,9 @@
 //
 // AI-Hints:
 //   - Prefer passing *Dense to unlock the flat-slice fast path.
-//   - Keep broadcast arrays (colMeans/rowMeans/scale) precomputed and reused across calls.
-//   - Avoid re-allocations in hot paths by pooling inputs/outputs at a higher layer if needed.
+//   - Keep rowMeans/scale vectors private and aligned to the input row count.
+//   - Do not resurrect an independent column-centering kernel; stable column
+//     statistics already owns that arithmetic and overflow policy.
 
 package matrix
 
@@ -34,9 +41,7 @@ import "math"
 
 // Operation name constants for unified error wrapping and reducing magic strings.
 const (
-	opBroadcastSubCols = "broadcastSubCols"
 	opBroadcastSubRows = "broadcastSubRows"
-	opScaleCols        = "scaleCols"
 	opScaleRows        = "scaleRows"
 	opReplaceInfNaN    = "ReplaceInfNaN"
 	opClip             = "Clip"
@@ -81,92 +86,6 @@ func allCloseElem(a, b, rtol, atol float64) bool {
 		absb = -absb
 	}
 	return diff <= (atol + rtol*absb)
-}
-
-// Broadcast-subtract columns: out[i,j] = X[i,j] − colMeans[j].
-// Implementation:
-//   - Stage 1: Validate X (non-nil) and length(colMeans)==Cols(X).
-//   - Stage 2: Dense fast-path over flat buffer; fallback via At/Set.
-//
-// Behavior highlights:
-//   - Deterministic i→j loops; single allocation for output.
-//
-// Inputs:
-//   - X: input matrix.
-//   - colMeans: length==Cols(X); column offsets.
-//
-// Returns:
-//   - Matrix: newly allocated Dense with centered values.
-//
-// Errors:
-//   - ErrNilMatrix (nil X), ErrDimensionMismatch (len mismatch), Dense alloc/Set errors.
-//
-// Determinism:
-//   - Fixed row-major traversal.
-//
-// Complexity:
-//   - Time O(rc), Space O(rc).
-//
-// Notes:
-//   - Precompute colMeans once; reuse across calls.
-//
-// AI-Hints:
-//   - Use for column-centering and z-scoring.
-//   - Pass *Dense to unlock flat fast-path.
-func ewBroadcastSubCols(X Matrix, colMeans []float64) (Matrix, error) {
-	// Validate matrix presence using centralized validator.
-	if err := ValidateNotNil(X); err != nil {
-		return nil, matrixErrorf(opBroadcastSubCols, err)
-	}
-	// Read shape once (O(1)).
-	r, c := X.Rows(), X.Cols()
-
-	// Check broadcast vector length.
-	if len(colMeans) != c {
-		return nil, matrixErrorf(opBroadcastSubCols, ErrDimensionMismatch)
-	}
-	// Zero-shape law:
-	//   - 0×N requires len(colMeans)==N and returns a new 0×N Dense.
-	//   - N×0 requires len(colMeans)==0 and returns a new N×0 Dense.
-	//   - No element reads occur for either case.
-
-	// Allocate result dense (O(1) alloc + O(r*c) zeroing by runtime).
-	out, err := NewDense(r, c)
-	if err != nil {
-		return nil, matrixErrorf(opBroadcastSubCols, err)
-	}
-
-	// Dense fast-path: single pass over the flat row-major buffer.
-	var i, j int
-	if d, ok := X.(*Dense); ok {
-		// Iterate rows deterministically.
-		for i = 0; i < r; i++ {
-			// Iterate columns deterministically.
-			for j = 0; j < c; j++ {
-				// Subtract the column mean from each element (one read, one write).
-				out.data[i*c+j] = d.data[i*c+j] - colMeans[j] // (i*c) = cache the base offset for row i
-			}
-		}
-
-		return out, nil
-	}
-
-	// Generic fallback via At/Set (still deterministic).
-	var v float64
-	for i = 0; i < r; i++ {
-		for j = 0; j < c; j++ {
-			v, err = X.At(i, j)
-			if err != nil {
-				return nil, matrixErrorf(opBroadcastSubCols, err)
-			}
-			// Set() may fail (bounds, policy). Never ignore the error.
-			if err = out.Set(i, j, v-colMeans[j]); err != nil {
-				return nil, matrixErrorf(opBroadcastSubCols, err)
-			}
-		}
-	}
-
-	return out, nil
 }
 
 // ewBroadcastSubRows computes out[i,j] = X[i,j] - rowMeans[i].
@@ -247,62 +166,6 @@ func ewBroadcastSubRows(X Matrix, rowMeans []float64) (Matrix, error) {
 			// Set() may fail (bounds, policy). Never ignore the error.
 			if err = out.Set(i, j, v-rowMean); err != nil {
 				return nil, matrixErrorf(opBroadcastSubRows, err)
-			}
-		}
-	}
-
-	return out, nil
-}
-
-// ewScaleCols computes out[i,j] = X[i,j] * scale[j].
-// Time: O(r*c). Space: O(r*c). Deterministic i→j loops.
-//
-// AI-Hint: use factors as 1/std for z-scoring, or 0 for degenerate columns. O(r*c).
-func ewScaleCols(X Matrix, scale []float64) (Matrix, error) {
-	// Validate matrix presence.
-	if err := ValidateNotNil(X); err != nil {
-		return nil, matrixErrorf(opScaleCols, err)
-	}
-	// Read shape once.
-	r, c := X.Rows(), X.Cols()
-	// Validate scale length.
-	if len(scale) != c {
-		return nil, matrixErrorf(opScaleCols, ErrDimensionMismatch)
-	}
-	// Zero-shape law:
-	//   - 0×N requires len(colMeans)==N and returns a new 0×N Dense.
-	//   - N×0 requires len(colMeans)==0 and returns a new N×0 Dense.
-	//   - No element reads occur for either case.
-
-	// Allocate result dense.
-	out, err := NewDense(r, c)
-	if err != nil {
-		return nil, matrixErrorf(opScaleCols, err)
-	}
-
-	// Dense fast-path.
-	var i, j int
-	if d, ok := X.(*Dense); ok {
-		for i = 0; i < r; i++ {
-			for j = 0; j < c; j++ { // (i * c) = row base offset
-				out.data[i*c+j] = d.data[i*c+j] * scale[j]
-			}
-		}
-
-		return out, nil
-	}
-
-	// Generic fallback.
-	var v float64
-	for i = 0; i < r; i++ {
-		for j = 0; j < c; j++ {
-			v, err = X.At(i, j)
-			if err != nil {
-				return nil, matrixErrorf(opScaleCols, err)
-			}
-			// Set() may fail (bounds, policy). Never ignore the error.
-			if err = out.Set(i, j, v*scale[j]); err != nil {
-				return nil, matrixErrorf(opScaleCols, err)
 			}
 		}
 	}

@@ -563,3 +563,55 @@ func TestStatisticsConstantFeaturesAvoidExactRescue(t *testing.T) {
 		}
 	}
 }
+
+// TestStatisticsBalancedCrossMomentWithLargeOffsets verifies that an ordinary
+// covariance benchmark fixture genuinely exercises cancellation-sensitive
+// arithmetic rather than leaving a dominant uncancelled observation.
+// Implementation:
+//   - Stage 1: balance 98 huge binary64 values across opposite signs.
+//   - Stage 2: append two small rows whose independent second feature has
+//     zero mean, leaving a mathematically nonzero cross-covariance.
+//   - Stage 3: compare covariance and correlation with exact rational moments.
+//
+// Behavior highlights: the cross-covariance is -147/99; its correlation is
+// tiny but representable, despite diagonal variance close to 1e300.
+// Inputs: the fixed 100x2 observations are fully owned by the test.
+// Returns: test failure if either public numerical result loses a small term.
+// Errors: any error is an unexpected rejection of representable results.
+// Determinism: source rows are constructed in ascending order, no randomness.
+// Complexity: O(rows) fixture creation and O(rows) rational oracle work.
+// Notes: this regression also protects the paired benchmark's input regime.
+// AI-Hints: an odd count of alternating large values leaves a huge residual;
+// do not make the benchmark appear faster by inadvertently removing cancellation.
+func TestStatisticsBalancedCrossMomentWithLargeOffsets(t *testing.T) {
+	const (
+		rows         = 100
+		dominantRows = 98
+		large        = 1e150
+	)
+	values := make([][]float64, rows)
+	for i := 0; i < dominantRows; i++ {
+		value := large
+		if i%2 != 0 {
+			value = -value
+		}
+		values[i] = []float64{value, 1}
+	}
+	values[98] = []float64{1, -49}
+	values[99] = []float64{2, -49}
+	_, exact := statisticsOracleMoments(values)
+	want := statisticsOracleFloat(exact[0][1])
+	statsTestClose(t, want, -147.0/99.0, 0, 2e-15)
+	input := statsTestDense(t, values)
+	covariance, _, err := matrix.Covariance(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statsTestClose(t, statsTestValue(t, covariance, 0, 1), want, 0, 2e-13)
+	correlation, _, _, err := matrix.Correlation(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statsTestClose(t, statsTestValue(t, correlation, 0, 1),
+		statisticsOracleCorrelation(exact, 0, 1), 0, 2e-12)
+}

@@ -10,6 +10,7 @@ package matrix
 import (
 	"fmt"
 	"math"
+	"math/big"
 )
 
 const (
@@ -738,6 +739,11 @@ func statisticsCorrelation(input Matrix) (Matrix, []float64, []float64, error) {
 		}
 	}
 
+	// Exact variances are allocated only if a cross-moment requires rescue.
+	// Ordinary correlation stays on the scaled fast path without an additional
+	// O(cols) pointer slice; the per-call cache is never retained by a factor.
+	var exactVariances []*big.Rat
+
 	// Divide by lengths independently. A huge unscaled covariance or
 	// underflowed variance is not needed to obtain a valid correlation.
 	reader, err := newStatisticsReader(input)
@@ -758,7 +764,26 @@ func statisticsCorrelation(input Matrix) (Matrix, []float64, []float64, error) {
 				if exactErr != nil {
 					return nil, nil, nil, exactErr
 				}
-				value, err = statisticsExactPearson(exact, columns[j].scale, columns[k].scale, lengths[j], lengths[k], rows)
+				// On a badly canceled cross-moment, approximate length vectors
+				// can contaminate an otherwise exact numerator. Allocate a per-call
+				// cache lazily and recover each variance from the original samples
+				// at most once, even when several pairs require exact recovery.
+				if exactVariances == nil {
+					exactVariances = make([]*big.Rat, cols)
+				}
+				if exactVariances[j] == nil {
+					exactVariances[j], err = statisticsExactCovariance(reader, j, j)
+					if err != nil {
+						return nil, nil, nil, err
+					}
+				}
+				if exactVariances[k] == nil {
+					exactVariances[k], err = statisticsExactCovariance(reader, k, k)
+					if err != nil {
+						return nil, nil, nil, err
+					}
+				}
+				value, err = statisticsExactPearson(exact, exactVariances[j], exactVariances[k])
 				if err != nil {
 					return nil, nil, nil, err
 				}

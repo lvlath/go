@@ -256,7 +256,7 @@ func TestFill_InvalidLength(t *testing.T) {
 		t.Fatalf("NewDense: %v", err)
 	}
 	// Expect ErrInvalidDimensions for mismatched length.
-	if err = matrix.ExportedDenseFill(m, []float64{1, 2, 3}); !errors.Is(err, matrix.ErrInvalidDimensions) {
+	if err = m.Fill([]float64{1, 2, 3}); !errors.Is(err, matrix.ErrInvalidDimensions) {
 		t.Fatalf("Fill invalid length: expected ErrInvalidDimensions, got %v", err)
 	}
 }

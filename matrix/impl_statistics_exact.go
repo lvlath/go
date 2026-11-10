@@ -232,55 +232,57 @@ func statisticsExactCovariance(reader statisticsReader, j, k int) (*big.Rat, err
 	return new(big.Rat).SetFrac(numerator, denominator), nil
 }
 
-// statisticsExactPearson publishes a dimensionless correlation from an exact
-// cross-covariance numerator and precomputed scaled column lengths.
-// Its higher-precision division avoids overflowing an unscaled covariance-to-
-// standard-deviation product when the final Pearson coefficient is finite.
+// statisticsExactPearson evaluates Pearson correlation using three exact
+// sample moments reconstructed from the original binary64 input values.
+// This avoids reusing rounded normalized column lengths on the very path that
+// was selected because cancellation made ordinary floating reduction unsafe.
 // Implementation:
-//   - Stage 1: convert the exact rational cross-moment to a 512-bit big.Float.
-//   - Stage 2: build the sample denominator from both column scales and
-//     normalized Euclidean lengths at the same extended precision.
-//   - Stage 3: divide, round once to binary64, and reject nonfinite output.
+//   - Stage 1: require strictly positive exact sample variances; zero variance
+//     is handled by the caller's zero-correlation policy before this method.
+//   - Stage 2: convert the exact rational covariance and variances to fixed
+//     512-bit binary floats and form sqrt(varianceJ * varianceK) without a
+//     float64 intermediate or premature exponent overflow.
+//   - Stage 3: divide the exact-numerator approximation by the extended-range
+//     denominator, round the dimensionless answer to float64 and validate it.
 //
 // Behavior highlights:
-//   - An unrepresentable covariance does not automatically invalidate Pearson r.
-//   - This rescue has an exact numerator but approximate input column lengths;
-//     it is not a proof of correctly rounded correlation for every float64 array.
+//   - Unrepresentable sample covariance and variances can still yield a finite
+//     Pearson coefficient in [-1,1]. Only the final coefficient is converted.
 //
 // Inputs:
-//   - cross: exact sample covariance owned by the caller (not mutated).
-//   - scaleJ, scaleK: nonnegative original-coordinate per-feature magnitudes.
-//   - lengthJ, lengthK: positive normalized centered L2 lengths.
-//   - rows: sample count >= 2 determining the n-1 denominator.
+//   - cross: exact sample cross-covariance, read-only for this operation.
+//   - varianceJ, varianceK: positive exact sample variances, read-only.
 //
-// Returns:
-//   - float64: finite computed Pearson coefficient, before final range checks.
-//
-// Errors:
-//   - ErrOverflow when the computed denominator is zero or result nonfinite.
-//
-// Determinism: Fixed multiplication order, fixed extended precision and rounding.
-// Complexity: O(1) extended-precision operations on bounded-size numbers.
-// Notes: Correlation range validation and final symmetric publication belong
-// to statisticsCorrelation, never to this low-level arithmetic helper.
+// Returns: finite correlation coefficient computed with 512-bit precision.
+// Errors: ErrOverflow when input variance is non-positive, denominator collapses,
+// or the final float64 coefficient is not representable as a finite number.
+// Determinism: fixed operand order and fixed math/big binary precision.
+// Complexity: O(1) fixed-precision big.Float operations and O(1) workspace
+// with respect to rows and columns; actual bit cost depends on sqrt/division;
+// the per-column exact moments are computed and memoized by the caller.
+// Notes: Sqrt and division are rounded at 512 bits; mathematical exactness of
+// the input moments does not imply a universal correctly-rounded Pearson result.
 // AI-Hints:
-//   - Never use a float64 scaleJ*scaleK intermediate; it can overflow while
-//     the correlation itself remains representable.
-//   - Do not claim the approximate normalized lengths are exact rational roots.
-func statisticsExactPearson(cross *big.Rat, scaleJ, scaleK, lengthJ, lengthK float64, rows int) (float64, error) {
-	makeFloat := func() *big.Float { return new(big.Float).SetPrec(statisticsExactPrecision) }
+//   - Never reconstruct the denominator from the approximate column lengths.
+//   - Never convert the individual covariance or variance to float64 first:
+//     their magnitudes may exceed finite binary64 even when correlation fits.
+func statisticsExactPearson(cross, varianceJ, varianceK *big.Rat) (float64, error) {
+	if varianceJ.Sign() <= 0 || varianceK.Sign() <= 0 {
+		return 0, ErrOverflow
+	}
+
+	makeFloat := func() *big.Float {
+		return new(big.Float).SetPrec(statisticsExactPrecision).SetMode(big.ToNearestEven)
+	}
 	numerator := makeFloat().SetRat(cross)
-	denominator := makeFloat().SetFloat64(scaleJ)
-	denominator.Mul(denominator, makeFloat().SetFloat64(scaleK))
-	denominator.Mul(denominator, makeFloat().SetFloat64(lengthJ))
-	denominator.Mul(denominator, makeFloat().SetFloat64(lengthK))
-	denominator.Quo(denominator, makeFloat().SetFloat64(float64(rows-1)))
+	product := makeFloat().Mul(makeFloat().SetRat(varianceJ), makeFloat().SetRat(varianceK))
+	denominator := makeFloat().Sqrt(product)
 	if denominator.Sign() == 0 {
 		return 0, ErrOverflow
 	}
-	value, _ := makeFloat().Quo(numerator, denominator).Float64()
-	if math.IsNaN(value) || math.IsInf(value, 0) {
+	coefficient, _ := makeFloat().Quo(numerator, denominator).Float64()
+	if math.IsNaN(coefficient) || math.IsInf(coefficient, 0) {
 		return 0, ErrOverflow
 	}
-	return value, nil
+	return coefficient, nil
 }

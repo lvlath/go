@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2025-2026 katalvlaran
+
 // Package matrix_test provides benchmarks for core matrix package operations,
 // using deterministic random fill for Dense matrices.
 package matrix_test

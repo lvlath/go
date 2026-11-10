@@ -4,6 +4,8 @@
 package matrix_test
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"math"
 
@@ -938,4 +940,485 @@ func logisticStable(x float64) float64 {
 	}
 	ex := math.Exp(x)                // Compute exp(x) for negative x (safe).
 	return ex / (constOneFloat + ex) // Compute stable negative-side form.
+}
+
+// ExampleCovariance_fleetTelemetry evaluates dependency between two measured
+// operational channels while retaining a constant equipment-state feature.
+// A fleet analyst can detect a reliable inverse relationship without treating
+// a constant status channel as perfectly correlated with itself.
+// Implementation:
+//   - Stage 1: assemble eight synchronized, finite fleet observations.
+//   - Stage 2: compute centered values, sample covariance and Pearson correlation.
+//   - Stage 3: consume the returned means and correlation's constant-column law.
+//
+// Behavior highlights:
+//   - Constant columns have zero sample variance and an entirely zero correlation row.
+//
+// Inputs: fixed row-major observations; source matrices remain read-only.
+// Returns: deterministic summary printed from detached public results.
+// Errors: explicit error reporting; no panic or partial output interpretation.
+// Determinism: eight rows scanned in supplied order, features in column order.
+// Complexity: O(n*d*d) time and O(d*d+n*d) total result space, n=8, d=3.
+// Notes: correlation indicates association, not physical causality.
+// AI-Hints: fit a separate training-only scaler when these features feed an
+// inference model; Correlation is not a trainable standardizer.
+func ExampleCovariance_fleetTelemetry() {
+	readings, err := matrix.NewDense(8, 3)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	observations := []float64{
+		100, 20, 7, 102, 19, 7, 104, 18, 7, 106, 17, 7,
+		108, 16, 7, 110, 15, 7, 112, 14, 7, 114, 13, 7,
+	}
+	if err = readings.Fill(observations); err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	centered, _, err := matrix.CenterColumns(readings)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	covariance, means, err := matrix.Covariance(readings)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	correlation, _, deviations, err := matrix.Correlation(readings)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	centeredFirst, err := centered.At(0, 0)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	cross, err := covariance.At(0, 1)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	pearson, err := correlation.At(0, 1)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	constant, err := correlation.At(2, 2)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	fmt.Printf("mean-demand %.0f, first-deviation %.0f\n", means[0], centeredFirst)
+	fmt.Printf("covariance-negative %t, correlation %.0f\n", cross < 0, pearson)
+	fmt.Printf("fixed-channel std %.0f, diagonal %.0f\n", deviations[2], constant)
+	// Output:
+	// mean-demand 107, first-deviation -7
+	// covariance-negative true, correlation -1
+	// fixed-channel std 0, diagonal 0
+}
+
+// ExampleCovariance_cancellationAudit checks a tiny cross-moment left after
+// two enormous opposing products cancel. The final value is finite and
+// important for a quality-control signal despite the 150-order scale gap.
+// Implementation:
+//   - Stage 1: preserve exact original binary64 samples in a finite Dense.
+//   - Stage 2: request the shared stable sample-moment kernel.
+//   - Stage 3: inspect the actual cross-covariance rather than a Gram product.
+//
+// Behavior highlights: a representable result must not round to zero merely
+// because normalized products have lost its smaller surviving contribution.
+// Inputs: three observations with two features, supplied row-major.
+// Returns: exact-result regression fingerprint and a public-column mean.
+// Errors: unexpected errors are reported; never coerced into finite output.
+// Determinism: stable row order and unique upper-triangular pair reduction.
+// Complexity: O(n*d*d) ordinary work with adaptive exact fallback for cancellation.
+// Notes: this protects numerical correctness, not a claim of universal exact rounding.
+// AI-Hints: do not replace the exact rescue with a wider epsilon or gram matrix.
+func ExampleCovariance_cancellationAudit() {
+	observations, err := matrix.NewDense(3, 2)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	if err = observations.Fill([]float64{1e150, 1, -1e150, 1, 1, -2}); err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	covariance, means, err := matrix.Covariance(observations)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	cross, err := covariance.At(0, 1)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	fmt.Printf("first-feature-mean %.4f; surviving-covariance %.0f\n", means[0], cross)
+	// Output: first-feature-mean 0.3333; surviving-covariance -1
+}
+
+// ExampleNormalizeRowsL2_extremeSensorScales prepares signals at both ends of
+// the binary64 exponent range without squaring their original coordinates.
+// The zero row is a disconnected sensor and must remain zero after scaling.
+// Implementation:
+//   - Stage 1: assemble huge, subnormal, and zero sensor rows.
+//   - Stage 2: normalize each row through scaled sums of squares.
+//   - Stage 3: read the detached row norms and normalized observations.
+//
+// Behavior highlights: finite extreme norms are accepted; true norm overflow
+// would return ErrOverflow and no published output matrix.
+// Inputs: finite row-major readings; ownership remains with the caller.
+// Returns: normalized row signals and physical-unit norms.
+// Errors: constructor, Fill, normalization and At errors are checked.
+// Determinism: fixed row-major traversal, no reductions across goroutines.
+// Complexity: O(n*d) time and O(n*d+n) result/workspace.
+// Notes: all-zero rows remain all-zero, not unit-length artificial vectors.
+// AI-Hints: computing sqrt(sum(v*v)) would overflow for the first valid row.
+func ExampleNormalizeRowsL2_extremeSensorScales() {
+	rows, err := matrix.NewDense(3, 2)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	if err = rows.Fill([]float64{1e308, 0, math.SmallestNonzeroFloat64, 0, 0, 0}); err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	normalized, norms, err := matrix.NormalizeRowsL2(rows)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	huge, err := normalized.At(0, 0)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	subnormal, err := normalized.At(1, 0)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	fmt.Printf("huge norm %.0e, direction %.0f\n", norms[0], huge)
+	fmt.Printf("subnormal nonzero %t, direction %.0f, offline norm %.0f\n", norms[1] > 0, subnormal, norms[2])
+	// Output:
+	// huge norm 1e+308, direction 1
+	// subnormal nonzero true, direction 1, offline norm 0
+}
+
+// ExampleFactorLU_supplyBlend estimates three feed quantities from independent
+// industrial mixture assays.
+// The first sensor cannot measure the first component (zero coefficient),
+// so non-pivoted LU fails despite the full assay system being invertible.
+// Implementation:
+//   - Stage 1: assemble finite assay sensitivities and observed signal totals.
+//   - Stage 2: factor with deterministic row pivoting and solve a detached RHS.
+//   - Stage 3: consume original-index permutation, solution and true residual.
+//
+// Behavior highlights: P*A=L*U with the lowest-original-index rule on ties.
+// Inputs: read-only square coefficients and a single finite RHS column.
+// Returns: independently owned solution matrix and residual diagnostics.
+// Errors: any shape, rank, arithmetic or solve error terminates the example.
+// Determinism: input row order and original-index pivot tie-breaks.
+// Complexity: O(n^3) factor construction and O(n^2) per RHS, plus exact residual.
+// Notes: assay sensitivities and quantities are normalized illustrative units.
+// AI-Hints: legacy LUDecompose does not perform row pivoting and cannot replace FactorLU.
+func ExampleFactorLU_supplyBlend() {
+	coefficients, err := matrix.NewDense(3, 3)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	if err = coefficients.Fill([]float64{0, 3, 1, 4, 1, 0, 2, 0, 5}); err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	loads, err := matrix.NewDense(3, 1)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	if err = loads.Fill([]float64{13, 11, 24}); err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	factor, err := matrix.FactorLU(context.Background(), coefficients, matrix.FactorOptions{})
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	result, err := factor.Solve(context.Background(), loads)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	x0, err := result.Solution.At(0, 0)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	x1, err := result.Solution.At(1, 0)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	x2, err := result.Solution.At(2, 0)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	fmt.Printf("feed quantities %.0f %.0f %.0f; first pivot %d\n", x0, x1, x2, factor.Permutation()[0])
+	fmt.Printf("residual under 1e-12: %t; full rank: %t\n", result.ResidualNorms[0] < 1e-12, result.Rank == 3)
+	// Output:
+	// feed quantities 2 3 4; first pivot 1
+	// residual under 1e-12: true; full rank: true
+}
+
+// ExampleFactorQR_multichannelCalibration calibrates two sensor channels
+// against eight independent reference conditions. An intercept and two
+// physical response terms are fitted using one reusable pivoted QR factor.
+// Implementation:
+//   - Stage 1: construct eight rows with intercept, temperature and pressure.
+//   - Stage 2: factor once and solve two RHS columns with common predictors.
+//   - Stage 3: inspect both coefficient vectors and their true residual norms.
+//
+// Behavior highlights: no A^T*A is formed; Q is applied through stored reflectors.
+// Inputs: read-only 8x3 design and 8x2 measured reference matrix.
+// Returns: detached 3x2 coefficients, rank and two residuals.
+// Errors: nonfinite, rank deficiency and invalid option errors are reported.
+// Determinism: QR pivots use the smallest original column on equal trailing norms.
+// Complexity: O(m*n*n+n^3) factor plus O(m*n*r) solves and residuals.
+// Notes: coefficients correspond to original columns, not pivoted column order.
+// AI-Hints: never independently fit one channel's column ordering after pivoting.
+func ExampleFactorQR_multichannelCalibration() {
+	predictorRows := [8][3]float64{
+		{1, 0, 0}, {1, 1, 0}, {1, 0, 1}, {1, 1, 1},
+		{1, 2, 0}, {1, 0, 2}, {1, 2, 2}, {1, 3, 1},
+	}
+	design, err := matrix.NewDense(8, 3)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	responses, err := matrix.NewDense(8, 2)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	for i, predictors := range predictorRows {
+		for j, value := range predictors {
+			if err = design.Set(i, j, value); err != nil {
+				fmt.Println("example error:", err)
+				return
+			}
+		}
+		referenceA := 10 + 2*predictors[1] - predictors[2]
+		referenceB := 5 - predictors[1] + 3*predictors[2]
+		if err = responses.Set(i, 0, referenceA); err != nil {
+			fmt.Println("example error:", err)
+			return
+		}
+		if err = responses.Set(i, 1, referenceB); err != nil {
+			fmt.Println("example error:", err)
+			return
+		}
+	}
+	factor, err := matrix.FactorQR(context.Background(), design, matrix.FactorOptions{})
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	result, err := factor.Solve(context.Background(), responses)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	first, err := result.Solution.At(0, 0)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	second, err := result.Solution.At(1, 0)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	third, err := result.Solution.At(2, 0)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	other, err := result.Solution.At(0, 1)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	fmt.Printf("channel A coefficients: %.0f %.0f %.0f\n", first, second, third)
+	fmt.Printf("channel B offset: %.0f; channels: %d; rank: %d\n", other, len(result.ResidualNorms), result.Rank)
+	fmt.Printf("residuals under 1e-12: %t\n", result.ResidualNorms[0] < 1e-12 && result.ResidualNorms[1] < 1e-12)
+	// Output:
+	// channel A coefficients: 10 2 -1
+	// channel B offset: 5; channels: 2; rank: 3
+	// residuals under 1e-12: true
+}
+
+// ExampleFactorCholesky_correlatedSensorFusion solves an SPD coupling matrix
+// arising from three correlated sensor channels. The accepted symmetric
+// operator and all returned solution buffers are detached from the caller.
+// Implementation:
+//   - Stage 1: construct a strictly positive-definite coupling matrix.
+//   - Stage 2: factor it using Cholesky and solve one correction vector.
+//   - Stage 3: inspect the solution and finite condition-number diagnostic.
+//
+// Behavior highlights: an indefinite symmetric matrix would be rejected;
+// this path never substitutes LU or a pseudo-inverse.
+// Inputs: finite symmetric positive-definite 3x3 A and finite 3x1 response.
+// Returns: independent correction coefficients and true original-coordinate residual.
+// Errors: ErrAsymmetry/ErrNotPositiveDefinite are distinct failure classes.
+// Determinism: ascending lower-triangle factorization and RHS column order.
+// Complexity: O(n^3) factor and condition estimate; O(n^2) solve per RHS.
+// Notes: the example uses exact integer fixtures for readable diagnostics.
+// AI-Hints: don't infer SPD from symmetry alone; a positive diagonal is insufficient.
+func ExampleFactorCholesky_correlatedSensorFusion() {
+	covariance, err := matrix.NewDense(3, 3)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	if err = covariance.Fill([]float64{5, 1, 0, 1, 4, 1, 0, 1, 3}); err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	measurements, err := matrix.NewDense(3, 1)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	if err = measurements.Fill([]float64{7, 12, 11}); err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	factor, err := matrix.FactorCholesky(context.Background(), covariance, 0, 0)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	result, err := factor.Solve(context.Background(), measurements)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	first, err := result.Solution.At(0, 0)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	second, err := result.Solution.At(1, 0)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	third, err := result.Solution.At(2, 0)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	fmt.Printf("fusion corrections %.0f %.0f %.0f\n", first, second, third)
+	fmt.Printf("condition measured %t; residual small %t\n", result.ConditionEstimate >= 1, result.ResidualNorms[0] < 1e-12)
+	// Output:
+	// fusion corrections 1 2 3
+	// condition measured true; residual small true
+}
+
+// ExampleFactorQR_collinearPredictors shows an identifiability gate for a
+// telemetry model: two duplicated predictors cannot determine independent
+// coefficients, so a full-rank QR factor must not be published.
+// Implementation:
+//   - Stage 1: collect multiple observations with duplicated predictor columns.
+//   - Stage 2: attempt pivoted QR with its default rank policy.
+//   - Stage 3: classify the sentinel instead of interpreting a fabricated fit.
+//
+// Behavior highlights: no hidden pseudo-inverse, SVD or ridge regularization.
+// Inputs: read-only 6x2 finite but rank-deficient design.
+// Returns: nil factor and a deterministic ErrRankDeficient classification.
+// Errors: ErrRankDeficient is a legitimate domain refusal, not a runtime crash.
+// Determinism: consistent pivot order and classification on repeated runs.
+// Complexity: O(m*n*n) worst-case factorization before rank rejection.
+// Notes: callers must correct their experimental design or choose a different algorithm.
+// AI-Hints: do not weaken RankTolerance until duplicated columns appear independent.
+func ExampleFactorQR_collinearPredictors() {
+	design, err := matrix.NewDense(6, 2)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	if err = design.Fill([]float64{1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6}); err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	factor, err := matrix.FactorQR(context.Background(), design, matrix.FactorOptions{})
+	fmt.Printf("factor unavailable %t; collinear predictors rejected %t\n", factor == nil, errors.Is(err, matrix.ErrRankDeficient))
+	// Output: factor unavailable true; collinear predictors rejected true
+}
+
+// ExampleSolveLeastSquares_fieldCalibration demonstrates a one-shot model fit
+// over redundant field measurements. The wrapper performs pivoted QR and
+// returns a detached coefficient vector in original predictor-column order.
+// Implementation:
+//   - Stage 1: create a tall design and a physically consistent response.
+//   - Stage 2: call the canonical least-squares facade exactly once.
+//   - Stage 3: inspect the coefficient estimates and measured residual norm.
+//
+// Behavior highlights: the QR path detects rank loss instead of silently
+// replacing it with a regularized or minimum-norm objective.
+// Inputs: finite 5x2 design and 5x1 response; no input mutation.
+// Returns: solution, rank and true residual diagnostics.
+// Errors: ErrBadShape, ErrRankDeficient, ErrOverflow and context cancellation.
+// Determinism: stable column pivoting and fixed row ordering.
+// Complexity: O(m*n*n+n^3) factor and diagnostic, O(m*n) solve for one RHS.
+// Notes: a fitted model is not retained; use FactorQR for repeated solves.
+// AI-Hints: use FactorQR once when many response batches share the same design.
+func ExampleSolveLeastSquares_fieldCalibration() {
+	design, err := matrix.NewDense(5, 2)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	if err = design.Fill([]float64{1, 0, 1, 1, 1, 2, 1, 3, 1, 4}); err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	measurements, err := matrix.NewDense(5, 1)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	if err = measurements.Fill([]float64{8, 11, 14, 17, 20}); err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	result, err := matrix.SolveLeastSquares(context.Background(), design, measurements, matrix.FactorOptions{})
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	intercept, err := result.Solution.At(0, 0)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	slope, err := result.Solution.At(1, 0)
+	if err != nil {
+		fmt.Println("example error:", err)
+		return
+	}
+	fmt.Printf("baseline %.0f, sensitivity %.0f, rank %d\n", intercept, slope, result.Rank)
+	fmt.Printf("residual under 1e-12 %t\n", result.ResidualNorms[0] < 1e-12)
+	// Output:
+	// baseline 8, sensitivity 3, rank 2
+	// residual under 1e-12 true
 }

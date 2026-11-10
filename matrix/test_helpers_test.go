@@ -996,3 +996,87 @@ func statsBenchFixture(b *testing.B, rows, cols int) *matrix.Dense {
 	}
 	return input
 }
+
+// statsBenchCancellationFixture constructs a deliberately ill-scaled 100x2
+// dataset whose cross-covariance is finite but invisible to ordinary float64
+// accumulation of the dominant terms. It is shared by the covariance and
+// correlation benchmarks so both measure the same numeric input regime.
+// Implementation:
+//   - Stage 1: allocate a 100x2 Dense once outside the timed benchmark.
+//   - Stage 2: write 49 positive and 49 negative enormous observations, all
+//     paired with the same second-coordinate value; their cross-products cancel.
+//   - Stage 3: add two small observations with a balancing second coordinate,
+//     leaving sample cross-covariance exactly -147/99.
+//
+// Behavior highlights: the mean of the second column is exactly zero, and
+// the large contributions to its cross-product cancel exactly in real math.
+// Inputs: b is the benchmark owner; no external state or random seed is used.
+// Returns: fully initialized, caller-owned 100x2 Dense with finite entries.
+// Errors: unexpected construction/Set failures abort benchmark setup.
+// Determinism: rows are assigned in ascending index order with fixed values.
+// Complexity: O(rows) setup time and O(rows) matrix storage, excluded by ResetTimer.
+// Notes: neither benchmark makes a claim about exact rescue unless its
+// source-level selection remains aligned with the cancellation trigger.
+// AI-Hints: do not restore the original odd-number alternating fixture:
+// leaving one uncancelled 1e150 contribution destroys the intended workload.
+func statsBenchCancellationFixture(b *testing.B) *matrix.Dense {
+	b.Helper()
+	const (
+		rows              = 100
+		dominantRows      = 98
+		dominantMagnitude = 1e150
+		oppositeLoad      = -49.0
+	)
+	input, err := matrix.NewDense(rows, 2)
+	if err != nil {
+		b.Fatal(err)
+	}
+	for i := 0; i < dominantRows; i++ {
+		dominant := dominantMagnitude
+		if i%2 == 1 {
+			dominant = -dominant
+		}
+		if err = input.Set(i, 0, dominant); err != nil {
+			b.Fatal(err)
+		}
+		if err = input.Set(i, 1, 1); err != nil {
+			b.Fatal(err)
+		}
+	}
+	for i, value := range [2]float64{1, 2} {
+		if err = input.Set(dominantRows+i, 0, value); err != nil {
+			b.Fatal(err)
+		}
+		if err = input.Set(dominantRows+i, 1, oppositeLoad); err != nil {
+			b.Fatal(err)
+		}
+	}
+	return input
+}
+
+// matrixMustOptions assembles public matrix policy for external contract tests.
+// The helper preserves the real option application order and never accesses
+// private Options fields or a privileged test-only production export.
+// Implementation:
+//   - Stage 1: mark the helper frame for accurate caller diagnostics.
+//   - Stage 2: apply the public NewMatrixOptions resolver without shortcuts.
+//   - Stage 3: return its finalized value only on success; fixture errors fail.
+//
+// Behavior highlights: tests compare complete public Options values or execute
+// an affected public operation rather than constructing a test-only snapshot.
+// Inputs: t is the owning testing goroutine; options are applied left-to-right.
+// Returns: finalized Options owned by this test, never a private pointer.
+// Errors: any failed option resolution aborts the owning test via t.Fatalf.
+// Determinism: matches the production resolver's documented last-writer policy.
+// Complexity: O(len(options)) time, O(1) auxiliary space.
+// Notes: it must never be called from an unowned worker goroutine.
+// AI-Hints: adding a production Options getter only to simplify a test violates
+// the public-surface separation; verify observable behavior through facades.
+func matrixMustOptions(t *testing.T, options ...matrix.Option) matrix.Options {
+	t.Helper()
+	result, err := matrix.NewMatrixOptions(options...)
+	if err != nil {
+		t.Fatalf("NewMatrixOptions(%d options): %v", len(options), err)
+	}
+	return result
+}

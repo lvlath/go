@@ -394,7 +394,7 @@ func TestFactors_DetachedConcurrentSolve(t *testing.T) {
 	}
 	work.Wait()
 	close(errorsChannel)
-	for err := range errorsChannel {
+	for err = range errorsChannel {
 		if err != nil {
 			t.Fatal(err)
 		}
