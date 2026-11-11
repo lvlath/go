@@ -105,7 +105,8 @@ type weightedAccumulator struct {
 //
 // Inputs:
 //   - value: a finite float64 from a validated, read-only source slice.
-//   - overlap: strictly positive integer in common 1/w sample-time units.
+//   - overlap: positive uint64 count in common 1/w sample-time units;
+//     the sweep checks the signed overlap before converting it.
 //
 // Returns:
 //   - No direct value; updates this per-segment accumulator in place.
@@ -127,9 +128,7 @@ type weightedAccumulator struct {
 //   - Multiplying a finite 1e308 float by a raw overlap can overflow even
 //     when the final weighted average must remain finite. Only multiply the
 //     decoded *integer* mantissa, never the binary64 value itself.
-//
-// nolint:gosec
-func (a *weightedAccumulator) add(value float64, overlap int64) {
+func (a *weightedAccumulator) add(value float64, overlap uint64) {
 	if !a.started {
 		a.started = true
 		a.minimum, a.maximum = value, value
@@ -161,11 +160,14 @@ func (a *weightedAccumulator) add(value float64, overlap int64) {
 
 	// The binary64 number is exactly mantissa*2^(shift-1074).
 	// Its overlap-weighted numerator stays integral in these units.
-	hi, lo := bits.Mul64(mantissa, uint64(overlap))
+	hi, lo := bits.Mul64(mantissa, overlap)
 	// Split the exact power-of-two shift into a full-limb offset and a
 	// within-limb shift. At most three limbs hold the aligned product.
-	word := int(shift / accumulatorWordBits)
-	amount := uint(shift % accumulatorWordBits)
+	// The finite exponent field bounds shift to [0, 2045], so word <= 31
+	// and the three-limb product always fits within accumulatorWords.
+	// Keep the decoded unsigned domain for both array indices and shifts.
+	word := shift / accumulatorWordBits
+	amount := shift % accumulatorWordBits
 	// The sign bit selects an unsigned magnitude. Positive and negative
 	// contributions are not subtracted until the segment is complete.
 	var target *[accumulatorWords]uint64
@@ -197,7 +199,8 @@ func (a *weightedAccumulator) add(value float64, overlap int64) {
 //
 // Inputs:
 //   - dst: the caller-owned nonnegative magnitude of one sign only.
-//   - at: validated starting limb offset; x/y/z: consecutive product limbs.
+//   - at: unsigned starting limb index decoded from the exponent field;
+//     x/y/z: consecutive product limbs.
 //
 // Returns:
 //   - The updated magnitude, by pointer; no allocation or arithmetic errors.
@@ -215,7 +218,7 @@ func (a *weightedAccumulator) add(value float64, overlap int64) {
 // AI-Hints:
 //   - The bound applies to the SUM of integer overlaps, not a hypothetical
 //     n*w copies of every input value; do not turn it into an O(n*w) loop.
-func addShifted(dst *[accumulatorWords]uint64, at int, x, y, z uint64) {
+func addShifted(dst *[accumulatorWords]uint64, at uint64, x, y, z uint64) {
 	// The low three additions consume the shifted product itself. A carry
 	// can then ripple through higher existing limbs but never beyond the
 	// proven 2304-bit fixed bound for a validated complete segment.
@@ -308,7 +311,9 @@ func divideWords(a *[accumulatorWords]uint64, n uint64) (out [accumulatorWords]u
 // AI-Hints: bounds are internal preconditions; do not expose this as an
 // unchecked public bit-access API for arbitrary caller-provided positions.
 func wordBit(a *[accumulatorWords]uint64, bit int) bool {
-	return a[bit/accumulatorWordBits]&(uint64(1)<<uint(bit%accumulatorWordBits)) != 0
+	// A nonnegative bit index has a remainder in [0, 63]. Go accepts
+	// an int shift count directly; no signed-to-unsigned cast is needed.
+	return a[bit/accumulatorWordBits]&(uint64(1)<<(bit%accumulatorWordBits)) != 0
 }
 
 // bitLength identifies the highest occupied binary exponent of a magnitude.
@@ -348,7 +353,9 @@ func lowerBitsNonzero(a *[accumulatorWords]uint64, limit int) bool {
 			return true
 		}
 	}
-	if rem := uint(limit % accumulatorWordBits); rem != 0 {
+	// The nonnegative bit limit supplies an int remainder in [0, 63].
+	// Preserve that type: a shift count does not need to be unsigned.
+	if rem := limit % accumulatorWordBits; rem != 0 {
 		return a[limit/accumulatorWordBits]&((uint64(1)<<rem)-1) != 0
 	}
 	return false
@@ -417,7 +424,9 @@ func roundedFloat(integer *[accumulatorWords]uint64, n uint64) (float64, error) 
 	// evidence: the leading guard bit identifies half an ULP and the rest
 	// form the sticky bit.
 	shift := length - float64SignificandBits
-	index, offset := shift/accumulatorWordBits, uint(shift%accumulatorWordBits)
+	// shift is nonnegative because this is the normal-number branch.
+	// Both the quotient index and its in-word offset remain ordinary int.
+	index, offset := shift/accumulatorWordBits, shift%accumulatorWordBits
 	mantissa := quotient[index] >> offset
 	if offset != 0 && index+1 < accumulatorWords {
 		mantissa |= quotient[index+1] << (accumulatorWordBits - offset)
@@ -462,13 +471,15 @@ func roundedFloat(integer *[accumulatorWords]uint64, n uint64) (float64, error) 
 // chooses the signed result, and enforces the contributing convex hull.
 //
 // Implementation:
-//   - Stage 1: reject an unstarted cell (violated overlap invariant).
+//   - Stage 1: reject an unstarted cell or nonpositive divisor (violated
+//     overlap/shape invariant) before any unsigned conversion.
 //   - Stage 2: compare unsigned sign totals; publish exact +0 on cancellation.
 //   - Stage 3: subtract smaller from larger and divide/round the magnitude.
 //   - Stage 4: apply sign and verify that the result lies in [minimum,maximum].
 //
 // Inputs:
-//   - n: validated positive original source length in common integer units.
+//   - n: positive original source length in common integer units;
+//     finish independently checks positivity before unsigned division.
 //   - receiver: positive overlap contributions to exactly this output cell.
 //
 // Returns:
@@ -492,9 +503,15 @@ func roundedFloat(integer *[accumulatorWords]uint64, n uint64) (float64, error) 
 //     hide a broken arithmetic invariant instead of reporting ErrOverflow.
 //   - Never average the two sign totals as float64 before subtracting them.
 func (a *weightedAccumulator) finish(n int64) (float64, error) {
-	// A completed segment must have consumed positive overlap mass. Empty
-	// completion is an internal geometry violation, not a zero-valued mean.
+	// A completed segment must have consumed positive overlap mass and
+	// the averaging divisor must be positive. Enforce both preconditions
+	// locally so the subsequent signed-to-unsigned conversion is safe.
 	if !a.started {
+		return 0, ErrOverflow
+	}
+	// A separate guard makes the signed-to-unsigned divisor conversion
+	// locally provable and prevents a zero divisor from reaching bits.Div64.
+	if n <= 0 {
 		return 0, ErrOverflow
 	}
 	// The sign comparison happens before subtraction, avoiding unsigned
@@ -511,7 +528,8 @@ func (a *weightedAccumulator) finish(n int64) (float64, error) {
 		magnitude = subtractWords(&a.negative, &a.positive)
 	}
 	// Restore the mean from the exact signed mass only after canceling
-	// contributions. The validator guarantees the divisor n is positive.
+	// contributions. The local positivity guard proves uint64(n) preserves
+	// its value and bits.Div64 receives a nonzero unsigned divisor.
 	value, err := roundedFloat(&magnitude, uint64(n))
 	if err != nil {
 		return 0, err

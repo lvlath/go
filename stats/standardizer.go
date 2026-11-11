@@ -74,7 +74,14 @@ func fitStandardizerKernel(input matrix.Matrix, rows, cols int, opts ScaleOption
 	means := make([]float64, cols)
 	scales := make([]float64, cols)
 	constant := make([]bool, cols)
-	denominator := scaledFromCount(uint64(rows - opts.DDOF))
+	// Every column accumulator has committed exactly one value per row.
+	// Read the already-exact uint64 sample count instead of converting the
+	// signed matrix dimension; rows>DDOF above makes sample subtraction safe.
+	denominatorCount := accumulators[0].count
+	if opts.DDOF == 1 {
+		denominatorCount--
+	}
+	denominator := scaledFromCount(denominatorCount)
 	for col := 0; col < cols; col++ {
 		accumulator := &accumulators[col]
 		mean, err := accumulator.exactMeanSum.meanFloat(accumulator.count)

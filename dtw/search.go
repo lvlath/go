@@ -81,7 +81,7 @@ type searchPlan struct {
 //   - A non-complete SearchResult is not certified global top-K, even when Hits is nonempty.
 //   - Do not use an uncertified floating lower bound for pruning near cutoff equality.
 //
-// nolint:gocyclo, gosec
+//nolint:gocyclo // Validation order is part of the public error-precedence contract.
 func searchFixedWindows(ctx context.Context, query, data []float64, opts SearchOptions) (*SearchResult, error) {
 	if ctx == nil {
 		return nil, ErrInvalidOption
@@ -104,7 +104,14 @@ func searchFixedWindows(ctx context.Context, query, data []float64, opts SearchO
 	// Copy the caller's exclusions: sort/coalescing must never mutate their slice.
 	positions := uint64(0)
 	if len(data) >= len(query) {
-		positions = uint64((len(data)-len(query))/opts.Stride) + 1
+		// The difference and quotient are non-negative because the query fits
+		// and Stride is strictly positive. Check that before widening the
+		// start count; adding one remains within the original data length.
+		positionOffset, ok := nonnegativeIntToUint64((len(data) - len(query)) / opts.Stride)
+		if !ok {
+			return nil, errors.Join(ErrOverflow, ErrNaNInf)
+		}
+		positions = positionOffset + 1
 	} else if len(opts.ExcludedStarts) != 0 {
 		return nil, ErrShape
 	}
@@ -156,7 +163,13 @@ func searchFixedWindows(ctx context.Context, query, data []float64, opts SearchO
 	for _, exclusion := range exclusions {
 		removed := countStrideBefore(exclusion.End, opts.Stride) -
 			countStrideBefore(exclusion.Start, opts.Stride)
-		admitted -= uint64(removed)
+		// Coalesced exclusions remove a non-negative count no larger than
+		// the remaining admitted domain; neither sign wrap nor underflow is valid.
+		removedCount, ok := nonnegativeIntToUint64(removed)
+		if !ok || removedCount > admitted {
+			return nil, errors.Join(ErrOverflow, ErrNaNInf)
+		}
+		admitted -= removedCount
 	}
 	result := &SearchResult{CandidatesTotal: admitted, Hits: make([]SearchHit, 0)}
 	if admitted == 0 {
@@ -164,13 +177,19 @@ func searchFixedWindows(ctx context.Context, query, data []float64, opts SearchO
 		return result, nil
 	}
 
+	// The admitted domain is bounded by the number of positions in the
+	// caller's slice, so conversion back to int must fit on this machine.
+	admittedInt, ok := checkedUint64ToInt(admitted)
+	if !ok {
+		return nil, errors.Join(ErrOverflow, ErrNaNInf)
+	}
 	workers := opts.Workers
-	if uint64(workers) > admitted {
-		workers = int(admitted)
+	if workers > admittedInt {
+		workers = admittedInt
 	}
 	hitCap := opts.TopK
-	if uint64(hitCap) > admitted {
-		hitCap = int(admitted)
+	if hitCap > admittedInt {
+		hitCap = admittedInt
 	}
 	plan := searchPlan{
 		length: len(query), stride: opts.Stride, radius: opts.Radius,
@@ -287,23 +306,37 @@ func estimateSearchBytes(plan searchPlan, normalization SearchNormalization, exc
 		return carry == 0
 	}
 
+	// Validated plan dimensions are non-negative int counts. Convert each
+	// once after an explicit sign check: a negative int must never become a
+	// huge unsigned allocation count. The positive case is lossless on
+	// both 32-bit and 64-bit Go targets.
+	workers, workersOK := nonnegativeIntToUint64(plan.workers)
+	width, widthOK := nonnegativeIntToUint64(plan.width)
+	hitCap, hitCapOK := nonnegativeIntToUint64(plan.hitCap)
+	length, lengthOK := nonnegativeIntToUint64(plan.length)
+	if !workersOK || !widthOK || !hitCapOK || !lengthOK {
+		return 0, errors.Join(ErrOverflow, ErrNaNInf)
+	}
+
 	// Never pre-multiply width*elementSize: either operand can be near
 	// MaxInt even though the resulting byte product is not representable.
-	rowsTotal, overflow := checkedBytes(uint64(plan.workers), 2)
+	rowsTotal, overflow := checkedBytes(workers, 2)
 	if overflow {
 		return 0, errors.Join(ErrOverflow, ErrNaNInf)
 	}
-	rowElements, overflow := checkedBytes(rowsTotal, uint64(plan.width))
+	rowElements, overflow := checkedBytes(rowsTotal, width)
 	if overflow {
 		return 0, errors.Join(ErrOverflow, ErrNaNInf)
 	}
-	if !add(uint64(plan.hitCap), uint64(unsafe.Sizeof(SearchHit{}))) ||
-		!add(uint64(plan.workers), uint64(unsafe.Sizeof(candidateOutcome{}))) ||
+	if !add(hitCap, uint64(unsafe.Sizeof(SearchHit{}))) ||
+		!add(workers, uint64(unsafe.Sizeof(candidateOutcome{}))) ||
 		!add(rowElements, uint64(unsafe.Sizeof(dpCell{}))) {
 		return 0, errors.Join(ErrOverflow, ErrNaNInf)
 	}
 	if normalization == SearchZPopulation {
-		vectorElements, vectorOverflow := checkedBytes(uint64(plan.workers)+1, uint64(plan.length))
+		// workers <= MaxInt, hence workers+1 fits uint64 on all supported
+		// machine widths; only the checked product may still overflow.
+		vectorElements, vectorOverflow := checkedBytes(workers+1, length)
 		if vectorOverflow || !add(vectorElements, uint64(unsafe.Sizeof(float64(0)))) {
 			return 0, errors.Join(ErrOverflow, ErrNaNInf)
 		}

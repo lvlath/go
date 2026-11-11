@@ -50,13 +50,22 @@ func (m *Moments) Summary(ddof int) (*Summary, error) {
 	if m == nil {
 		return nil, ErrNilInput
 	}
-	if m.count <= uint64(ddof) {
+	// Calculate Count-ddof directly in the accumulator's unsigned count
+	// domain. DDOF is validated above, so only the sample convention
+	// removes one observation from the variance denominator.
+	denominatorCount := m.count
+	if ddof == 1 && denominatorCount > 0 {
+		// A nonempty count is required before subtraction: decrementing
+		// an empty uint64 would wrap to MaxUint64.
+		denominatorCount--
+	}
+	if denominatorCount == 0 {
 		return nil, ErrInsufficientSamples
 	}
 
-	// The denominator is an exact scaled uint64: float64(count) would lose
-	// integer bits for large merged datasets with Count > 2^53.
-	denominator := scaledFromCount(m.count - uint64(ddof))
+	// Keep the exact uint64 denominator until scaled arithmetic; using
+	// float64(count) here would lose low-order bits above 2^53.
+	denominator := scaledFromCount(denominatorCount)
 	if m.m2.hi < 0 {
 		return nil, ErrOverflow
 	}

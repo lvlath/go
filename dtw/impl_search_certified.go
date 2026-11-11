@@ -56,7 +56,14 @@ type searchEnvelope struct {
 //   - Do not use int multiplication until the product fits the machine address domain.
 func optionalEnvelopeBytes(length int) (uint64, bool) {
 	const buffersPerCoordinate = 2*unsafe.Sizeof(float64(0)) + 2*unsafe.Sizeof(int(0))
-	count, overflow := checkedBytes(uint64(length), uint64(buffersPerCoordinate))
+	// A negative count cannot describe a backing slice. Explicitly check
+	// this boundary before the unsigned multiplication, even though the
+	// production caller obtains length from a validated query slice.
+	coordinates, ok := nonnegativeIntToUint64(length)
+	if !ok {
+		return 0, true
+	}
+	count, overflow := checkedBytes(coordinates, uint64(buffersPerCoordinate))
 	if overflow {
 		return 0, true
 	}

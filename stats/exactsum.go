@@ -67,12 +67,13 @@ type exactSum struct {
 // Complexity: O(1) to O(exactSumWords) time, O(1) space; no heap allocation.
 // Notes: the caller must apply this to a candidate state before publishing Update.
 // AI-Hints: do not convert values to decimal; decode Float64bits exactly.
-// nolint:gosec
 func (sum *exactSum) addFloat(value float64) {
 	// Stage 1: an IEEE signed zero contributes no integer bits.
 	encoded := math.Float64bits(value)
 	mantissa := encoded & floatFractionMask
-	biasedExponent := int((encoded >> floatFractionBits) & floatExponentMask)
+	// The biased exponent is an unsigned 11-bit field. Keep it unsigned
+	// through shift calculation and array indexing; narrowing is unnecessary.
+	biasedExponent := (encoded >> floatFractionBits) & floatExponentMask
 	if biasedExponent == 0 && mantissa == 0 {
 		return
 	}
@@ -80,7 +81,7 @@ func (sum *exactSum) addFloat(value float64) {
 	// For normal numbers x=mantissa*2^(biasedExponent-1075), so the
 	// alignment to unit 2^-1074 is shift=biasedExponent-1.
 	// For subnormals the mantissa already counts exact 2^-1074 units.
-	shift := 0
+	var shift uint64
 	if biasedExponent != 0 {
 		mantissa |= uint64(1) << floatFractionBits
 		shift = biasedExponent - 1

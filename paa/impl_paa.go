@@ -115,7 +115,9 @@ func transformKernel(values []float64, w int) (*Result, error) {
 		// Step 3: accumulate x[i]*overlap in exact fixed-point form. The
 		// weighted mean will divide by n *once* when this output cell ends;
 		// no float64 product can overflow before that division.
-		accumulator.add(values[int(i)], overlap)
+		// The preceding positive-overlap guard makes this conversion
+		// value-preserving; the accumulator accepts unsigned mass only.
+		accumulator.add(values[int(i)], uint64(overlap))
 
 		// Step 4: publish only when the segment's entire interval has been
 		// covered. A sample crossing the boundary remains active for the

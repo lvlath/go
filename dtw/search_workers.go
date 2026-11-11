@@ -280,7 +280,7 @@ func searchHitLess(a, b SearchHit) bool {
 //   - Keep the one-worker acknowledgement after cutoff publication to prevent run-ahead.
 //   - Never promote an errored or interrupted candidate into completed or pruned counts.
 //
-// nolint:gocyclo, gosec
+//nolint:gocyclo // Dispatch, cancellation and result ownership form one coordinated operation.
 func runSearchWorkers(
 	ctx context.Context,
 	result *SearchResult,
@@ -328,7 +328,15 @@ func runSearchWorkers(
 				if ordinal >= plan.positions {
 					return
 				}
-				start := int(ordinal) * plan.stride
+				// An ordinal below positions fits an int because positions is
+				// derived from a finite caller slice and positive Stride.
+				// Reject any broken invariant instead of wrapping the index.
+				ordinalIndex, ok := checkedUint64ToInt(ordinal)
+				if !ok {
+					outcomes <- candidateOutcome{err: errors.Join(ErrOverflow, ErrNaNInf)}
+					return
+				}
+				start := ordinalIndex * plan.stride
 				if excludedStart(plan.excluded, start) {
 					continue
 				}

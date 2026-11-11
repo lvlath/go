@@ -175,3 +175,87 @@ func SquaredCost(ai, bj float64) (float64, error) {
 	diff := ai - bj
 	return diff * diff, nil
 }
+
+// nonnegativeIntToUint64 converts a non-negative machine-sized element count to uint64.
+// The conversion is exact for every non-negative int on both 32-bit and 64-bit targets.
+//
+// Implementation:
+//   - Stage 1: reject negative values before any unsigned conversion.
+//   - Stage 2: widen the validated count without truncation or saturation.
+//   - Stage 3: return the exact count and its validity flag.
+//
+// Behavior highlights:
+//   - A negative value never wraps into a large unsigned workspace size.
+//   - Positive values, including MaxInt, remain unchanged.
+//
+// Inputs:
+//   - count: signed machine-sized number of elements or coordinates.
+//
+// Returns:
+//   - uint64: exact count when ok is true, otherwise zero.
+//   - bool: whether count belongs to the non-negative element-count domain.
+//
+// Errors:
+//   - None; callers map an invalid count to their existing error contract.
+//
+// Determinism:
+//   - Pure sign check followed by an exact widening conversion.
+//
+// Complexity:
+//   - Time O(1), Space O(1); no allocation.
+//
+// Notes:
+//   - This helper does not check a byte limit; checkedBytes and the caller do.
+//   - All conversions remain valid on both 32-bit and 64-bit Go architectures.
+//
+// AI-Hints:
+//   - Check the sign BEFORE conversion; a negative int is not a valid length.
+//   - Do not replace checkedBytes or bits.Add64 with unchecked arithmetic.
+func nonnegativeIntToUint64(count int) (uint64, bool) {
+	if count < 0 {
+		return 0, false
+	}
+	return uint64(count), true
+}
+
+// checkedUint64ToInt narrows a non-negative count only when it fits an int.
+// It protects slice indices and worker counts from truncation on 32-bit targets.
+//
+// Implementation:
+//   - Stage 1: compare with the current machine's maximum signed int.
+//   - Stage 2: reject an unrepresentable unsigned count without converting it.
+//   - Stage 3: publish the exact signed value and validity flag.
+//
+// Behavior highlights:
+//   - The comparison uses an unsigned limit and cannot wrap a negative value.
+//
+// Inputs:
+//   - count: unsigned coordinate ordinal or buffer size.
+//
+// Returns:
+//   - int: exact count when ok is true, otherwise zero.
+//   - bool: whether count fits the current platform's int range.
+//
+// Errors:
+//   - None; callers preserve their existing overflow error classification.
+//
+// Determinism:
+//   - Pure, architecture-dependent range check without allocation.
+//
+// Complexity:
+//   - Time O(1), Space O(1).
+//
+// Notes:
+//   - A caller must validate multiplication by Stride independently.
+//
+// AI-Hints:
+//   - Never narrow a uint64 candidate ordinal without its range proof.
+//   - Do not silently clamp out-of-range positions to MaxInt.
+//
+// nolint:gosec
+func checkedUint64ToInt(count uint64) (int, bool) {
+	if count > uint64(maxIntValue) {
+		return 0, false
+	}
+	return int(count), true
+}

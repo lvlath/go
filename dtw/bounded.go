@@ -169,8 +169,15 @@ func countAdmittedCells(rows, cols, radius int) (uint64, error) {
 		if start >= end {
 			continue
 		}
+		// Both boundaries are within [0, cols], so end-start is positive
+		// and cannot overflow int. The checked conversion records that
+		// non-negativity before widening the width to uint64.
+		width, ok := nonnegativeIntToUint64(end - start)
+		if !ok {
+			return 0, errors.Join(ErrOverflow, ErrNaNInf)
+		}
 		var carry uint64
-		count, carry = bits.Add64(count, uint64(end-start), 0)
+		count, carry = bits.Add64(count, width, 0)
 		if carry != 0 {
 			return 0, errors.Join(ErrOverflow, ErrNaNInf)
 		}
