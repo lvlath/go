@@ -7,8 +7,8 @@
   Purpose:
     This README is the public face of lvlath. It presents the library as a
     deterministic, contract-driven Go toolkit for graph algorithms, flow networks,
-    dense graph algebra, routing, exact timestamp grids, causal time-series
-    primitives, alignment, and reproducible algorithm engineering. It should give a new reader immediate confidence in
+    dense graph algebra, routing, exact timestamp grids, causal time-series primitives, fractional PAA,
+    symbolic SAX encoding, alignment, and reproducible algorithm engineering. It should give a new reader immediate confidence in
     what lvlath can solve, how packages compose, where the formal contracts live,
     and why this repository is engineered beyond ad-hoc algorithm snippets.
 
@@ -48,7 +48,7 @@
 
 # lvlath
 
-**lvlath** is a pure-Go algorithm engineering library for graphs, flows, dense graph algebra, routing, exact timestamp grids, causal series transforms, stable statistical moments, fitted feature scaling, time-series alignment, and reproducible test fixtures.
+**lvlath** is a pure-Go algorithm engineering library for graphs, flows, dense graph algebra, routing, exact timestamp grids, causal series transforms, fractional PAA, symbolic SAX time-series signatures, stable statistical moments, fitted feature scaling, time-series alignment, and reproducible test fixtures.
 
 It is built for people who need algorithmic tools they can explain in a code review, trust in CI, compose across packages, and debug from deterministic artifacts instead of guessing why an answer changed.
 
@@ -64,6 +64,7 @@ It is built for people who need algorithmic tools they can explain in a code rev
 * `matrix` turns topology into dense numeric objects without erasing zero-weight or metric-closure semantics, and provides stable covariance plus reusable pivoted linear-system solvers;
 * `series` checks exact timestamp grids and exposes mask-aware causal transformations without interpolation;
 * `paa` compresses every sample of a finite series into exact fractional equal-duration averages, without dropped tails or padding;
+* `sax` quantizes fractional PAA to compatible symbolic words with Euclidean MINDIST; it never promotes that bound to a DTW pruning certificate;
 * `stats` provides scaled Welford/Chan moments and immutable training-only feature standardization without refit;
 * flow, MST, TSP, DTW, grid, and builder packages extend the same discipline into optimization, alignment, fixtures, and examples.
 
@@ -85,6 +86,7 @@ The common failures are familiar:
 * max-flow examples print only a number and hide residual-network semantics;
 * Christofides is claimed without checking metric assumptions or matching strength;
 * DTW path output is requested from a memory mode that intentionally discarded history;
+* SAX labels are mistaken for compatible thresholds, or Euclidean MINDIST is misused as an exact-DTW pruning bound;
 * examples panic, print unstable maps, or silently rely on fictional APIs;
 * documentation explains textbook theory but not the actual package contract;
 * high-offset variance disappears through raw-moment cancellation, or inference refits on holdout data.
@@ -160,6 +162,7 @@ lvlath/
 ├── dtw/                   # temporal alignment, bounded outcomes and exact window search
 ├── series/                # exact timestamp grids, causal transforms, complete index windows
 ├── paa/                   # fractional PAA, exact rational geometry, detached averages
+├── sax/                   # symbolic PAA words, SHA-256 policy identity, Euclidean MINDIST
 ├── stats/                 # scaled Welford/Chan moments and immutable fitted scaling
 ├── gridgraph/             # 2D lattice graph generation
 ├── matrix/                # dense graph algebra, stable statistics, pivoted factors and solves
@@ -178,6 +181,8 @@ lvlath/
 │   ├── DTW_SEARCH.md
 │   ├── SERIES.md
 │   ├── STATS.md
+│   ├── PAA.md
+│   ├── SAX.md
 │   ├── GRID_GRAPH.md
 │   ├── MATRICES.md     # canonical complete matrix reference
 │   ├── TSP.md
@@ -263,6 +268,12 @@ lvlath/docs/{PACKAGE}.md
                                    └────────────────────────────────────────────┘
 
                                    ┌────────────────────────────────────────────┐
+                                   │ sax                                        │
+                                   │ fractional PAA -> symbolic words           │
+                                   │ Euclidean MINDIST; NOT a DTW lower bound    │
+                                   └────────────────────────────────────────────┘
+
+                                   ┌────────────────────────────────────────────┐
                                    │ stats                                      │
                                    │ stable Welford/Chan moments, fitted scaling│
                                    │ matrix.Matrix input, immutable inference   │
@@ -274,6 +285,7 @@ Composition rule:
   dtw owns temporal alignment artifacts.
   series owns exact-grid validation and causal array artifacts.
   paa owns fractional step-function compression and exact rational boundaries.
+  sax owns compatible symbolic encoding and Euclidean lower-bound dissimilarity.
   stats owns stable scalar moments and immutable matrix feature scaling.
   mst / flow / tsp own optimization artifacts.
   builder and gridgraph produce reproducible input worlds.
@@ -294,6 +306,7 @@ Composition rule:
 | `dtw`       | General Dynamic Time Warping, bounded classification, certified exact top-K fixed-length squared-scalar window search.                         | Aligns sequences that share a pattern but differ in speed or local timing.                                               | Sensors, gestures, audio contours, time-series similarity.                                     |
 | `series`    | Exact signed-nanosecond grid checks, causal lag/difference/returns, and complete index windows.                                                | Detached validity masks, checked integer intervals, and explicit whole-slot gaps without interpolation.                  | Telemetry preparation, causal features, window scheduling, signal-quality gates.               |
 | `paa`       | Fractional PAA with exact, unsimplified rational segment geometry and a correctly rounded final binary64 mean.                                 | Never discards remainder samples or fabricates zeros; results are detached.                                              | SAX preparation, telemetry compression, fixed-dimensional sequence features.                   |
+| `sax`       | Fixed-length symbolic words, pinned Gaussian/custom thresholds, immutable encoders and Euclidean MINDIST.                                      | Right-bin equality, SHA-256 policy identity, detached results; no false DTW pruning claim.                               | Telemetry signatures, approximate candidate ranking, shape-change screening.                   |
 | `stats`     | Stable scalar mean/variance, mergeable Welford/Chan states, train-only fitted feature standardization.                                         | Exact binary-input mean and scaled second moments, detached fitted metadata, immutable inference without refit.          | Telemetry aggregation, distributed metrics, ML feature preparation, anomaly-score calibration. |
 | `gridgraph` | 2D lattice graph generation with neighborhood and obstacle-style workflows.                                                                    | Avoids manual wiring for pathfinding maps and teaching graphs.                                                           | Grid routing, maps, demos, benchmark fixtures.                                                 |
 | `matrix`    | Dense algebra, graph adapters, scaled covariance/Pearson/L2, pivoted LU/QR, Cholesky, and multi-RHS solves.                                    | Deterministic pivots, detached factors, real condition diagnostics and true residual norms.                              | Graph features, calibration, linear systems and numerical preprocessing.                       |
@@ -392,6 +405,83 @@ func main() {
 This is not a calendar-aware resampler: validate timestamps and reject/handle missing grid cells using `series` first. PAA requires `1<=segments<=n`, rejects nonfinite observations, publishes no partial results, and preserves all source interval measure. The signed-zero identity `segments==n` is a detached bitwise copy; all other means use exact fixed-point weighted accumulation followed by nearest-even binary64 rounding. No new Options interface or `matrix` dependency is necessary.
 
 See [`docs/PAA.md`](docs/PAA.md), [`paa/doc.go`](paa/doc.go), and the runnable `go run ./examples/paa_window` scenario.
+
+### SAX: compact symbolic signatures with an explicit Euclidean bound
+
+`github.com/lvlath/go/sax` turns finite, uniformly sampled scalar windows into **fixed-length, fixed-alphabet SAX words**. Unlike PAA, which preserves the averaged numeric values, SAX also quantizes them into unsigned bin indexes and attaches a content-derived `EncodingID` so words are compared only under compatible mathematical policies. The package reuses the **same exact fractional PAA kernel**; it does not drop remainder samples or create a second averaging implementation.
+
+| Need                              | Public surface                                                       | Why it matters                                                                                                       |
+|:----------------------------------|:---------------------------------------------------------------------|:---------------------------------------------------------------------------------------------------------------------|
+| One normalized window             | `sax.EncodeGaussian(values, segments, alphabet)`                     | Window-local population Z-score, pinned Gaussian quantiles; constant input is rejected by default.                   |
+| Preserve absolute units           | `sax.EncodeRaw(values, segments, alphabet)`                          | Identity transform; Gaussian bins are used unchanged, without any claim that the input is Gaussian.                  |
+| Calibrate physical thresholds     | `sax.EncodeRawWithBreakpoints(values, segments, breakpoints, label)` | Explicit custom bins with right-boundary equality; label is audit-only.                                              |
+| Reuse a fixed policy              | `sax.NewEncoder(opts)` → `encoder.Encode(values)`                    | Immutable copied thresholds and SHA-256 policy identity; detached words per call.                                    |
+| Compare compatible symbolic words | `encoder.Mindist(left, right)`                                       | Euclidean lower-bound dissimilarity with fractional factor `sqrt(n/w)`, after independent shape and identity checks. |
+| Occasional pairwise bound         | `sax.MindistValues(left, right, opts)`                               | Canonical encode-encode-compare wrapper; no index or recall guarantee.                                               |
+
+For equal-length, equally segmented, compatibly transformed windows, the mathematical invariant in **exact arithmetic** is:
+
+$$ \operatorname{MINDIST}(\hat Q,\hat C)\le D_{\mathrm{PAA}}(\bar Q,\bar C)\le D_{\mathrm{Euclidean}}(Q^*,C^*). $$
+
+![SAX Euclidean lower-bound inequality](https://latex.codecogs.com/svg.image?%5Cmathrm%7BMINDIST%7D%5Cle%20D_%7B%5Cmathrm%7BPAA%7D%7D%5Cle%20D_%7B%5Cmathrm%7BEuclidean%7D%7D%28Q%5E%2A%2CC%5E%2A%29)
+
+
+The last distance is measured in the **selected transformed space**: original values for `Raw`, separately window-normalized values for `ZPopulation`. The implementation uses float64 and does not provide a directed-rounding numerical pruning certificate. MINDIST is **not a metric on symbol strings**; adjacent but distinct bins can have zero gap.
+
+A runnable, auditable CPU saturation example uses custom percentage boundaries rather than pretending raw percentages follow a Gaussian distribution:
+
+```go
+package main
+
+import (
+	"fmt"
+
+	"github.com/lvlath/go/sax"
+)
+
+func main() {
+	baseline := []float64{35, 35, 35, 35, 35, 35, 35, 35}
+	saturated := []float64{35, 35, 35, 35, 90, 90, 90, 90}
+	opts := sax.Options{
+		Segments:      4,
+		Alphabet:      5,
+		Normalization: sax.Raw,
+		Breakpoints:   []float64{20, 40, 60, 80},
+		BreakpointID:  "cpu-percent-v1",
+	}
+	encoder, err := sax.NewEncoder(opts)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	normal, err := encoder.Encode(baseline)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	abnormal, err := encoder.Encode(saturated)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	bound, err := encoder.Mindist(normal, abnormal)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Printf("words: %v vs %v\n", normal.Symbols, abnormal.Symbols)
+	fmt.Printf("Euclidean lower bound: %.0f\n", bound)
+	// Output:
+	// words: [1 1 1 1] vs [1 1 4 4]
+	// Euclidean lower bound: 80
+}
+```
+
+**Critical DTW boundary:** Euclidean SAX MINDIST must **never** be used to prune arbitrary DTW candidates. For `Q=[0,0,1]` and `C=[0,1,1]` with `[0.25,0.75]` thresholds, MINDIST is `0.5` while unconstrained DTW is `0`. SAX can rank an **approximate shortlist** for later `dtw.Align` evaluation, but global DTW nearest-neighbor correctness is not certified; compare retrieval `Recall@K` against exhaustive DTW if it matters. For an exact fixed-length DTW search use the separately certified `dtw.Search` contract.
+
+The immutable Encoder is safe for concurrent inference with stable inputs and Results; `Result.Symbols` and optional `Result.PAA` are detached. Constant Z windows use explicit `RejectConstant` or `ZeroWord` policy (which makes **normalized coordinates**, not necessarily symbol indexes, zero). A matching `EncodingID` proves mathematical policy compatibility, not authenticity of externally mutable Result data.
+
+See [`docs/SAX.md`](docs/SAX.md) for the full fractional Jensen proof, symbol-bin convention, encoding hash serialization, error precedence, numerical limitations, performance and independent regression oracles. Five runnable synthetic operational examples are provided in [`sax/example_test.go`](sax/example_test.go).
 
 ### Stats: stable reductions and train-only feature calibration
 
@@ -580,6 +670,7 @@ Target methods require **exactly representable binary64 stored costs and heurist
 | DTW spec             | [`docs/DTW.md`](docs/DTW.md)                 | Dynamic programming, numeric classification, windows, penalties and path recovery.                                  |
 | DTW exact search     | [`docs/DTW_SEARCH.md`](docs/DTW_SEARCH.md)   | Bounded classification, fixed-length top-K, certified pruning, budgets and worker law.                              |
 | Fractional PAA       | [`docs/PAA.md`](docs/PAA.md)                 | Exact step-function geometry, output ownership, nearest-even arithmetic, wrappers and integration.                  |
+| Symbolic SAX         | [`docs/SAX.md`](docs/SAX.md)                 | Canonical words, Euclidean MINDIST proof, versioned identity, errors and false-DTW-pruning counterexample.          |
 | Series primitives    | [`docs/SERIES.md`](docs/SERIES.md)           | Exact integer grids, causal transforms, result masks, numeric safeguards, index windows.                            |
 | Stable statistics    | [`docs/STATS.md`](docs/STATS.md)             | Welford/Chan, exact mean sum, scaled M2, fitted scaling, sentinels, immutable inference.                            |
 | Grid spec            | [`docs/GRID_GRAPH.md`](docs/GRID_GRAPH.md)   | Grid/lattice graph modeling and pathfinding-oriented construction.                                                  |
@@ -1051,6 +1142,7 @@ Dense topology/covariance/spectral features?   matrix
 Stable mean/variance and partition merges?     stats
 Train-only standardization / no refit?         stats
 Exact timestamp grid / causal sample features? series
+Symbolic Euclidean screening of windows?       sax
 Temporal alignment with phase drift?           dtw
 Closed tour through every vertex?              tsp
 Generated lattice topology?                    gridgraph
@@ -1067,6 +1159,7 @@ Important distinctions:
 * DTW aligns time-warped sequences, not graph routes.
 * `series` operates on supplied sample indices and exact nanosecond checks; it does not fill missing timestamp slots.
 * `stats` aggregates finite observations and transforms features with parameters learned on training data only; it does not interpret series validity masks or refit.
+* `sax` quantizes the same fractional PAA geometry into symbolic words; its Euclidean MINDIST is not a metric on words or a certified bound for arbitrary DTW.
 * TSP solves a closed tour over a complete finite cost model, not sparse reachability.
 
 ---
@@ -1108,6 +1201,8 @@ incidence matrix:       columns are edge identities, not vertex-pair weights
 | "How do I validate exact sample cadence and missing slots?"                   | `series.Validate`                                                 | Signed-nanosecond grid checks; no interpolation.                          |
 | "How do I compute causal lag, differences, or returns?"                       | `series.Lag` / `Difference` / `SimpleReturns` / `LogReturns`      | Length-preserving values and validity masks.                              |
 | "How do I compress a window without dropping fractional tails?"               | `paa.Transform` / `paa.TransformRange`                            | Exact fractional PAA, checked integer geometry and a detached result.     |
+| "How do I create comparable symbolic time-series signatures?"                 | `sax.NewEncoder` / `sax.Encode`                                   | Fixed-alphabet symbols, compatible policy hash, detached results.         |
+| "Can SAX MINDIST prune arbitrary DTW candidates?"                             | No                                                                | Euclidean-only lower bound; shortlist retrieval must report Recall@K.     |
 | "How do I enumerate only complete index windows?"                             | `series.WindowRanges`                                             | Ordered half-open ranges without partial tails.                           |
 | "How do I compare two jittery sensor signatures?"                             | `dtw.Align`                                                       | Scalar DTW aligns timing drift.                                           |
 | "How do I align model-provided frame costs?"                                  | `dtw.AlignCostMatrix`                                             | Caller owns the local-cost surface.                                       |
@@ -1144,6 +1239,8 @@ incidence matrix:       columns are edge identities, not vertex-pair weights
 | DTW path requested from rolling memory                       | DTW memory/path policy is explicit; path needs full accumulated storage.                                |
 | Missing timestamps silently treated as samples               | `series.Validate` reports whole-slot gaps; no values or time slots are synthesized.                     |
 | PAA fractional remainder dropped or padded with zeros        | `paa.Transform` uses integer exact-overlap geometry; neither truncation nor padding occurs.             |
+| SAX breakpoint labels mistaken for encoding identity         | `EncodingID` hashes actual threshold content and numeric policy; `BreakpointID` is audit-only.          |
+| Euclidean SAX MINDIST incorrectly used to prune DTW          | Do not prune; the two distance objectives differ and a positive MINDIST may accompany zero DTW.         |
 | Warmup zero mistaken for a computed zero                     | `series.TransformResult.Valid` marks computed cells; retain it with `Values`.                           |
 | DTW over-warps a signal                                      | Use window and slope penalty deliberately.                                                              |
 | Feature scale dominates multivariate DTW                     | Normalize before `dtw.AlignMatrix`; it uses squared L2 row cost.                                        |

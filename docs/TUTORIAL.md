@@ -10,7 +10,7 @@
 
   Purpose:
     This tutorial is the first educational entry point for lvlath. It introduces
-    fundamental graph, matrix, stable-statistics, and causal time-series ideas; explains how lvlath
+    fundamental graph, matrix, stable-statistics, causal time-series, and symbolic SAX ideas; explains how lvlath
     maps mathematical algorithms into deterministic Go packages, and helps readers move from basic
     graph and series concepts to package-specific documentation. It does not duplicate every
     package specification; instead it teaches the mental model, core entities,
@@ -25,7 +25,7 @@
 
 > **hard math on an easy level**
 
-Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, stable statistical reductions, fitted feature scaling, and time-series alignment.
+Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fitted feature scaling, and time-series alignment.
 
 This tutorial is the beginning of the learning path. It introduces the objects and ideas that most packages share: graphs, matrices, options, result artifacts, error contracts, and deterministic algorithm execution.
 
@@ -46,6 +46,7 @@ This tutorial is the beginning of the learning path. It introduces the objects a
 11. [Stats Foundations: Stable Moments and Fitted Scaling](#11-stats-foundations-stable-moments-and-fitted-scaling)
 
     11a. [PAA Foundations: Fractional Dimensionality Reduction](#11a-paa-foundations-fractional-dimensionality-reduction)
+    11b. [SAX Foundations: Symbolic Words and Euclidean Screening](#11b-sax-foundations-symbolic-words-and-euclidean-screening)
 12. [Algorithm Selection Guide](#12-algorithm-selection-guide)
 13. [Professional Best Practices](#13-professional-best-practices)
 14. [Where To Go Next](#14-where-to-go-next)
@@ -75,6 +76,7 @@ The library covers:
 * `series` exact integer-nanosecond grid validation, causal lag/difference/returns, and complete index windows;
 * `stats` stable Welford/Chan moments, mergeable partitions, and immutable fitted feature standardization;
 * `paa` exact fractional time-series compression, rational segment boundaries and value-only feature projection;
+* `sax` symbolic words from fractional PAA and compatible Euclidean MINDIST (not a DTW lower bound);
 * `tsp` matrix-backed tour optimization with exact, approximate, matching, and local-search regimes;
 * `gridgraph` generated lattice topology;
 * `builder` deterministic fixtures for examples, tests, and benchmarks.
@@ -98,6 +100,7 @@ timestamp-grid inspection  *series.ValidationResult    exact cadence / missing s
 streaming statistics      *stats.Summary               exact-binary-input mean / scaled variance
 train-only scaling        *stats.ScaleFitResult        detached fit metadata / immutable model
 fractional PAA             *paa.Result                 detached means / exact rational segments
+SAX symbolic word         *sax.Result                 detached symbols / policy identity / optional PAA
 closed tour                *tsp.Result                 cost, exactness, timeout, ratio
 ```
 
@@ -166,8 +169,9 @@ Read these files as a learning path. `doc.go` files define implemented package c
 | 6    | [`FLOW.md`](FLOW.md)                       | Capacity networks, residual graph state, Ford-Fulkerson, Edmonds-Karp, Dinic.                                               |
 | 7    | [`MATRICES.md`](MATRICES.md)               | Dense storage, graph adapters, zero-weight policy, metric closure, statistics, numeric sanitation.                          |
 | 8    | [`SERIES.md`](SERIES.md)                   | Exact signed-nanosecond grids, causal arrays, masks, overflow, and index windows.                                           |
-| 8b   | [`PAA.md`](PAA.md)                         | Exact fractional segment geometry, nearest-even floating arithmetic, wrappers, and SAX-oriented ownership.                  |
 | 8a   | [`STATS.md`](STATS.md)                     | Welford/Chan moments, exact binary-input mean, scaled variance, immutable fitted scaling and error laws.                    |
+| 8b   | [`PAA.md`](PAA.md)                         | Exact fractional segment geometry, nearest-even floating arithmetic, wrappers, and SAX-oriented ownership.                  |
+| 8c   | [`SAX.md`](SAX.md)                         | Right-bin quantization, SHA-256 policy identity, Euclidean MINDIST, DTW non-pruning law and examples.                       |
 | 9    | [`DTW.md`](DTW.md)                         | `Align`, `AlignCostMatrix`, `AlignMatrix`, `AlignBounded`, exact `Search`, numeric and path artifacts.                      |
 | 9a   | [`DTW_SEARCH.md`](DTW_SEARCH.md)           | Fixed-length exact top-K, certified LB_Keogh, workers, budgets, and partial-result law.                                     |
 | 10   | [`TSP.md`](TSP.md)                         | Matrix-backed tours, exact regimes, Christofides, Blossom matching, local search, timeouts.                                 |
@@ -186,9 +190,10 @@ Working on optimization:
   DIJKSTRA -> MST -> FLOW -> TSP
 
 Working on numeric/time-series workflows:
-  SERIES -> PAA -> SAX (a separate consumer)
+  SERIES -> PAA -> SAX -> approximate candidate ranking -> DTW refinement
   SERIES -> STATS -> DTW -> MATRICES
   MATRICES -> STATS -> DTW
+  SAX (Euclidean screening) != DTW (nonlinear alignment)
   MATRICES -> TSP
 
 Contributing:
@@ -243,6 +248,12 @@ Think of `lvlath` as a contract stack.
                          │ series                                        │
                          │ exact time-grid checks, causal arrays/masks   │
                          │ standalone; no core/matrix/dtw dependency     │
+                         └───────────────────────────────────────────────┘
+
+                         ┌───────────────────────────────────────────────┐
+                         │ sax                                           │
+                         │ symbolic words / Euclidean MINDIST            │
+                         │ reuses paa, not a certified DTW bound         │
                          └───────────────────────────────────────────────┘
 
                          ┌───────────────────────────────────────────────┐
@@ -549,10 +560,10 @@ All target methods operate on one `core.Clone`, retain original edge identities 
 
 Good questions:
 
-* “What are the shortest costs from ingress to every service?” — full `Dijkstra`.
-* “What single route uses these particular original multigraph links?” — `Search` / `Bidirectional`.
-* “Can my grid Manhattan estimate legally accelerate settlement?” — consistent `AStar`.
-* “Do I have reliable, directionally consistent estimates from both endpoints?” — balanced `BidirectionalAStar`.
+* “What are the shortest costs from ingress to every service?” - full `Dijkstra`.
+* “What single route uses these particular original multigraph links?” - `Search` / `Bidirectional`.
+* “Can my grid Manhattan estimate legally accelerate settlement?” - consistent `AStar`.
+* “Do I have reliable, directionally consistent estimates from both endpoints?” - balanced `BidirectionalAStar`.
 
 Run the [three standalone shortest-path scenarios](DIJKSTRA.md#59-compilable-scenarios-and-their-runner-tests) to compare public APIs and exact witness semantics.
 
@@ -584,10 +595,10 @@ The KMB kernel uses source-grouped public Dijkstra SSSP queries and reuses Krusk
 
 Good questions:
 
-* “What is the cheapest cable, fiber, or relay backbone spanning **all** nodes?” — MST.
-* “Which required sensor or chiplet pins can share original relay links?” — `SteinerTree`.
-* “How do I inspect every link of the selected tree and finish at a specified endpoint?” — `SteinerWalk`.
-* “Are disconnected islands allowed when they contain no required terminal?” — yes, for graph Steiner.
+* “What is the cheapest cable, fiber, or relay backbone spanning **all** nodes?” - MST.
+* “Which required sensor or chiplet pins can share original relay links?” - `SteinerTree`.
+* “How do I inspect every link of the selected tree and finish at a specified endpoint?” - `SteinerWalk`.
+* “Are disconnected islands allowed when they contain no required terminal?” - yes, for graph Steiner.
 
 ### Flow: maximum feasible throughput
 
@@ -643,8 +654,8 @@ Good questions:
 * “Do these two vibration signatures match despite phase drift?”
 * “Which phase was stretched?”
 * “Can I afford path recovery, or do I only need distance?”
-* “Which complete fixed-length windows are my exact top-K matches?” — use `dtw.Search`.
-* “Is a score within a known inclusive limit?” — use `dtw.AlignBounded`.
+* “Which complete fixed-length windows are my exact top-K matches?” - use `dtw.Search`.
+* “Is a score within a known inclusive limit?” - use `dtw.AlignBounded`.
 
 For exact timestamps and causal preprocessing **before** alignment, use `series`; it does not perform DTW or infer a resampling policy.
 
@@ -827,6 +838,7 @@ The full derivation, dimension rules, numerical limits, and the separate LU/QR/C
 * Flow/cut analysis can use incidence-style structural thinking.
 * DTW can align matrix rows as multivariate time steps through `dtw.AlignMatrix`.
 * `series` works directly on 1-D arrays and exact nanosecond timestamps; it has no matrix dependency or implicit timestamp resampler.
+* `sax` reuses `paa` for fractional aggregation and publishes symbolic Euclidean lower bounds; its words are not compatible DTW pruning certificates.
 * `stats` streams finite scalar data and fits immutable per-feature transforms over `matrix.Matrix`; it never changes the matrix or infers a validity mask.
 
 ---
@@ -1163,7 +1175,7 @@ no partial tail is emitted. The arguments describe **sample indices**, not
 durations. Windows can overlap, touch, or be separated, according to stride.
 When no complete range exists, the successful return is empty **and non-nil**.
 
-To compose packages, keep the boundaries explicit:
+To compose packages, keep the boundaries explicit. A downstream SAX encoder can consume only the valid, uniformly sampled scalar window selected by the application; it never interprets `Valid` masks or repairs reported gaps:
 
 ```text
 signed timestamps --Validate--> gap policy / alignment proof
@@ -1405,6 +1417,132 @@ func main() {
 
 ---
 
+## 11b. SAX Foundations: Symbolic Words and Euclidean Screening
+
+`paa` represents a window by real-valued segment means; `sax` converts those means into **ordered, fixed-alphabet symbols** and supplies a compatible Euclidean lower bound. The reduced representation is useful for approximate candidate ranking, telemetry pattern exploration and external indexing, but quantization deliberately loses information. An identical SAX word never proves that two original series are identical.
+
+### 11b.1. How the pipeline changes the mathematical object
+
+```text
+Source time-series window of n finite uniformly sampled observations
+                    │
+           choose a coordinate system
+             /                    \
+Raw (preserve levels)       ZPopulation (window-local shape)
+             \                    /
+                 fractional PAA
+               w equal-duration cells
+                    │
+           a-1 ordered thresholds
+                    │
+        w unsigned symbolic bin IDs
+                    │
+      Result: Symbols, n/w geometry,
+      EncodingID, mean/std, optional PAA
+                    │
+       Euclidean MINDIST of compatible words
+                    │
+  approximate ranking ONLY - not a DTW pruning certificate
+```
+
+Every input interval contributes its complete overlap measure to the PAA. For `n=5, w=2`, `paa.Transform([0,2,4,6,8],2)` yields `[1.6,6.4]`: the middle sample is divided at the fractional boundary `t=2.5`, not discarded. SAX discretizes those same fractional averages. Each bin is half-open **on the right**: threshold equality enters the higher-index bin.
+
+With `a=3`, breakpoints `[0,1]`, and `w=n=5`, the Raw vector `[-1,0,0.5,1,2]` yields symbols `[0,1,1,2,2]`. Binary search finds the first threshold strictly greater than each PAA value. The last symbol is `a-1`, including the upper tail.
+
+### 11b.2. What does MINDIST actually guarantee?
+
+For compatible words from equally long input windows, let `gap_j` be the minimum separation of the two bins in segment `j`. Equal or adjacent bins have `gap_j=0`; separated bins use their nearest breakpoint endpoints. The reported distance is
+
+\[
+\operatorname{MINDIST}=\sqrt{\frac{n}{w}\sum_{j=0}^{w-1}gap_j^2}.
+\]
+![Symbolic Euclidean MINDIST formula](https://latex.codecogs.com/svg.image?%5Cmathrm%7BMINDIST%7D%3D%5Csqrt%7B%5Cfrac%7Bn%7D%7Bw%7D%5Csum_%7Bj%3D0%7D%5E%7Bw-1%7D%5Cmathrm%7Bgap%7D_j%5E2%7D)
+
+
+In **exact arithmetic**, interval separation and Jensen's inequality establish
+
+\[
+\operatorname{MINDIST}\le D_{\mathrm{PAA}}\le D_{\mathrm{Euclidean}}(Q^*,C^*).
+\]
+
+`Q*` and `C*` are the source windows *after* their selected transformations; with `ZPopulation`, they are independently normalized, not the original Raw observations. Binary64 rounding is not by itself a directed-rounding certificate for certified Euclidean pruning. MINDIST is also **not a metric on symbolic words**: adjacent but different symbols can have zero separation.
+
+Most importantly, **this proof does not apply to unrestricted DTW**. For `Q=[0,0,1]`, `C=[0,1,1]`, three segments and thresholds `[0.25,0.75]`, SAX MINDIST is `0.5` while unrestricted DTW has a zero-cost warping path. Never use `MINDIST>cutoff` to discard a DTW candidate. If SAX builds an approximate shortlist before `dtw.Align`, measure its retrieval `Recall@K` against exhaustive DTW on the same dataset.
+
+### 11b.3. A runnable infrastructure example: CPU saturation signatures
+
+This small workload intentionally uses `Raw` with boundaries in **CPU percentage points**, not Gaussian Z-scores. The normal window is constant: `ZPopulation` with default `RejectConstant` would reject it, while `Raw` preserves the absolute load and enables comparison.
+
+```go
+package main
+
+import (
+	"fmt"
+
+	"github.com/lvlath/go/sax"
+)
+
+func main() {
+	baseline := []float64{35, 35, 35, 35, 35, 35, 35, 35}
+	saturated := []float64{35, 35, 35, 35, 90, 90, 90, 90}
+
+	policy := sax.Options{
+		Segments:      4,
+		Alphabet:      5,
+		Normalization: sax.Raw,
+		Breakpoints:   []float64{20, 40, 60, 80},
+		BreakpointID:  "cpu-percent-v1",
+	}
+	encoder, err := sax.NewEncoder(policy)
+	if err != nil {
+		fmt.Println("policy:", err)
+		return
+	}
+	reference, err := encoder.Encode(baseline)
+	if err != nil {
+		fmt.Println("baseline:", err)
+		return
+	}
+	observation, err := encoder.Encode(saturated)
+	if err != nil {
+		fmt.Println("saturated:", err)
+		return
+	}
+	bound, err := encoder.Mindist(reference, observation)
+	if err != nil {
+		fmt.Println("comparison:", err)
+		return
+	}
+	fmt.Printf("reference=%v saturated=%v\n", reference.Symbols, observation.Symbols)
+	fmt.Printf("symbolic Euclidean lower bound=%.0f\n", bound)
+
+	// Output:
+	// reference=[1 1 1 1] saturated=[1 1 4 4]
+	// symbolic Euclidean lower bound=80
+}
+```
+
+This `80` is a **lower bound on Raw Euclidean distance between two eight-sample windows**, not a percent utilization, a probability, or a certificate that DTW exceeds 80. The true Raw Euclidean distance here is `110`: four source observations differ by 55 percentage points. The example uses a synthetic trace; production monitoring requires validated sampling cadence and an alert policy supported by operational evidence.
+
+### 11b.4. Picking the policy and keeping results comparable
+
+| Question | Choose | Why |
+|:--|:--|:--|
+| Are amplitude and physical units the signal? | `Raw` + calibrated `Breakpoints` | No per-window rescaling; easier to audit threshold meaning. |
+| Do offsets and amplitudes vary but shape matters? | `ZPopulation` + Gaussian | Per-window population fit emphasizes normalized shape. |
+| Should an exactly constant normalized window be accepted? | Explicit `ZeroWord` | Emits a flagged degenerate result; all normalized coordinates become zero. |
+| Do I need threshold diagnostics? | `ReturnPAA=true` | Publishes a detached PAA slice in the same transformed coordinates. |
+| Do I compare many windows with one policy? | `sax.NewEncoder(opts)` reused | Immutable thresholds and `EncodingID`; per-call detached results. |
+| Do source windows have differing `n`, `w`, `a`, or thresholds? | Do **not** compare with MINDIST | The geometric scale or symbolic meaning differs; `ErrIncompatible`. |
+
+`Result.EncodingID` is a SHA-256 identifier of mathematical policy, not of input observations and not an authentication tag. The custom `BreakpointID` label is for human audit, not compatibility. `OriginalLength` is validated separately. `Result.IsNil` implements `core.Nilable` by checking pointer presence; it does not test whether manually edited fields remain valid.
+
+For a full pipeline, validate timestamps with `series.Validate`, explicitly handle any gaps or invalid masks, select complete source-index windows using `series.WindowRanges`, encode with one immutable `sax.Encoder`, and optionally compare/index the resulting words. `series` does not fill missing slots. For DTW refinement, retain the **original windows**, not only their symbols; a shortlist is approximate until recall has been measured.
+
+Read [`SAX.md`](SAX.md) for the formal bin-gap proof, canonical `EncodingID`, complete error-precedence table, numerical limits, benchmarking and examples. Five executed, application-oriented examples live in [`sax/example_test.go`](../sax/example_test.go).
+
+---
+
 ## 12. Algorithm Selection Guide
 
 ### If the input is a graph
@@ -1447,6 +1585,8 @@ func main() {
 | Exact nanosecond cadence checks              | `series.Validate`                        | sample count + ordered gap metadata.                                  |
 | Causal lag/difference/returns                | `series`                                 | length-preserving values + validity mask.                             |
 | Fractional equal-duration scalar compression | `paa.Transform` / `paa.TransformRange`   | Detached PAA means, exact rational intervals, original window length. |
+| Fixed-alphabet symbolic window encoding       | `sax.Encode` / `sax.Encoder.Encode`      | Detached symbol word, policy identity and optional transformed PAA.     |
+| Compatible Euclidean symbolic lower bound     | `sax.Encoder.Mindist` / `sax.MindistValues` | Lower-bound dissimilarity in the selected transformed space, never a general DTW bound. |
 | Complete fixed index windows                 | `series.WindowRanges`                    | ordered half-open sample-index intervals.                             |
 | Scalar sequence alignment                    | `dtw.Align`                              | DTW `Result` with distance/reachability.                              |
 | Inclusive-limit scalar alignment             | `dtw.AlignBounded`                       | Exact/above-limit/unreachable status.                                 |
@@ -1485,6 +1625,7 @@ dense topology/covariance         -> matrix
 streaming mean/variance             -> stats.Moments / stats.Summarize
 train-only standardization          -> stats.FitStandardizer
 exact timestamp grid / causal arrays -> series
+symbolic Euclidean screening     -> sax
 time-warped sequence similarity   -> dtw
 closed tour cost                  -> tsp
 ```

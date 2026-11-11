@@ -3,7 +3,7 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/FAQ_&_TIPS.md
-  Package reference: matrix and the wider lvlath package family
+  Package reference: core, matrix, series, stats, paa, sax and the wider lvlath package family
   lvlath - FAQ & Tips
 
   Purpose:
@@ -23,7 +23,7 @@
   Scope:
     - Package selection and algorithm-choice guidance.
     - Common troubleshooting for core, bfs, dfs, dijkstra, matrix, flow, dtw, tsp,
-      gridgraph, builder, series, stats, and examples.
+      gridgraph, builder, series, stats, sax, and examples.
     - Testing, benchmarking, documentation, and contribution best practices.
 
   License:
@@ -55,6 +55,7 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
 11. [Series FAQ](#11-series-faq)
 12. [Stats FAQ](#12-stats-faq)
 13. [PAA FAQ](#13-paa-faq)
+    13a. [SAX FAQ](#13a-sax-faq)
 14. [Builder and gridgraph tips](#14-builder-and-gridgraph-tips)
 15. [Errors and diagnostics](#15-errors-and-diagnostics)
 16. [Determinism and concurrency](#16-determinism-and-concurrency)
@@ -85,6 +86,7 @@ Start with the question, not the algorithm name.
 | “How do I model a grid map?”                                | `gridgraph`           | Generates lattice topology instead of manual wiring.                        |
 | “How do I build repeatable fixtures?”                       | `builder`             | Deterministic graph/data generation.                                        |
 | “How do I compress a fixed-size scalar time-series window?” | `paa`                 | Exact fractional PAA averages with rational boundaries and no dropped tail. |
+| “How do I encode a fixed-length symbolic signature?”        | `sax`                 | Fractional PAA + right-bin quantization, compatible Euclidean MINDIST.      |
 | “How do I align two time series?”                           | `dtw`                 | Dynamic Time Warping handles local timing drift.                            |
 | “How do I compute robust moments or merge workers?”         | `stats`               | Welford/Chan moments, exact mean sum, scaled M2.                            |
 | “How do I normalize heldout features without refit?”        | `stats`               | Immutable fitted model over matrix columns.                                 |
@@ -106,6 +108,7 @@ compute all-pairs costs       -> Matrix metric closure
 validate grid/causal features -> Series
 stream/merge stable moments   -> Stats
 fit training-only scaling     -> Stats
+encode symbolic SAX words     -> SAX
 align time-warped signals     -> DTW
 build a closed tour           -> TSP
 ```
@@ -125,7 +128,7 @@ Use `dtw` when you need to compare patterns despite permitted local timing
 stretching under a specified alignment cost and window. It does not replace
 exact-grid checking. These packages are independent: an application may choose
 to validate a series first, but neither package implicitly resamples or fills
-gaps for the other. See [`SERIES.md`](SERIES.md) and [Series FAQ](#18-series-faq).
+gaps for the other. See [`SERIES.md`](SERIES.md) and [Series FAQ](#11-series-faq).
 
 ---
 
@@ -1621,6 +1624,71 @@ No. With matched series lengths and segment grids, Jensen's inequality gives a s
 ### Q13.9. How should I verify and benchmark it?
 
 Use external `package paa_test` tests, `errors.Is`, exact rational overlap oracles, bitwise rounding comparisons, fractional `n%w!=0` fixtures, and detached output checks. Benchmark global mean (`w=1`), small fixed `w`, identity (`w=n`), checked subranges and the `Means` projection separately. For the complete contract, examples, arithmetic proof and pitfalls, see [`PAA.md`](PAA.md), [`paa/doc.go`](../paa/doc.go) and [`paa/example_test.go`](../paa/example_test.go).
+
+---
+
+## 13a. SAX FAQ
+
+### Q13a.1. What can SAX answer that `paa` cannot?
+
+`paa.Transform` returns real-valued equal-duration fractional averages and exact rational interval geometry. `sax` takes those averages, maps them into an alphabet of 2–256 bins and returns a `Result` containing `Symbols`, source geometry, normalization metadata and `EncodingID`. It also computes a compatible **Euclidean MINDIST lower-bound dissimilarity**. SAX is useful when you need stable symbolic signatures and coarse ranking; PAA is useful when you need the actual aggregate values and geometry. Neither package builds a search index or repairs timestamps.
+
+### Q13a.2. Should I choose `ZPopulation` or `Raw`?
+
+Use `ZPopulation` for **relative shape** when removing each window's offset and amplitude is appropriate. Every window is fitted independently with the population divisor `n`, so it is not a reusable training-only `stats.Standardizer` and it erases absolute level changes. Use `Raw` when physical units (CPU percentage, millihertz deviation, temperature or return basis points) and amplitude matter. If you choose Raw Gaussian bins, remember their standard-normal thresholds may not fit the input units; calibrated custom breakpoints are usually clearer.
+
+### Q13a.3. Why did a constant input produce `ErrZeroVariance`?
+
+`DefaultOptions` chooses `ZPopulation` and `RejectConstant`. A constant window has population `sigma=0`; Z-score division would be undefined, so `Encoder.Encode` returns nil with `ErrZeroVariance`. Set `opts.ConstantPolicy=sax.ZeroWord` only if a constant shape should be represented. Then `Mean` retains the original constant level, `StdDev=0`, `Degenerate=true` and the normalized vector consists of zero coordinates. **ZeroWord is not symbol code zero:** with a Gaussian two-symbol alphabet, zero belongs to right bin `1`. Raw accepts constant inputs without the zero-variance policy.
+
+### Q13a.4. Why does a nonconstant tiny-spread input return `ErrOverflow` instead of `ZeroWord`?
+
+The implementation distinguishes **all observations exactly identical** from nonconstant observations whose positive sigma cannot be published as finite nonzero binary64. Reclassifying such a window as constant would silently lose information and violate the public `Degenerate` contract. The stable normalization path returns `ErrOverflow` rather than a false zero-variance result; do not add an arbitrary epsilon to turn the failure into a successful ZeroWord.
+
+### Q13a.5. Why does equality to a custom breakpoint go to the right bin?
+
+The bins are `(-Inf,b0), [b0,b1), ... [b_(a-2),+Inf)`. Hence a value `v==b[k]` belongs to bin `k+1`; the last tail is still encoded. The kernel searches for the **first breakpoint strictly greater than** `v`, equivalent to counting boundaries `<=v`.
+
+```text
+Breakpoints [0,1], input [-1,0,0.5,1,2], n=w=5, Raw:
+Symbols = [0,1,1,2,2]
+```
+
+### Q13a.6. Can two words with the same `BreakpointID` be compared?
+
+Not necessarily. `BreakpointID` is audit text, not a mathematical identifier. `EncodingID` is a canonical SHA-256 of `Segments`, `Alphabet`, normalization/constant policy, normalization/table version and actual breakpoint binary64 bits (with `-0.0` canonicalized to `+0.0`). `Mindist` requires both result IDs to agree with its encoder and verifies the source lengths and shapes separately. Two arrays both labeled `"custom"` but containing different thresholds produce incompatible IDs (`ErrIncompatible`). Changing `ReturnPAA` or the audit label alone does not change the identity.
+
+### Q13a.7. Does `EncodingID` authenticate a stored Result?
+
+No. `Result.EncodingID` and `Result.Symbols` are exported writable fields. The hash establishes **configuration compatibility** under honest construction, not authenticity of an untrusted record. `Mindist` validates accessible dimensions, symbols, finite numeric metadata and optional PAA consistency; it cannot prove that a hand-built word represents particular original observations. Authenticate or sign persisted data in the application if your threat model requires it.
+
+### Q13a.8. Why did `Mindist` return `ErrIncompatible`, `ErrShape`, or `ErrNonFinite`?
+
+These errors protect different boundaries. `ErrShape` rejects malformed slice lengths, out-of-range symbol codes or contradictory fit/PAA metadata. `ErrNonFinite` rejects publicly modified NaN or infinity in PAA/mean/stddev. `ErrIncompatible` rejects mismatched original source lengths, segmentation, alphabet, EncodingID or normalization version (as well as missing identity metadata). Result structure is validated **before** compatible-policy comparison, so a malformed hand-built Result may report `ErrShape` even when its ID is also mismatched. Classify through `errors.Is`, not text matching.
+
+### Q13a.9. Is MINDIST a true metric? Does zero mean the series match?
+
+Neither. With thresholds `[0,1]`, the gap of bins `(0,1)` is `0`, `(1,2)` is `0`, yet `(0,2)` is `1`. Therefore distinct symbolic words can have zero dissimilarity and triangle inequality can fail. Even a zero MINDIST with identical words does not prove identical PAA averages, raw windows, or DTW alignments. Treat MINDIST as a **lower-bound dissimilarity**, not an ordinary metric suitable for metric-tree assumptions.
+
+### Q13a.10. Can SAX MINDIST safely prune DTW candidates?
+
+**No.** `Q=[0,0,1]`, `C=[0,1,1]`, `w=3`, `a=3`, thresholds `[0.25,0.75]` produce words `[0,0,2]` and `[0,2,2]`, so Euclidean MINDIST is `0.5`; an unrestricted DTW path matches equal values and has **zero** cost. A positive MINDIST does not certify rejection under nonlinear warping. Use SAX to build an explicitly **approximate** candidate shortlist, then calculate DTW on those original windows and measure `Recall@K` against exhaustive DTW. For globally exact fixed-length DTW search, study `dtw.Search` and its DTW-specific machine certificates.
+
+### Q13a.11. Does the Euclidean lower bound remain a certified floating-point cutoff?
+
+The inequality `MINDIST <= D_PAA <= D_2` follows in **exact arithmetic** for compatible transformed windows with fractional segment weighting `n/w`. Implemented `float64` normalizations, PAA values and norm calculations can round; the package does not publish a directed-downward machine certificate. If correctness depends on excluding every candidate below a Euclidean cutoff, derive and verify conservative numerical error bounds separately. A casual `epsilon` does not supply that proof.
+
+### Q13a.12. What data does `ReturnPAA=true` return? Can I mutate it?
+
+It returns a detached slice of **transformed** PAA means. Under `Raw`, these are physical-unit averages; under `ZPopulation`, they are means of window-local Z coordinates. Mutating that slice or `Symbols` changes your Result but never the immutable Encoder or another successful result. Do not mutate the same result concurrently with `Encoder.Mindist`, because the package does not snapshot publicly writable Results. `ReturnPAA` does not affect Symbols or EncodingID; it can increase validation work when the PAA slice is present.
+
+### Q13a.13. How do I choose a facade for a production monitoring pipeline?
+
+Use `sax.EncodeGaussian(values,w,a)` for an occasional normalized Gaussian word, `sax.EncodeRaw(values,w,a)` when supplied values are already in appropriate Raw units, and `sax.EncodeRawWithBreakpoints(values,w,boundaries,label)` for an occasional domain-calibrated word. Use `NewEncoder(opts)` once followed by repeated `encoder.Encode(window)` for many windows; this avoids repeatedly cloning/hashing the same mathematical configuration. `sax.MindistValues(left,right,opts)` is a one-shot pair comparison that encodes both sides on each call; it does **not** retain words or build an index.
+
+### Q13a.14. How do I connect `series`, SAX and DTW safely?
+
+Validate cadence and gaps with `series.Validate` first if you have timestamps, choose complete sample-index windows with `series.WindowRanges`, and explicitly reject or segment windows crossing missing timestamp slots. `sax.Encode` neither checks timestamps nor consumes `series.TransformResult.Valid` masks; a warmup placeholder zero must not be mistaken for a genuine sample. Encode windows of equal length with one compatible policy and retain the original observations if DTW refinement is required. Ranking a SAX shortlist followed by exact per-candidate `dtw.Align` is only **approximate global retrieval**. For error tables, proofs and five executable synthetic scenarios see [`SAX.md`](SAX.md), [`sax/doc.go`](../../../../Downloads/sax-phase8-documentation/sax/doc.go) and [`sax/example_test.go`](../sax/example_test.go).
 
 ---
 
