@@ -374,6 +374,8 @@ func backtrackPredecessors(predecessors []predecessorCode, rows, cols int) (Path
 // AI-Hints:
 //   - Preserve option validation order in public facades rather than in this kernel.
 //   - Do not introduce a dense local matrix into the distance-only scalar path.
+//
+// nolint:gocyclo
 func computeFromCostSource(rows, cols int, cfg options, local costSource) (*Result, error) {
 	if rows <= 0 || cols <= 0 {
 		return nil, ErrEmptyInput

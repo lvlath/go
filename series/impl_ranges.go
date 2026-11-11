@@ -3,7 +3,6 @@
 
 // Package series enumerates complete, half-open sample-index windows.
 // This file owns count arithmetic, checked allocation, and stable range order.
-
 package series
 
 import (

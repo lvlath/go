@@ -385,7 +385,7 @@ func TestFactors_DetachedConcurrentSolve(t *testing.T) {
 				if err == nil && result != nil {
 					first, readErr := result.Solution.At(0, 0)
 					if readErr != nil || math.Abs(first-1) > 1e-12 {
-						err = fmt.Errorf("unexpected solution first cell=%g: %v", first, readErr)
+						err = fmt.Errorf("unexpected solution first cell=%g: %w", first, readErr)
 					}
 				}
 				errorsChannel <- err

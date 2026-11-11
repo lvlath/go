@@ -3,7 +3,6 @@
 
 // Package series computes length-preserving transformations from earlier observations.
 // This file implements lag, differences, and numerically guarded simple/log returns.
-
 package series
 
 import "math"

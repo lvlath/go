@@ -3,7 +3,6 @@
 
 // Package series verifies exact signed-nanosecond timestamp intervals.
 // This file owns grid traversal, overflow-safe deltas, and gap classification.
-
 package series
 
 import "math"
@@ -51,6 +50,8 @@ import "math"
 // AI-Hints:
 //   - Signed subtraction before an overflow check is unsafe: use unsigned distance.
 //   - Do not infer or fill cadence positions from a zero-valued GridOptions.
+//
+// nolint:gosec
 func validateGrid(timesNS []int64, values []float64, opts GridOptions) (*ValidationResult, error) {
 	// Reject invalid policy before dereferencing or inspecting either input slice.
 	if opts.CadenceNS < 0 {

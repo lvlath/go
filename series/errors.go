@@ -3,7 +3,6 @@
 
 // Package series classifies invalid inputs and unrepresentable arithmetic.
 // This file owns the public sentinel identities used by errors.Is callers.
-
 package series
 
 import "errors"

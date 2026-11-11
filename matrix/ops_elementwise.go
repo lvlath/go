@@ -34,7 +34,6 @@
 //   - Keep rowMeans/scale vectors private and aligned to the input row count.
 //   - Do not resurrect an independent column-centering kernel; stable column
 //     statistics already owns that arithmetic and overflow policy.
-
 package matrix
 
 import "math"

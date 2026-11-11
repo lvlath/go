@@ -286,7 +286,7 @@ func (m *scriptedMatrix) At(row, col int) (float64, error) {
 // Determinism: fixed failure with no state change or allocation.
 // Complexity: O(1) time and space.
 // AI-Hints: unsupported writes are not nil-receiver failures.
-func (m *scriptedMatrix) Set(row, col int, value float64) error {
+func (m *scriptedMatrix) Set(_, _ int, _ float64) error {
 	return matrix.ErrMatrixNotImplemented
 }
 
@@ -524,43 +524,4 @@ func repeatedMoments(t *testing.T, value float64, count uint64) *stats.Moments {
 	}
 
 	return destination
-}
-
-// mustEqualBool verifies an exact boolean protocol invariant without reflection.
-// It reports the operation name and both values so failures identify the
-// contract breach rather than merely printing two unrelated booleans.
-//
-// Implementation:
-//   - Stage 1: mark the caller as the source of any assertion failure.
-//   - Stage 2: compare the returned boolean with the expected value.
-//   - Stage 3: fail only when they differ, with the operation name included.
-//
-// Behavior highlights:
-//   - Does not perform any implicit truthiness conversion or tolerance check.
-//
-// Inputs:
-//   - t: owning test; got/want: boolean states; op: diagnostic label.
-//
-// Returns:
-//   - None; either preserves the test or fails it immediately.
-//
-// Errors:
-//   - No returned errors; failures are reported through testing.T.
-//
-// Determinism:
-//   - Exact boolean comparison with no external state.
-//
-// Complexity:
-//   - Time O(1), Space O(1).
-//
-// Notes:
-//   - This helper is used for semantic states such as core.Nilable.IsNil.
-//
-// AI-Hints:
-//   - Do not replace this with reflect.DeepEqual or compare error text.
-func mustEqualBool(t *testing.T, got, want bool, op string) {
-	t.Helper()
-	if got != want {
-		t.Fatalf("%s: got %t, want %t", op, got, want)
-	}
 }

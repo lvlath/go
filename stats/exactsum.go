@@ -67,6 +67,7 @@ type exactSum struct {
 // Complexity: O(1) to O(exactSumWords) time, O(1) space; no heap allocation.
 // Notes: the caller must apply this to a candidate state before publishing Update.
 // AI-Hints: do not convert values to decimal; decode Float64bits exactly.
+// nolint:gosec
 func (sum *exactSum) addFloat(value float64) {
 	// Stage 1: an IEEE signed zero contributes no integer bits.
 	encoded := math.Float64bits(value)

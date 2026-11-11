@@ -3,7 +3,6 @@
 
 // Package series represents ordered observations with explicit validity masks.
 // This file defines the public data carriers and their ownership invariants.
-
 package series
 
 // GridOptions configures exact timestamp-grid validation without changing data.

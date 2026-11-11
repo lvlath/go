@@ -127,6 +127,8 @@ type weightedAccumulator struct {
 //   - Multiplying a finite 1e308 float by a raw overlap can overflow even
 //     when the final weighted average must remain finite. Only multiply the
 //     decoded *integer* mantissa, never the binary64 value itself.
+//
+// nolint:gosec
 func (a *weightedAccumulator) add(value float64, overlap int64) {
 	if !a.started {
 		a.started = true

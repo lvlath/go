@@ -3,7 +3,6 @@
 
 // Package series provides finite, causal transformations of ordered observations.
 // This file exposes the validated public facades; mathematical kernels remain private.
-
 package series
 
 // Validate checks the correspondence between observations and strictly increasing

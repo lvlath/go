@@ -279,6 +279,8 @@ func searchHitLess(a, b SearchHit) bool {
 //   - Always drain the result channel after cancellation to avoid goroutine leaks.
 //   - Keep the one-worker acknowledgement after cutoff publication to prevent run-ahead.
 //   - Never promote an errored or interrupted candidate into completed or pruned counts.
+//
+// nolint:gocyclo, gosec
 func runSearchWorkers(
 	ctx context.Context,
 	result *SearchResult,

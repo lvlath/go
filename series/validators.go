@@ -3,7 +3,6 @@
 
 // Package series validates finite observations before applying causal operations.
 // This file centralizes input checks, result allocation, and finite-result policy.
-
 package series
 
 import "math"

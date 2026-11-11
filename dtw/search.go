@@ -80,6 +80,8 @@ type searchPlan struct {
 // AI-Hints:
 //   - A non-complete SearchResult is not certified global top-K, even when Hits is nonempty.
 //   - Do not use an uncertified floating lower bound for pruning near cutoff equality.
+//
+// nolint:gocyclo, gosec
 func searchFixedWindows(ctx context.Context, query, data []float64, opts SearchOptions) (*SearchResult, error) {
 	if ctx == nil {
 		return nil, ErrInvalidOption
