@@ -52,15 +52,16 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
 8. [DTW FAQ](#8-dtw-faq)
 9. [MST FAQ](#9-mst-faq)
 10. [TSP FAQ](#10-tsp-faq)
-11. [Builder and gridgraph tips](#11-builder-and-gridgraph-tips)
-12. [Errors and diagnostics](#12-errors-and-diagnostics)
-13. [Determinism and concurrency](#13-determinism-and-concurrency)
-14. [Testing tips](#14-testing-tips)
-15. [Benchmark tips](#15-benchmark-tips)
-16. [Documentation tips](#16-documentation-tips)
-17. [Quick recipes](#17-quick-recipes)
-18. [Series FAQ](#18-series-faq)
-19. [Stats FAQ](#19-stats-faq)
+11. [Series FAQ](#11-series-faq)
+12. [Stats FAQ](#12-stats-faq)
+13. [PAA FAQ](#13-paa-faq)
+14. [Builder and gridgraph tips](#14-builder-and-gridgraph-tips)
+15. [Errors and diagnostics](#15-errors-and-diagnostics)
+16. [Determinism and concurrency](#16-determinism-and-concurrency)
+17. [Testing tips](#17-testing-tips)
+18. [Benchmark tips](#18-benchmark-tips)
+19. [Documentation tips](#19-documentation-tips)
+20. [Quick recipes](#20-quick-recipes)
 
 ---
 
@@ -70,23 +71,24 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
 
 Start with the question, not the algorithm name.
 
-| Question                                              | Use                   | Reason                                                        |
-|:------------------------------------------------------|:----------------------|:--------------------------------------------------------------|
-| “How many hops away is this vertex?”                  | `bfs`                 | BFS minimizes edge count.                                     |
-| “Which vertices are in the same weak island?”         | `bfs.Components`      | Weak membership ignores direction for component grouping.     |
-| “What is a deterministic deep traversal?”             | `dfs`                 | DFS gives post-order and forest-style structure.              |
-| “Does this graph contain a cycle?”                    | `dfs.DetectCycles`    | Returns deterministic witness cycles.                         |
-| “What order can I execute a DAG?”                     | `dfs.TopologicalSort` | Topological order is a directed acyclic graph contract.       |
-| “What is the cheapest route by weight?”               | `dijkstra`            | Dijkstra minimizes non-negative total cost.                   |
-| “What is the cheapest connected backbone?”            | `mst`                 | MST solves minimum connected spanning structure.              |
-| “What is the maximum throughput?”                     | `flow`                | Flow solves capacity-constrained source-to-sink movement.     |
-| “How do I turn graph topology into numeric features?” | `matrix`              | Adjacency, incidence, degree vector, metric closure, algebra. |
-| “How do I model a grid map?”                          | `gridgraph`           | Generates lattice topology instead of manual wiring.          |
-| “How do I build repeatable fixtures?”                 | `builder`             | Deterministic graph/data generation.                          |
-| “How do I align two time series?”                     | `dtw`                 | Dynamic Time Warping handles local timing drift.              |
-| “How do I compute robust moments or merge workers?”   | `stats`               | Welford/Chan moments, exact mean sum, scaled M2.              |
-| “How do I normalize heldout features without refit?”  | `stats`               | Immutable fitted model over matrix columns.                  |
-| “How do I visit all cities in a route?”               | `tsp`                 | Tour construction/improvement/exact-small-instance routing.   |
+| Question                                                    | Use                   | Reason                                                                      |
+|:------------------------------------------------------------|:----------------------|:----------------------------------------------------------------------------|
+| “How many hops away is this vertex?”                        | `bfs`                 | BFS minimizes edge count.                                                   |
+| “Which vertices are in the same weak island?”               | `bfs.Components`      | Weak membership ignores direction for component grouping.                   |
+| “What is a deterministic deep traversal?”                   | `dfs`                 | DFS gives post-order and forest-style structure.                            |
+| “Does this graph contain a cycle?”                          | `dfs.DetectCycles`    | Returns deterministic witness cycles.                                       |
+| “What order can I execute a DAG?”                           | `dfs.TopologicalSort` | Topological order is a directed acyclic graph contract.                     |
+| “What is the cheapest route by weight?”                     | `dijkstra`            | Dijkstra minimizes non-negative total cost.                                 |
+| “What is the cheapest connected backbone?”                  | `mst`                 | MST solves minimum connected spanning structure.                            |
+| “What is the maximum throughput?”                           | `flow`                | Flow solves capacity-constrained source-to-sink movement.                   |
+| “How do I turn graph topology into numeric features?”       | `matrix`              | Adjacency, incidence, degree vector, metric closure, algebra.               |
+| “How do I model a grid map?”                                | `gridgraph`           | Generates lattice topology instead of manual wiring.                        |
+| “How do I build repeatable fixtures?”                       | `builder`             | Deterministic graph/data generation.                                        |
+| “How do I compress a fixed-size scalar time-series window?” | `paa`                 | Exact fractional PAA averages with rational boundaries and no dropped tail. |
+| “How do I align two time series?”                           | `dtw`                 | Dynamic Time Warping handles local timing drift.                            |
+| “How do I compute robust moments or merge workers?”         | `stats`               | Welford/Chan moments, exact mean sum, scaled M2.                            |
+| “How do I normalize heldout features without refit?”        | `stats`               | Immutable fitted model over matrix columns.                                 |
+| “How do I visit all cities in a route?”                     | `tsp`                 | Tour construction/improvement/exact-small-instance routing.                 |
 
 ### Q1.2. How do I avoid using the wrong algorithm?
 
@@ -135,9 +137,9 @@ Graph options define the mathematical universe of the graph.
 
 ```go
 g, err := core.NewGraph(
-core.WithDirected(true),
-core.WithWeighted(),
-core.WithLoops(),
+    core.WithDirected(true),
+    core.WithWeighted(),
+    core.WithLoops(),
 )
 ```
 
@@ -246,15 +248,15 @@ ctx, cancel := context.WithCancel(context.Background())
 defer cancel()
 
 res, err := bfs.BFS(
-g,
-"gateway",
-bfs.WithContext(ctx),
-bfs.WithOnVisit(func(id string, depth int) error {
-if id == "ledger" {
-cancel()
-}
-return nil
-}),
+    g,
+    "gateway",
+    bfs.WithContext(ctx),
+    bfs.WithOnVisit(func(id string, depth int) error {
+        if id == "ledger" {
+            cancel()
+        }
+    return nil
+    }),
 )
 
 _ = res
@@ -383,11 +385,11 @@ Use:
 ```go
 cost, err := result.DistanceTo(targetID)
 if err != nil {
-// Handle empty or unknown target.
+    // Handle empty or unknown target.
 }
 
 if math.IsInf(cost, 1) {
-// The target is known but unreachable under the active policy.
+    // The target is known but unreachable under the active policy.
 }
 ```
 
@@ -1280,11 +1282,11 @@ Correct handling:
 ```go
 res, err := tsp.SolveMatrix(dist, ids, opts)
 if errors.Is(err, tsp.ErrTimeLimit) {
-// res may contain the best incumbent found so far.
-// It is feasible, but not certified optimal.
-if res != nil && res.TimedOut && !res.Optimal {
-// Decide whether the incumbent is acceptable for your application.
-}
+    // res may contain the best incumbent found so far.
+    // It is feasible, but not certified optimal.
+    if res != nil && res.TimedOut && !res.Optimal {
+        // Decide whether the incumbent is acceptable for your application.
+    }
 }
 ```
 
@@ -1308,9 +1310,323 @@ The package stabilizes published costs so deterministic output does not depend o
 
 ---
 
-## 11. Builder and gridgraph tips
+## 11. Series FAQ
 
-### Q11.1. When should I use `builder`?
+### Q11.1. Does `series.Validate` infer cadence from timestamps?
+
+No. `GridOptions{}` or `GridOptions{CadenceNS: 0}` validates strict order
+and representable positive timestamp differences only. It deliberately does
+**not** derive a frequency, reconstruct a calendar, or report missing slots.
+
+For positive `CadenceNS = c`, every adjacent interval `d` must satisfy
+`d > 0`, `d <= math.MaxInt64`, and `d % c == 0`. `AllowGaps` changes only
+what happens to **whole** missing slots; it cannot permit a nonmultiple.
+
+```text
+[0, 10, 20], cadence 0  -> order-only success
+[0, 10, 20], cadence 10 -> exact-grid success
+[0, 10, 30], cadence 10 -> one gap if AllowGaps=true
+[0, 10, 25], cadence 10 -> ErrGap even if AllowGaps=true
+```
+
+### Q11.2. Does a reported `Gap` insert a missing observation?
+
+No. `Gap{AfterIndex: i, MissingCount: m}` reports `m` absent lattice
+slots between supplied observations `i` and `i+1`. The returned
+`ValidationResult.Samples` counts **only supplied pairs**, and the original
+`[]float64` remains unchanged. `ValidationResult.Gaps` is a detached,
+non-nil slice on success, even when empty.
+
+If a model requires uninterrupted sampling, use `AllowGaps: false` or handle
+reported gaps explicitly before calling it. Calling `Lag` or `SimpleReturns`
+on the original array uses adjacent **supplied indices**, including pairs
+separated by a timestamp gap.
+
+### Q11.3. Why is a returned zero insufficient to tell whether a result exists?
+
+All transforms preserve input length. Positions lacking history contain
+`Values[i] == 0` and `Valid[i] == false`; valid computations can also
+legitimately produce zero. These cases are different:
+
+```text
+values = [2, 2, 4]
+Difference(values, 1)
+  Values = [0, 0, 2]
+  Valid  = [false, true, true]
+              ^
+         valid zero difference
+```
+
+Keep the two result slices together. A mask is not a NaN fill, a timestamp
+gap report, or a reason to mutate observations. Both slices are detached
+from caller input.
+
+### Q11.4. How do the domains of simple and log returns differ?
+
+`SimpleReturns` computes the adjacent relative change
+`x[i]/x[i-1] - 1`, requiring only **used previous denominators** to be
+nonzero. Negative finite values are allowed mathematically; a zero in the
+last position is permitted because no successor uses it as a denominator.
+A singleton zero is also accepted and produces one invalid warmup cell.
+
+`LogReturns` computes `ln(x[i]) - ln(x[i-1])` and requires **all** input
+values to be strictly positive, even for a singleton. It therefore rejects
+zero, negative zero, and negative observations with `ErrDomain`.
+Both operations reject NaN and infinity with `ErrNonFinite` before domain
+checks and return nil results on errors.
+
+### Q11.5. Why does `LogReturns` not compute `math.Log(curr/prev)`?
+
+The intermediate ratio can overflow or underflow when both operands are
+valid, finite, strictly positive `float64` values. For `prev=1e-300` and
+`curr=1e300`, the ratio overflows but the correct log difference is finite.
+
+`LogReturns` uses the difference of logarithms for distant positive pairs,
+and a stable `math.Log1p` relative-change path for nearby values. The latter
+also avoids losing a very small nonzero change when two separately rounded
+logarithms would be equal. This improves numerical behavior without claiming
+exact real-number arithmetic or introducing an epsilon validity threshold.
+
+### Q11.6. What errors should I expect, and which one takes precedence?
+
+`series` owns `ErrInvalidOption`, `ErrNilInput`, `ErrEmptyInput`,
+`ErrShape`, `ErrNonFinite`, `ErrOrder`, `ErrGap`, `ErrDomain`, and
+`ErrOverflow`. Classify through `errors.Is`.
+
+`Validate` checks options first, then nil inputs, mismatched lengths,
+equally empty inputs, and **all** nonfinite observations before walking
+consecutive timestamps. Timestamp pairs are then checked in index order:
+strict order, signed delta representability, exact cadence, and gap policy.
+
+For `Lag`/`Difference`, lag validation precedes nil/empty/finite checks.
+`SimpleReturns` checks all denominators before computing any pair;
+`LogReturns` checks the entire positive domain first. Hence a domain error
+takes precedence over an arithmetic overflow elsewhere in that call.
+There is no error-producing partial result or silent fallback.
+
+### Q11.7. What does `ErrOverflow` mean when all inputs are finite?
+
+It can describe an unrepresentable **result** rather than invalid input:
+
+* Signed timestamps `math.MinInt64 -> 0` are ordered, but their difference
+  exceeds `math.MaxInt64` nanoseconds.
+* A finite difference such as `math.MaxFloat64 - (-math.MaxFloat64)`
+  overflows float64.
+* Extreme simple returns can overflow division from a small nonzero base.
+* `WindowRanges` can count a mathematically valid number of windows whose
+  required `[]Range` byte size is not representable as a Go `int`.
+
+This does not mean `series` guarantees that all representable allocations
+will succeed under an operating-system memory limit. It checks arithmetic,
+not available RAM.
+
+### Q11.8. Are these operations causal and safe to call concurrently?
+
+Each transform at index `i` reads only elements at indices at most `i`,
+so appending future observations cannot change a successful output prefix
+**when both original and extended calls succeed**. For example, appending
+after a final zero can make a subsequent `SimpleReturns` fail because that
+zero becomes a denominator; the package then publishes no partial result.
+
+Independent calls can use the same input concurrently **if the caller never
+mutates it during those calls**. Returned gap, values, mask, and range
+slices are caller-owned, detached memory. Concurrent writes to the same
+result must be externally synchronized. There is no mutable streaming
+accumulator or implicit snapshot isolation.
+
+### Q11.9. Are `WindowRanges` outputs durations or sample positions?
+
+Sample positions only. `WindowRanges(8,3,2)` yields `[0,3)`, `[2,5)`,
+`[4,7)`, all complete and half-open; there is no trailing partial range.
+`WindowRanges(0,3,1)` returns a **non-nil empty** slice. Stride larger
+than width is valid and emits separated windows. To interpret indices in
+clock time, the application must separately inspect or validate timestamps.
+
+### Q11.10. Can I pipe the output directly into DTW, statistics, or a model?
+
+Only after checking domain requirements of the downstream consumer.
+`series` has no dependency on `dtw` or `matrix` and does not build a model.
+If a transform has warmup cells, a downstream algorithm must not consume
+those zero placeholders as genuine data. Likewise, a grid validated with
+`AllowGaps: true` is not automatically a uniformly sampled sequence.
+
+For the full proofs, numeric examples, error tables, and tested workflows,
+read [`SERIES.md`](SERIES.md), [`series/doc.go`](../series/doc.go), and
+[`series/example_test.go`](../series/example_test.go).
+
+---
+
+## 12. Stats FAQ
+
+### Q12.1. When should I use `stats` instead of statistics already present in `matrix`?
+
+Use `stats` for **stable scalar streaming moments**, **mergeable partitions**, and **a fitted standardizer reused on heldout data**. `matrix` remains responsible for dense storage, graph adapters, covariance/correlation and its own documented algebraic transformations. A matrix normalization routine that computes parameters on its current input is not necessarily an immutable train-only preprocessing model.
+
+```text
+Need an ordered scalar batch mean/variance?    -> stats.Summarize
+Need ongoing or partitioned scalar reduction?  -> stats.Moments
+Need frozen per-column training scaling?       -> stats.FitStandardizer
+Need covariance or matrix algebra?             -> matrix
+Need timestamp cadence / Valid masks?          -> series
+Need fractional length reduction, not warping? -> paa
+Need timing alignment, not scaling?            -> dtw
+```
+
+The packages complement one another. `stats` imports `matrix` and the `core.Nilable` contract; `matrix` does not import `stats`.
+
+### Q12.2. Why not compute variance as `mean(x*x) - mean(x)*mean(x)`?
+
+That identity is exact in real arithmetic but numerically unstable for high-offset, low-spread data. The two terms can become equal after binary64 rounding, and their difference becomes zero even when the true variance is positive.
+
+`stats` uses Welford updates and Chan merges, both based on centered residuals. The `M2` state has a compensated significand and independent exponent, so large intermediate squares do not require a `float64` representation. The final mean is calculated separately from an exact binary-input sum; **variance remains an approximate floating-point quantity**.
+
+For `[1e12+1, 1e12+2, 1e12+3]`, sample variance (`ddof=1`) is 1. See [the Welford/Chan derivations](STATS.md#4-mathematics-welford-and-chan).
+
+### Q12.3. Can `Summary` succeed when the internal `M2` is larger than `math.MaxFloat64`?
+
+Yes. With `[-1e154,0,1e154]`, the unnormalized `M2` is around `2e308`, but after dividing by `3-1` the sample variance is around `1e308`, which is representable. `Summary` keeps the moment scaled until the division.
+
+**Do not confuse avoidable intermediate overflow with final overflow.** If the requested published variance itself cannot be represented as finite binary64, `ErrOverflow` is the correct result. `Update`/`Merge` are not required to reject an intermediate scaled `M2` just because a plain float64 representation would overflow.
+
+### Q12.4. Is the mean exact? Is the variance exact?
+
+The mean is rounded once from the exact sum of the original finite binary64 observations, divided by their exact count. This is stronger than simply compensating an ordinary `float64` sum. For `[1e154,1,-1e154]`, the correct mean rounds from `1/3` instead of disappearing to zero.
+
+Variance uses compensated scaled Welford/Chan arithmetic. It is *not* an arbitrary-precision rational central moment; output error depends on the input magnitudes and update/merge grouping. Independent `big.Rat`-based test oracles help establish practical accuracy on adversarial inputs, but they do not constitute a universal error theorem.
+
+### Q12.5. How should I choose between `ddof=0` and `ddof=1`?
+
+`ddof=0` divides the unnormalized central moment by `n` (population variance). `ddof=1` divides by `n-1` (sample variance) and requires at least two samples. The package does not infer which statistical interpretation fits your domain.
+
+Call `stats.SummarizePopulation(values)` for the first convention or
+`stats.SummarizeSample(values)` for the second. Both wrappers select the
+corresponding fixed `ddof` and delegate to the same Welford kernel.
+
+`Summary` rejects a count no larger than `ddof` with `ErrInsufficientSamples`. An unsupported `ddof` produces `ErrInvalidOption` before even inspecting a nil slice or nil receiver.
+
+### Q12.6. Are `Moments.Update` and `Moments.Merge` safe to call concurrently?
+
+Not on the same accumulator. They are **transactional on a returned error**, not synchronized mutators. Use one `Moments` per goroutine, finish all updates, then merge in a fixed order after the workers stop. Do not mutate the source during `Merge`.
+
+An empty source is a no-op. Merging into an empty destination copies the source's complete state by value. `m.Merge(m)` is rejected with `ErrInvalidOption`, even for an empty receiver. Count overflow is checked before the merge and leaves both states unchanged.
+
+### Q12.7. Can changing the order of partitions change the answer?
+
+For the *exact binary sum* used by the final mean, partition grouping does not lose the original input bits. But the compensated floating-point `M2` is not bitwise associative; different update or merge trees can produce slightly different variance approximations.
+
+Keep partition contents, in-partition order, and merge-tree order deterministic if you need reproducible results. Do not force bit-for-bit variance equality between independent groupings unless the specific dataset warrants it.
+
+### Q12.8. Why does `FitStandardizer` reject a constant column by default?
+
+`ScaleOptions{}` means `DDOF=0` and `ConstantPolicy=RejectConstant`. A zero internal `M2` yields `ErrZeroVariance`; division by a fitted scale of zero is undefined.
+
+If retaining the feature is intentional, use `stats.UnitScaleConstant`. The fit then preserves its training mean, assigns scale exactly one, and marks `Constant[j]=true`. For training `[5,5,5]` and heldout `[7]`, the standardized value is **2**, not forced zero. An epsilon such as `1e-5` is *not* used to declare features constant.
+
+### Q12.9. Why can `Summary.Variance` be zero while a training feature is not constant?
+
+A positive but very small variance can underflow when it is converted to the public `float64` field. The fitter does **not** classify a feature by that rounded field. Instead it checks its scaled internal `M2` for zero and computes the standard deviation in the scaled domain.
+
+This matters twice: a tiny positive variance should not be relabeled constant, and a variance greater than `MaxFloat64` can still have a finite square root that is a valid fitted scale. Do not compute fitting parameters by first calling `Summary()` and then taking `math.Sqrt` of the public variance.
+
+### Q12.10. Can I reuse a `Standardizer` on test data or across goroutines?
+
+Yes: that is the intended inference model. Fit only on training rows, persist your application-level feature order and split provenance, and call `fit.Model.Transform(heldout)` without refitting.
+
+The model's private means/scales are immutable after successful fit. Separate concurrent `Transform` or `InverseTransform` calls use independent output matrices. **Input matrices must remain unchanged during each call**: inference scans each input twice and is not a snapshot transaction.
+
+### Q12.11. What happens if the training and inference dimensions differ?
+
+Fit requires at least one row and one column; `rows <= DDOF` is `ErrInsufficientSamples` after input finite checks. For inference the **column count must equal the fitted feature count** or `ErrShape` is returned. A `0×d` inference batch is legal when `d` matches training and returns a detached `0×d` dense matrix; a `0×d` *training* input yields `ErrEmptyInput`.
+
+The interface may carry a typed-nil matrix pointer. `stats` uses `matrix.ValidateNotNil`, relying on the `core.Nilable` convention for supported types. Custom pointer-backed Matrix types should provide `IsNil()`; reflection is not needed.
+
+### Q12.12. Why use `math.FMA` in `InverseTransform`?
+
+The intended inverse is `z*scale + trainingMean`. A separate product `z*scale` may overflow even when the final sum would be finite after cancellation with the mean. `math.FMA` performs the combined operation with one final rounding and can preserve that finite result.
+
+This is not a guarantee that every `InverseTransform(Transform(x))` is bit-identical to `x`. Fitted parameters and forward transformations are still rounded. True unrepresentable output values correctly produce `ErrOverflow`.
+
+### Q12.13. Which error wins if options, input data, and sample count are all wrong?
+
+Precedence is operation-specific. `Summarize` checks `ddof`, nil, and empty slice before scanning observations; data are scanned before `Summary` detects insufficient count. `FitStandardizer` checks options, matrix presence/shape, and empty extent before reading all training cells; finite checks precede sample-count sufficiency. A first encountered `Matrix.At` error can precede a nonfinite cell at a later coordinate.
+
+`Transform` and `InverseTransform` validate the model, input presence, and feature count, then check all input cells before computing output. On any error, no partial matrix is returned. Always branch with `errors.Is`; matrix-origin errors are preserved through wrapping. Consult the [complete precedence table](STATS.md#8-validation-order-and-sentinel-error-law).
+
+### Q12.14. Can I pass `series.TransformResult.Values` directly into `stats.Summarize`?
+
+Only if **every position you pass is a valid observation** under your chosen causal and timestamp policy. `series` deliberately stores zero placeholders in invalid warmup positions, with `Valid[i] == false`; a computed zero with `Valid[i] == true` is different. `stats` accepts finite numeric values and does not inspect `Valid` or timestamp gaps.
+
+Filter or segment the data explicitly. The same applies to `series.WindowRanges`: they are sample-index partitions, not a promise that a timestamp gap was repaired. See the [complete mask-aware usage scenario](STATS.md#12-complete-runnable-go-scenarios).
+
+### Q12.15. What do the `IsNil()` methods check?
+
+`(*stats.Summary).IsNil`, `(*stats.ScaleFitResult).IsNil`, and `(*stats.Standardizer).IsNil` implement `core.Nilable` by checking whether the receiver pointer itself is nil. They do **not** validate sample count, fitted state, or contents. A non-nil `&stats.Standardizer{}` is still unfitted; calling `Transform` on it returns `ErrNilInput`.
+
+### Q12.16. How should I test and benchmark the numeric contract?
+
+Use independent rational oracles on the exact original binary64 input values for large offsets, cancellation, subnormals, and true final overflow. Test `Update` and `Merge` error atomicity, `MaxUint64` count overflow, constant holdout deviations, input/result aliasing, 0-row inference, and concurrent inference on one model. Keep all tests in `package stats_test` and use `errors.Is`, not string parsing.
+
+Benchmark `Update`, `Merge`, `FitStandardizer`, and `Transform` as **separate** regimes; preparation belongs outside `b.N`. Include realistic feature dimensions and report toolchain, CPU, allocations, and actual workload shape. `Update`'s hot loop may avoid heap allocation, while final mean materialization and owning matrix outputs legitimately allocate.
+
+For derivations, runnable examples, data-flow diagrams, and file boundaries, read [`STATS.md`](STATS.md), [`stats/doc.go`](../stats/doc.go), and [`stats/example_test.go`](../stats/example_test.go).
+
+---
+
+## 13. PAA FAQ
+
+### Q13.1. When should I use `paa` instead of `series`, `stats`, or `dtw`?
+
+`series` validates the exact time grid and can produce complete sample-index windows or length-preserving causal features. `paa` **compresses** one finite, uniformly sampled scalar series to `w` equal-duration averages, preserving the entire step-function domain. `stats` calculates global moments and fitted feature scaling; `dtw` aligns sequences under a warping policy. None of them implicitly repairs gaps for another package.
+
+### Q13.2. What goes wrong with `floor(n/w)` or padding zeros?
+
+With `values=[0,2,4,6,8]`, `w=2`, the correct means are `[1.6,6.4]`; their exact rational boundaries are `[0/2,5/2)` and `[5/2,10/2)`. A floor-block implementation would lose the last sample or misassign the fractional middle cell. Padding would invent measurements. `paa.Transform` distributes each crossing sample according to the exact integer overlap of its source interval with each output cell.
+
+### Q13.3. Why are `Segment` coordinates rational and local to the selected window?
+
+The coordinates describe **sample-time positions**, not rounded index ranges or real timestamps. `Segment{LeftNumerator,RightNumerator,Denominator}` keeps `Denominator=w` unsimplified, so equality and indexing are deterministic even for fractional boundaries. `TransformRange(values,start,end,w)` delegates to `Transform(values[start:end],w)` and reports geometry relative to `start`; its `OriginalLength` is `end-start`.
+
+Do not add `start` to the numerator without multiplying it by the denominator. Absolute coordinates are `(start*w+numerator)/w`; check additional integer operations before using them on huge indices.
+
+### Q13.4. Should I use `Transform` or `Means`?
+
+Use `Transform` when original length, exact segment coordinates or downstream SAX distances matter. Use `Means` only when the consumer already knows the geometry and wants a caller-owned `[]float64` vector. `Means` projects `Result.Values` from the canonical implementation; its temporary `Segments` allocation is not removed. There are no optional modes that secretly change the math.
+
+### Q13.5. Can I safely call `TransformRange` with untrusted indices?
+
+Yes, it checks the half-open interval before forming a slice: nonpositive `w` produces `ErrInvalidOption` first; then come `ErrNilInput`, `ErrEmptyInput`, and only then invalid bounds (`start<0`, `start>=end`, `end>len(values)`) or excessive segment counts. Only values inside the accepted window are checked for `ErrNonFinite`. All failures return a nil result; classify through `errors.Is`.
+
+```go
+result, err := paa.TransformRange(samples, start, end, segments)
+if errors.Is(err, paa.ErrInvalidOption) {
+    // Reject malformed count or half-open indices before slicing.
+}
+_ = result
+```
+
+### Q13.6. Why does `[1e308,1e308]` not overflow? Is the mean only approximate?
+
+The kernel records the original finite IEEE-754 values as exact binary mantissas and integer overlap weights in two fixed-width sign accumulators. It cancels signs exactly, divides by `n`, then rounds **once** to nearest-even binary64. The mean stays in the convex hull of the contributing samples, even if a naive unscaled sum would overflow. At the subnormal/normal transition, both the quotient's discarded bits and its nonzero division remainder affect rounding. This is stronger than ordinary Kahan/Neumaier compensation.
+
+The exact real weighted-conservation identity holds mathematically; recomputing an integral from separately rounded output means may still introduce a small floating-point discrepancy. For testing, compare against independent exact `math/big.Rat` references rather than against overflow-prone test-side float sums.
+
+### Q13.7. Is `w=n` a view? Can I mutate results or call it concurrently?
+
+No view is published. `w=n` returns a detached **bit-preserving** identity, including `-0`. Both result slices are caller-owned, and one call retains no input. Calls on shared immutable inputs are safe concurrently; simultaneous caller mutation of the source is unsupported. Changing an earlier result must not change future calls.
+
+### Q13.8. Does PAA alone guarantee `LB_PAA <= DTW` or SAX `MINDIST` correctness?
+
+No. With matched series lengths and segment grids, Jensen's inequality gives a scaled Euclidean lower bound for exact PAA averages. SAX quantization and `MINDIST` need their own proof and compatible breakpoints; general DTW lower bounds depend on the precise warping/window constraints. Do not treat generic PAA compression as a certified DTW pruning rule.
+
+### Q13.9. How should I verify and benchmark it?
+
+Use external `package paa_test` tests, `errors.Is`, exact rational overlap oracles, bitwise rounding comparisons, fractional `n%w!=0` fixtures, and detached output checks. Benchmark global mean (`w=1`), small fixed `w`, identity (`w=n`), checked subranges and the `Means` projection separately. For the complete contract, examples, arithmetic proof and pitfalls, see [`PAA.md`](PAA.md), [`paa/doc.go`](../paa/doc.go) and [`paa/example_test.go`](../paa/example_test.go).
+
+---
+
+## 14. Builder and gridgraph tips
+
+### Q14.1. When should I use `builder`?
 
 Use `builder` when you need reproducible graph shapes for:
 
@@ -1322,7 +1638,7 @@ Use `builder` when you need reproducible graph shapes for:
 
 Builder-generated fixtures should encode meaningful topology, not hide arbitrary setup.
 
-### Q11.2. When should I use `gridgraph`?
+### Q14.2. When should I use `gridgraph`?
 
 Use `gridgraph` when your domain is naturally a lattice:
 
@@ -1334,7 +1650,7 @@ Use `gridgraph` when your domain is naturally a lattice:
 
 Do not manually wire large grids unless the example is specifically about low-level graph construction.
 
-### Q11.3. How should random fixtures be handled?
+### Q14.3. How should random fixtures be handled?
 
 Use fixed seeds and document the shape.
 
@@ -1354,21 +1670,21 @@ Reproducibility is part of the benchmark/test contract.
 
 ---
 
-## 12. Errors and diagnostics
+## 15. Errors and diagnostics
 
-### Q12.1. Why are error sentinels so important?
+### Q15.1. Why are error sentinels so important?
 
 They let callers branch safely while still preserving helpful context.
 
 ```go
 if errors.Is(err, matrix.ErrDimensionMismatch) {
-// stable protocol branch
+    // stable protocol branch
 }
 ```
 
 Error strings are for humans. They may change without changing the protocol.
 
-### Q12.2. How should wrapped errors behave?
+### Q15.2. How should wrapped errors behave?
 
 Wrapping should preserve sentinel identity.
 
@@ -1380,7 +1696,7 @@ return fmt.Errorf("build adjacency: %w", matrix.ErrUnknownVertex)
 
 If an adapter needs to expose both an algorithm-level error and an underlying root cause, it should preserve both through the package’s chosen wrapping/join strategy.
 
-### Q12.3. How do I debug a failing algorithm call?
+### Q15.3. How do I debug a failing algorithm call?
 
 Ask in this order:
 
@@ -1395,9 +1711,9 @@ Ask in this order:
 
 ---
 
-## 13. Determinism and concurrency
+## 16. Determinism and concurrency
 
-### Q13.1. What does “deterministic” mean in lvlath?
+### Q16.1. What does “deterministic” mean in lvlath?
 
 It means the observable result is stable for the same input state, options, and package version.
 
@@ -1409,27 +1725,27 @@ Examples:
 * Matrix adapters use stable vertex/edge order and fixed loop order.
 * Components are sorted according to their contract.
 
-### Q13.2. Does determinism mean every mathematically valid answer is identical across packages?
+### Q16.2. Does determinism mean every mathematically valid answer is identical across packages?
 
 No. It means each package publishes its own deterministic choice among valid answers. For example, one shortest path may be selected as a witness, not all possible shortest paths.
 
-### Q13.3. Is `core.Graph` safe for concurrency?
+### Q16.3. Is `core.Graph` safe for concurrency?
 
 `core` is designed with internal locking for graph storage and controlled mutations. Algorithm reproducibility still requires stable topology while an algorithm runs unless the package explicitly documents snapshot isolation.
 
-### Q13.4. Is `matrix.Dense` safe for concurrency?
+### Q16.4. Is `matrix.Dense` safe for concurrency?
 
 Concurrent read-only access is safe when no goroutine mutates the matrix. Concurrent writes or read/write races require external synchronization. Views share storage with their base matrix.
 
-### Q13.5. Is `stats.Standardizer` safe for concurrent inference?
+### Q16.5. Is `stats.Standardizer` safe for concurrent inference?
 
 Yes, once successfully fitted. Its parameter slices are private and immutable, and each `Transform` or `InverseTransform` allocates a detached output. Input matrices must remain unchanged during the entire call, including both read passes. `stats.Moments` is **not** safe for simultaneous updates/merges without external synchronization.
 
 ---
 
-## 14. Testing tips
+## 17. Testing tips
 
-### Q14.1. What should a good package test suite contain?
+### Q17.1. What should a good package test suite contain?
 
 At minimum:
 
@@ -1451,23 +1767,23 @@ error tests:
   errors.Is checks for every expected sentinel
 ```
 
-### Q14.2. Should tests use `testify`?
+### Q17.2. Should tests use `testify`?
 
 No. Use the standard library and package-specific helpers. This keeps failure messages precise and avoids dependency weight.
 
-### Q14.3. Should matrix tests use reflection or `reflect.DeepEqual`?
+### Q17.3. Should matrix tests use reflection or `reflect.DeepEqual`?
 
 No. The `matrix` codebase follows a zero-reflection policy, including external `matrix_test` tests and fixtures. Use explicit shape comparisons, `At`-based element checks, `math.Float64bits` for required bitwise symmetry/determinism, and magnitude-aware numerical oracles. Concrete `*Dense` fast paths use type assertions, not runtime reflection.
 
 Other packages may have their own testing policy, but reflection is never required to prove matrix contracts. Explicit failure messages are more useful than a generic structural-difference dump.
 
-### Q14.4. How should numeric tests compare floats?
+### Q17.4. How should numeric tests compare floats?
 
 Use tolerances for computations that can accumulate floating-point error.
 
 ```go
 if math.Abs(got-want) > tol {
-t.Fatalf("got %.12g, want %.12g", got, want)
+    t.Fatalf("got %.12g, want %.12g", got, want)
 }
 ```
 
@@ -1477,15 +1793,15 @@ For `stats`, compare the mean against an independent exact binary-input rational
 
 For `series`, compare integer timestamps, gap counts, index ranges, and Valid masks **exactly**. For return-value or log-transformation oracles, base high-precision reference calculations on the original binary64 input values, not rounded printed decimals; use justified magnitude-aware error budgets rather than making epsilon a validity policy.
 
-### Q14.5. How should tests handle map output?
+### Q17.5. How should tests handle map output?
 
 Do not print or compare maps through unstable iteration. Extract keys, sort them, then compare or print stable output.
 
-### Q14.6. How should cancellation be tested?
+### Q17.6. How should cancellation be tested?
 
 Use deterministic hooks or contexts. Avoid timeouts as the primary mechanism in examples or unit tests.
 
-### Q14.7. What is a regression anchor?
+### Q17.7. What is a regression anchor?
 
 A regression anchor is a test named after the bug or contract it protects.
 
@@ -1501,9 +1817,9 @@ A bug fix without a regression test is incomplete unless there is a clear reason
 
 ---
 
-## 15. Benchmark tips
+## 18. Benchmark tips
 
-### Q15.1. What should be inside the benchmark loop?
+### Q18.1. What should be inside the benchmark loop?
 
 Only the measured operation.
 
@@ -1514,10 +1830,10 @@ g := buildGraph(b)
 b.ReportAllocs()
 b.ResetTimer()
 for i := 0; i < b.N; i++ {
-_, err := runAlgorithm(g)
-if err != nil {
-b.Fatal(err)
-}
+    _, err := runAlgorithm(g)
+    if err != nil {
+        b.Fatal(err)
+    }
 }
 ```
 
@@ -1525,12 +1841,12 @@ Bad:
 
 ```go
 for i := 0; i < b.N; i++ {
-g := buildGraph(b) // measures setup, not just algorithm
-_, _ = runAlgorithm(g)
+    g := buildGraph(b) // measures setup, not just algorithm
+    _, _ = runAlgorithm(g)
 }
 ```
 
-### Q15.2. What is a benchmark regime?
+### Q18.2. What is a benchmark regime?
 
 A regime is the real shape or pressure you are measuring.
 
@@ -1548,21 +1864,21 @@ Examples:
 
 A benchmark name should reveal the regime.
 
-### Q15.3. Why must setup errors be checked in benchmarks?
+### Q18.3. Why must setup errors be checked in benchmarks?
 
 Because graph policy can reject edges. If setup silently fails, the benchmark may measure a smaller or different graph than intended.
 
 This is one of the easiest ways to produce meaningless performance numbers.
 
-### Q15.4. Should benchmarks use random data?
+### Q18.4. Should benchmarks use random data?
 
 Only with fixed seed and documented shape. Randomness without reproducibility is not acceptable for regression-sensitive performance work.
 
 ---
 
-## 16. Documentation tips
+## 19. Documentation tips
 
-### Q16.1. Which file should explain what?
+### Q19.1. Which file should explain what?
 
 | File                | Responsibility                                         |
 |:--------------------|:-------------------------------------------------------|
@@ -1575,7 +1891,7 @@ Only with fixed seed and documented shape. Randomness without reproducibility is
 | `example_test.go`   | Executable package examples with deterministic output. |
 | `CONTRIBUTING.md`   | Contribution workflow and quality gates.               |
 
-### Q16.2. What is documentation drift?
+### Q19.2. What is documentation drift?
 
 Documentation drift happens when docs, examples, tests, and code describe different behavior.
 
@@ -1589,7 +1905,7 @@ Common drift patterns:
 
 Fix drift immediately. Do not leave “almost correct” docs in place.
 
-### Q16.3. Should docs include formulas?
+### Q19.3. Should docs include formulas?
 
 Yes, when the formula explains real implemented semantics.
 
@@ -1605,7 +1921,7 @@ Good formulas:
 
 Bad formulas are decorative and should be removed.
 
-### Q16.4. Should docs include ASCII diagrams?
+### Q19.4. Should docs include ASCII diagrams?
 
 Yes, when they clarify topology, memory layout, residual flow, traversal order, or matrix encoding.
 
@@ -1613,7 +1929,7 @@ A good ASCII diagram should make the next paragraph easier to understand.
 
 ---
 
-## 17. Quick recipes
+## 20. Quick recipes
 
 ### Recipe A. Hop blast radius
 
@@ -1696,267 +2012,6 @@ Stream finite observations into one `stats.Moments` per completed partition. Mer
 ### Recipe J. Train-only scaling before multivariate DTW
 
 Fit `stats.FitStandardizer` on a stable training `matrix.Matrix` with explicit `ConstantPolicy`. Apply the **same immutable model** to both heldout matrices before `dtw.AlignMatrix`; never independently refit the candidate sequence. Preserve feature-column ordering and use `errors.Is` to classify failures.
-
----
-
-## 18. Series FAQ
-
-### Q18.1. Does `series.Validate` infer cadence from timestamps?
-
-No. `GridOptions{}` or `GridOptions{CadenceNS: 0}` validates strict order
-and representable positive timestamp differences only. It deliberately does
-**not** derive a frequency, reconstruct a calendar, or report missing slots.
-
-For positive `CadenceNS = c`, every adjacent interval `d` must satisfy
-`d > 0`, `d <= math.MaxInt64`, and `d % c == 0`. `AllowGaps` changes only
-what happens to **whole** missing slots; it cannot permit a nonmultiple.
-
-```text
-[0, 10, 20], cadence 0  -> order-only success
-[0, 10, 20], cadence 10 -> exact-grid success
-[0, 10, 30], cadence 10 -> one gap if AllowGaps=true
-[0, 10, 25], cadence 10 -> ErrGap even if AllowGaps=true
-```
-
-### Q18.2. Does a reported `Gap` insert a missing observation?
-
-No. `Gap{AfterIndex: i, MissingCount: m}` reports `m` absent lattice
-slots between supplied observations `i` and `i+1`. The returned
-`ValidationResult.Samples` counts **only supplied pairs**, and the original
-`[]float64` remains unchanged. `ValidationResult.Gaps` is a detached,
-non-nil slice on success, even when empty.
-
-If a model requires uninterrupted sampling, use `AllowGaps: false` or handle
-reported gaps explicitly before calling it. Calling `Lag` or `SimpleReturns`
-on the original array uses adjacent **supplied indices**, including pairs
-separated by a timestamp gap.
-
-### Q18.3. Why is a returned zero insufficient to tell whether a result exists?
-
-All transforms preserve input length. Positions lacking history contain
-`Values[i] == 0` and `Valid[i] == false`; valid computations can also
-legitimately produce zero. These cases are different:
-
-```text
-values = [2, 2, 4]
-Difference(values, 1)
-  Values = [0, 0, 2]
-  Valid  = [false, true, true]
-              ^
-         valid zero difference
-```
-
-Keep the two result slices together. A mask is not a NaN fill, a timestamp
-gap report, or a reason to mutate observations. Both slices are detached
-from caller input.
-
-### Q18.4. How do the domains of simple and log returns differ?
-
-`SimpleReturns` computes the adjacent relative change
-`x[i]/x[i-1] - 1`, requiring only **used previous denominators** to be
-nonzero. Negative finite values are allowed mathematically; a zero in the
-last position is permitted because no successor uses it as a denominator.
-A singleton zero is also accepted and produces one invalid warmup cell.
-
-`LogReturns` computes `ln(x[i]) - ln(x[i-1])` and requires **all** input
-values to be strictly positive, even for a singleton. It therefore rejects
-zero, negative zero, and negative observations with `ErrDomain`.
-Both operations reject NaN and infinity with `ErrNonFinite` before domain
-checks and return nil results on errors.
-
-### Q18.5. Why does `LogReturns` not compute `math.Log(curr/prev)`?
-
-The intermediate ratio can overflow or underflow when both operands are
-valid, finite, strictly positive `float64` values. For `prev=1e-300` and
-`curr=1e300`, the ratio overflows but the correct log difference is finite.
-
-`LogReturns` uses the difference of logarithms for distant positive pairs,
-and a stable `math.Log1p` relative-change path for nearby values. The latter
-also avoids losing a very small nonzero change when two separately rounded
-logarithms would be equal. This improves numerical behavior without claiming
-exact real-number arithmetic or introducing an epsilon validity threshold.
-
-### Q18.6. What errors should I expect, and which one takes precedence?
-
-`series` owns `ErrInvalidOption`, `ErrNilInput`, `ErrEmptyInput`,
-`ErrShape`, `ErrNonFinite`, `ErrOrder`, `ErrGap`, `ErrDomain`, and
-`ErrOverflow`. Classify through `errors.Is`.
-
-`Validate` checks options first, then nil inputs, mismatched lengths,
-equally empty inputs, and **all** nonfinite observations before walking
-consecutive timestamps. Timestamp pairs are then checked in index order:
-strict order, signed delta representability, exact cadence, and gap policy.
-
-For `Lag`/`Difference`, lag validation precedes nil/empty/finite checks.
-`SimpleReturns` checks all denominators before computing any pair;
-`LogReturns` checks the entire positive domain first. Hence a domain error
-takes precedence over an arithmetic overflow elsewhere in that call.
-There is no error-producing partial result or silent fallback.
-
-### Q18.7. What does `ErrOverflow` mean when all inputs are finite?
-
-It can describe an unrepresentable **result** rather than invalid input:
-
-* Signed timestamps `math.MinInt64 -> 0` are ordered, but their difference
-  exceeds `math.MaxInt64` nanoseconds.
-* A finite difference such as `math.MaxFloat64 - (-math.MaxFloat64)`
-  overflows float64.
-* Extreme simple returns can overflow division from a small nonzero base.
-* `WindowRanges` can count a mathematically valid number of windows whose
-  required `[]Range` byte size is not representable as a Go `int`.
-
-This does not mean `series` guarantees that all representable allocations
-will succeed under an operating-system memory limit. It checks arithmetic,
-not available RAM.
-
-### Q18.8. Are these operations causal and safe to call concurrently?
-
-Each transform at index `i` reads only elements at indices at most `i`,
-so appending future observations cannot change a successful output prefix
-**when both original and extended calls succeed**. For example, appending
-after a final zero can make a subsequent `SimpleReturns` fail because that
-zero becomes a denominator; the package then publishes no partial result.
-
-Independent calls can use the same input concurrently **if the caller never
-mutates it during those calls**. Returned gap, values, mask, and range
-slices are caller-owned, detached memory. Concurrent writes to the same
-result must be externally synchronized. There is no mutable streaming
-accumulator or implicit snapshot isolation.
-
-### Q18.9. Are `WindowRanges` outputs durations or sample positions?
-
-Sample positions only. `WindowRanges(8,3,2)` yields `[0,3)`, `[2,5)`,
-`[4,7)`, all complete and half-open; there is no trailing partial range.
-`WindowRanges(0,3,1)` returns a **non-nil empty** slice. Stride larger
-than width is valid and emits separated windows. To interpret indices in
-clock time, the application must separately inspect or validate timestamps.
-
-### Q18.10. Can I pipe the output directly into DTW, statistics, or a model?
-
-Only after checking domain requirements of the downstream consumer.
-`series` has no dependency on `dtw` or `matrix` and does not build a model.
-If a transform has warmup cells, a downstream algorithm must not consume
-those zero placeholders as genuine data. Likewise, a grid validated with
-`AllowGaps: true` is not automatically a uniformly sampled sequence.
-
-For the full proofs, numeric examples, error tables, and tested workflows,
-read [`SERIES.md`](SERIES.md), [`series/doc.go`](../series/doc.go), and
-[`series/example_test.go`](../series/example_test.go).
-
----
-
-## 19. Stats FAQ
-
-### Q19.1. When should I use `stats` instead of statistics already present in `matrix`?
-
-Use `stats` for **stable scalar streaming moments**, **mergeable partitions**, and **a fitted standardizer reused on heldout data**. `matrix` remains responsible for dense storage, graph adapters, covariance/correlation and its own documented algebraic transformations. A matrix normalization routine that computes parameters on its current input is not necessarily an immutable train-only preprocessing model.
-
-```text
-Need an ordered scalar batch mean/variance?    -> stats.Summarize
-Need ongoing or partitioned scalar reduction?  -> stats.Moments
-Need frozen per-column training scaling?       -> stats.FitStandardizer
-Need covariance or matrix algebra?             -> matrix
-Need timestamp cadence / Valid masks?         -> series
-Need timing alignment, not scaling?            -> dtw
-```
-
-The packages complement one another. `stats` imports `matrix` and the `core.Nilable` contract; `matrix` does not import `stats`.
-
-### Q19.2. Why not compute variance as `mean(x*x) - mean(x)*mean(x)`?
-
-That identity is exact in real arithmetic but numerically unstable for high-offset, low-spread data. The two terms can become equal after binary64 rounding, and their difference becomes zero even when the true variance is positive.
-
-`stats` uses Welford updates and Chan merges, both based on centered residuals. The `M2` state has a compensated significand and independent exponent, so large intermediate squares do not require a `float64` representation. The final mean is calculated separately from an exact binary-input sum; **variance remains an approximate floating-point quantity**.
-
-For `[1e12+1, 1e12+2, 1e12+3]`, sample variance (`ddof=1`) is 1. See [the Welford/Chan derivations](STATS.md#4-mathematics-welford-and-chan).
-
-### Q19.3. Can `Summary` succeed when the internal `M2` is larger than `math.MaxFloat64`?
-
-Yes. With `[-1e154,0,1e154]`, the unnormalized `M2` is around `2e308`, but after dividing by `3-1` the sample variance is around `1e308`, which is representable. `Summary` keeps the moment scaled until the division.
-
-**Do not confuse avoidable intermediate overflow with final overflow.** If the requested published variance itself cannot be represented as finite binary64, `ErrOverflow` is the correct result. `Update`/`Merge` are not required to reject an intermediate scaled `M2` just because a plain float64 representation would overflow.
-
-### Q19.4. Is the mean exact? Is the variance exact?
-
-The mean is rounded once from the exact sum of the original finite binary64 observations, divided by their exact count. This is stronger than simply compensating an ordinary `float64` sum. For `[1e154,1,-1e154]`, the correct mean rounds from `1/3` instead of disappearing to zero.
-
-Variance uses compensated scaled Welford/Chan arithmetic. It is *not* an arbitrary-precision rational central moment; output error depends on the input magnitudes and update/merge grouping. Independent `big.Rat`-based test oracles help establish practical accuracy on adversarial inputs, but they do not constitute a universal error theorem.
-
-### Q19.5. How should I choose between `ddof=0` and `ddof=1`?
-
-`ddof=0` divides the unnormalized central moment by `n` (population variance). `ddof=1` divides by `n-1` (sample variance) and requires at least two samples. The package does not infer which statistical interpretation fits your domain.
-
-Call `stats.SummarizePopulation(values)` for the first convention or
-`stats.SummarizeSample(values)` for the second. Both wrappers select the
-corresponding fixed `ddof` and delegate to the same Welford kernel.
-
-`Summary` rejects a count no larger than `ddof` with `ErrInsufficientSamples`. An unsupported `ddof` produces `ErrInvalidOption` before even inspecting a nil slice or nil receiver.
-
-### Q19.6. Are `Moments.Update` and `Moments.Merge` safe to call concurrently?
-
-Not on the same accumulator. They are **transactional on a returned error**, not synchronized mutators. Use one `Moments` per goroutine, finish all updates, then merge in a fixed order after the workers stop. Do not mutate the source during `Merge`.
-
-An empty source is a no-op. Merging into an empty destination copies the source's complete state by value. `m.Merge(m)` is rejected with `ErrInvalidOption`, even for an empty receiver. Count overflow is checked before the merge and leaves both states unchanged.
-
-### Q19.7. Can changing the order of partitions change the answer?
-
-For the *exact binary sum* used by the final mean, partition grouping does not lose the original input bits. But the compensated floating-point `M2` is not bitwise associative; different update or merge trees can produce slightly different variance approximations.
-
-Keep partition contents, in-partition order, and merge-tree order deterministic if you need reproducible results. Do not force bit-for-bit variance equality between independent groupings unless the specific dataset warrants it.
-
-### Q19.8. Why does `FitStandardizer` reject a constant column by default?
-
-`ScaleOptions{}` means `DDOF=0` and `ConstantPolicy=RejectConstant`. A zero internal `M2` yields `ErrZeroVariance`; division by a fitted scale of zero is undefined.
-
-If retaining the feature is intentional, use `stats.UnitScaleConstant`. The fit then preserves its training mean, assigns scale exactly one, and marks `Constant[j]=true`. For training `[5,5,5]` and heldout `[7]`, the standardized value is **2**, not forced zero. An epsilon such as `1e-5` is *not* used to declare features constant.
-
-### Q19.9. Why can `Summary.Variance` be zero while a training feature is not constant?
-
-A positive but very small variance can underflow when it is converted to the public `float64` field. The fitter does **not** classify a feature by that rounded field. Instead it checks its scaled internal `M2` for zero and computes the standard deviation in the scaled domain.
-
-This matters twice: a tiny positive variance should not be relabeled constant, and a variance greater than `MaxFloat64` can still have a finite square root that is a valid fitted scale. Do not compute fitting parameters by first calling `Summary()` and then taking `math.Sqrt` of the public variance.
-
-### Q19.10. Can I reuse a `Standardizer` on test data or across goroutines?
-
-Yes: that is the intended inference model. Fit only on training rows, persist your application-level feature order and split provenance, and call `fit.Model.Transform(heldout)` without refitting.
-
-The model's private means/scales are immutable after successful fit. Separate concurrent `Transform` or `InverseTransform` calls use independent output matrices. **Input matrices must remain unchanged during each call**: inference scans each input twice and is not a snapshot transaction.
-
-### Q19.11. What happens if the training and inference dimensions differ?
-
-Fit requires at least one row and one column; `rows <= DDOF` is `ErrInsufficientSamples` after input finite checks. For inference the **column count must equal the fitted feature count** or `ErrShape` is returned. A `0×d` inference batch is legal when `d` matches training and returns a detached `0×d` dense matrix; a `0×d` *training* input yields `ErrEmptyInput`.
-
-The interface may carry a typed-nil matrix pointer. `stats` uses `matrix.ValidateNotNil`, relying on the `core.Nilable` convention for supported types. Custom pointer-backed Matrix types should provide `IsNil()`; reflection is not needed.
-
-### Q19.12. Why use `math.FMA` in `InverseTransform`?
-
-The intended inverse is `z*scale + trainingMean`. A separate product `z*scale` may overflow even when the final sum would be finite after cancellation with the mean. `math.FMA` performs the combined operation with one final rounding and can preserve that finite result.
-
-This is not a guarantee that every `InverseTransform(Transform(x))` is bit-identical to `x`. Fitted parameters and forward transformations are still rounded. True unrepresentable output values correctly produce `ErrOverflow`.
-
-### Q19.13. Which error wins if options, input data, and sample count are all wrong?
-
-Precedence is operation-specific. `Summarize` checks `ddof`, nil, and empty slice before scanning observations; data are scanned before `Summary` detects insufficient count. `FitStandardizer` checks options, matrix presence/shape, and empty extent before reading all training cells; finite checks precede sample-count sufficiency. A first encountered `Matrix.At` error can precede a nonfinite cell at a later coordinate.
-
-`Transform` and `InverseTransform` validate the model, input presence, and feature count, then check all input cells before computing output. On any error, no partial matrix is returned. Always branch with `errors.Is`; matrix-origin errors are preserved through wrapping. Consult the [complete precedence table](STATS.md#8-validation-order-and-sentinel-error-law).
-
-### Q19.14. Can I pass `series.TransformResult.Values` directly into `stats.Summarize`?
-
-Only if **every position you pass is a valid observation** under your chosen causal and timestamp policy. `series` deliberately stores zero placeholders in invalid warmup positions, with `Valid[i] == false`; a computed zero with `Valid[i] == true` is different. `stats` accepts finite numeric values and does not inspect `Valid` or timestamp gaps.
-
-Filter or segment the data explicitly. The same applies to `series.WindowRanges`: they are sample-index partitions, not a promise that a timestamp gap was repaired. See the [complete mask-aware usage scenario](STATS.md#12-complete-runnable-go-scenarios).
-
-### Q19.15. What do the `IsNil()` methods check?
-
-`(*stats.Summary).IsNil`, `(*stats.ScaleFitResult).IsNil`, and `(*stats.Standardizer).IsNil` implement `core.Nilable` by checking whether the receiver pointer itself is nil. They do **not** validate sample count, fitted state, or contents. A non-nil `&stats.Standardizer{}` is still unfitted; calling `Transform` on it returns `ErrNilInput`.
-
-### Q19.16. How should I test and benchmark the numeric contract?
-
-Use independent rational oracles on the exact original binary64 input values for large offsets, cancellation, subnormals, and true final overflow. Test `Update` and `Merge` error atomicity, `MaxUint64` count overflow, constant holdout deviations, input/result aliasing, 0-row inference, and concurrent inference on one model. Keep all tests in `package stats_test` and use `errors.Is`, not string parsing.
-
-Benchmark `Update`, `Merge`, `FitStandardizer`, and `Transform` as **separate** regimes; preparation belongs outside `b.N`. Include realistic feature dimensions and report toolchain, CPU, allocations, and actual workload shape. `Update`'s hot loop may avoid heap allocation, while final mean materialization and owning matrix outputs legitimately allocate.
-
-For derivations, runnable examples, data-flow diagrams, and file boundaries, read [`STATS.md`](STATS.md), [`stats/doc.go`](../stats/doc.go), and [`stats/example_test.go`](../stats/example_test.go).
 
 ---
 

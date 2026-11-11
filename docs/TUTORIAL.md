@@ -44,6 +44,8 @@ This tutorial is the beginning of the learning path. It introduces the objects a
 9. [Graph-to-Matrix Example: Incident Routing, Closure, and Spectral-Ready Data](#9-graph-to-matrix-example-incident-routing-closure-and-spectral-ready-data)
 10. [Series Foundations: Exact Grids and Causal Features](#10-series-foundations-exact-grids-and-causal-features)
 11. [Stats Foundations: Stable Moments and Fitted Scaling](#11-stats-foundations-stable-moments-and-fitted-scaling)
+
+    11a. [PAA Foundations: Fractional Dimensionality Reduction](#11a-paa-foundations-fractional-dimensionality-reduction)
 12. [Algorithm Selection Guide](#12-algorithm-selection-guide)
 13. [Professional Best Practices](#13-professional-best-practices)
 14. [Where To Go Next](#14-where-to-go-next)
@@ -72,6 +74,7 @@ The library covers:
 * `dtw` deterministic Dynamic Time Warping, bounded outcomes, and globally exact fixed-length squared-DTW top-K window search;
 * `series` exact integer-nanosecond grid validation, causal lag/difference/returns, and complete index windows;
 * `stats` stable Welford/Chan moments, mergeable partitions, and immutable fitted feature standardization;
+* `paa` exact fractional time-series compression, rational segment boundaries and value-only feature projection;
 * `tsp` matrix-backed tour optimization with exact, approximate, matching, and local-search regimes;
 * `gridgraph` generated lattice topology;
 * `builder` deterministic fixtures for examples, tests, and benchmarks.
@@ -94,6 +97,7 @@ causal sample transform    *series.TransformResult     detached Values + Valid m
 timestamp-grid inspection  *series.ValidationResult    exact cadence / missing slots
 streaming statistics      *stats.Summary               exact-binary-input mean / scaled variance
 train-only scaling        *stats.ScaleFitResult        detached fit metadata / immutable model
+fractional PAA             *paa.Result                 detached means / exact rational segments
 closed tour                *tsp.Result                 cost, exactness, timeout, ratio
 ```
 
@@ -162,6 +166,7 @@ Read these files as a learning path. `doc.go` files define implemented package c
 | 6    | [`FLOW.md`](FLOW.md)                       | Capacity networks, residual graph state, Ford-Fulkerson, Edmonds-Karp, Dinic.                                               |
 | 7    | [`MATRICES.md`](MATRICES.md)               | Dense storage, graph adapters, zero-weight policy, metric closure, statistics, numeric sanitation.                          |
 | 8    | [`SERIES.md`](SERIES.md)                   | Exact signed-nanosecond grids, causal arrays, masks, overflow, and index windows.                                           |
+| 8b   | [`PAA.md`](PAA.md)                         | Exact fractional segment geometry, nearest-even floating arithmetic, wrappers, and SAX-oriented ownership.                  |
 | 8a   | [`STATS.md`](STATS.md)                     | Welford/Chan moments, exact binary-input mean, scaled variance, immutable fitted scaling and error laws.                    |
 | 9    | [`DTW.md`](DTW.md)                         | `Align`, `AlignCostMatrix`, `AlignMatrix`, `AlignBounded`, exact `Search`, numeric and path artifacts.                      |
 | 9a   | [`DTW_SEARCH.md`](DTW_SEARCH.md)           | Fixed-length exact top-K, certified LB_Keogh, workers, budgets, and partial-result law.                                     |
@@ -181,6 +186,7 @@ Working on optimization:
   DIJKSTRA -> MST -> FLOW -> TSP
 
 Working on numeric/time-series workflows:
+  SERIES -> PAA -> SAX (a separate consumer)
   SERIES -> STATS -> DTW -> MATRICES
   MATRICES -> STATS -> DTW
   MATRICES -> TSP
@@ -475,10 +481,10 @@ Depth 0:   incident
               │
 Depth 1:   gateway
            /      \
-Depth 2: auth     api
-          │        │
+Depth 2: auth      api
+          │         │
 Depth 3: profile  search
-          │        │
+          │         │
 Depth 4: db       index
           │       /    \
 Depth 5: backup  cache  profile(already discovered earlier)
@@ -1195,12 +1201,12 @@ A common data pipeline has three distinct mathematical stages:
         |                             |
         v                             v
   stats.Moments                 matrix.Matrix
-  Update / Merge               rows=samples
+ Update / Merge                 rows=samples
         |                       cols=features
         v                             |
-  Summary(ddof)                        v
-                             FitStandardizer(training)
-                                       |
+  Summary(ddof)                       v
+                           FitStandardizer(training)
+                                      |
                                immutable Model
                               /              \
                        heldout matrix    production batch
@@ -1328,22 +1334,74 @@ What this demonstrates:
 
 ### 11.4. The error and numeric boundary
 
-| Situation | Contract |
-|:--|:--|
-| `NaN` or `±Inf` input | `stats.ErrNonFinite`, not a successful infinite statistic |
-| Nil slice, receiver, or supported typed-nil matrix | `stats.ErrNilInput` |
-| Empty non-nil scalar batch or zero-extent training matrix | `stats.ErrEmptyInput` |
-| Invalid `ddof` or constant policy | `stats.ErrInvalidOption` before inspecting data |
-| `n <= ddof` | `stats.ErrInsufficientSamples` |
-| Constant training feature with default policy | `stats.ErrZeroVariance` |
-| Count overflow or unrepresentable *final* result | `stats.ErrOverflow` |
-| Inference column count differs from training | `stats.ErrShape` |
+| Situation                                                 | Contract                                                  |
+|:----------------------------------------------------------|:----------------------------------------------------------|
+| `NaN` or `±Inf` input                                     | `stats.ErrNonFinite`, not a successful infinite statistic |
+| Nil slice, receiver, or supported typed-nil matrix        | `stats.ErrNilInput`                                       |
+| Empty non-nil scalar batch or zero-extent training matrix | `stats.ErrEmptyInput`                                     |
+| Invalid `ddof` or constant policy                         | `stats.ErrInvalidOption` before inspecting data           |
+| `n <= ddof`                                               | `stats.ErrInsufficientSamples`                            |
+| Constant training feature with default policy             | `stats.ErrZeroVariance`                                   |
+| Count overflow or unrepresentable *final* result          | `stats.ErrOverflow`                                       |
+| Inference column count differs from training              | `stats.ErrShape`                                          |
 
 `Summary` divides extended-range `M2` before converting variance to `float64`. `FitStandardizer` takes the square root in the scaled domain. An intermediate `M2` or unsquared variance greater than `MaxFloat64` does not automatically make a representable summary or scale invalid. Conversely, a strictly positive but tiny variance may round to zero when published; fitted constancy is evaluated from internal `M2`, not from the rounded summary or an arbitrary epsilon.
 
 **Concurrency and ownership:** `Moments` mutation is not goroutine-safe. Fitted `Standardizer` inference is safe for simultaneous calls as long as callers keep their input matrices unchanged throughout each call; the model does not snapshot them, and inference scans inputs twice. All returned output matrices are detached.
 
 For detailed derivations, ASCII diagrams, independent-oracle tests, and end-to-end scenarios, continue to [`STATS.md`](STATS.md), [`stats/doc.go`](../stats/doc.go), and [`stats/example_test.go`](../stats/example_test.go).
+
+---
+
+## 11a. PAA Foundations: Fractional Dimensionality Reduction
+
+`paa` compresses a uniformly sampled scalar sequence to `w` equal-duration cells **without dropping the non-divisible tail**. It is distinct from `series`: the latter validates timestamps and creates masks/ranges; PAA assumes the caller has already chosen a valid, uniformly sampled window. It is also distinct from `stats`: each output value is a spatially localized weighted average, not a single global batch statistic.
+
+### Exact fractional overlap (not floor blocks)
+
+Treat the input as a step function: observation `i` lives on `[i,i+1)`. The `j`th output cell lives on `[j*n/w,(j+1)*n/w)` and includes contributions weighted by each input interval's actual overlap.
+
+```text
+n = 5, w = 2
+
+source index      0       1       2       3       4
+source value      0       2       4       6       8
+sample cells    |---0---|---2---|---4---|---6---|---8---|
+                        exact split at t=2.5
+PAA cells     |--------1.6--------|--------6.4--------|
+                              ^
+                          t = 2.5
+local ranges  [0/2,5/2)            [5/2,10/2)
+```
+
+```go
+package main
+
+import (
+	"fmt"
+
+	"github.com/lvlath/go/paa"
+)
+
+func main() {
+	observations := []float64{99, 0, 2, 4, 6, 8, 99}
+	result, err := paa.TransformRange(observations, 1, 6, 2)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Printf("window=%d PAA=%.1f,%.1f boundary=%d/%d\n",
+		result.OriginalLength, result.Values[0], result.Values[1],
+		result.Segments[0].RightNumerator, result.Segments[0].Denominator)
+	// Output: window=5 PAA=1.6,6.4 boundary=5/2
+}
+```
+
+`TransformRange` validates `[start,end)` before slicing and publishes **local** coordinates measured from `start`. For a window that is already safe to index, `Transform(values[start:end],w)` is equivalent. `Means(values,w)` returns only detached means and discards the geometry; use the full `Result` whenever SAX segment boundaries or lower-bound scaling matter.
+
+`n/w` is never rounded to an integer block length. An exact fixed-point weighted sum rounds only once at the end of each cell, which keeps large signed inputs finite when their convex average is representable. `w=n` gives a detached bit-preserving identity. Nil, empty, nonfinite and invalid segment count are distinct failures classified through `errors.Is`; all failures return a nil result.
+
+**What this does not prove:** a general `LB_PAA <= DTW` bound. SAX's Euclidean lower-bound construction needs common input lengths, common segmentation and a separate quantization proof. See [`PAA.md`](PAA.md) and [`paa/example_test.go`](../paa/example_test.go) for the full mathematical contract and executable regimes.
 
 ---
 
@@ -1373,28 +1431,29 @@ For detailed derivations, ASCII diagrams, independent-oracle tests, and end-to-e
 
 ### If the input is numeric data
 
-| Problem                                    | Package                                 | Main output                                                      |
-|:-------------------------------------------|:----------------------------------------|:-----------------------------------------------------------------|
-| Dense algebra                              | `matrix`                                | matrix result with shape/error policy.                           |
-| Stable mean and population/sample variance | `stats.Summarize`                       | detached `Summary`, exact binary-input mean and scaled variance. |
-| Streaming/partitioned moments              | `stats.Moments`                         | error-atomic Welford updates and Chan merges.                    |
-| Training-only feature scaling              | `stats.FitStandardizer`                 | immutable model and detached fit metadata.                       |
-| Numeric cleaning                           | `matrix`                                | sanitized matrix.                                                |
-| Matrix-native normalization                | `matrix`                                | matrix-specific transforms under their own contract.             |
-| Covariance/correlation                     | `matrix`                                | stable sample moments and direct Pearson coefficients.           |
-| Square linear solve with pivoting          | `matrix.FactorLU`                       | reusable factor, `P*A=L*U`, exact residual diagnostics.          |
-| Tall full-column-rank least squares        | `matrix.SolveLeastSquares` / `FactorQR` | Householder QR; numerical rank and `kappa_1(R)` measurement.     |
-| Symmetric positive-definite system         | `matrix.FactorCholesky`                 | accepted symmetric midpoint, SPD check, reusable solves.         |
-| Symmetric spectral analysis                | `matrix`                                | eigenvalues/eigenvectors.                                        |
-| Exact nanosecond cadence checks            | `series.Validate`                       | sample count + ordered gap metadata.                             |
-| Causal lag/difference/returns              | `series`                                | length-preserving values + validity mask.                        |
-| Complete fixed index windows               | `series.WindowRanges`                   | ordered half-open sample-index intervals.                        |
-| Scalar sequence alignment                  | `dtw.Align`                             | DTW `Result` with distance/reachability.                         |
-| Inclusive-limit scalar alignment           | `dtw.AlignBounded`                      | Exact/above-limit/unreachable status.                            |
-| Globally exact window top-K                | `dtw.Search`                            | Sorted fixed-length squared-DTW matches.                         |
-| Precomputed local-cost alignment           | `dtw.AlignCostMatrix`                   | DTW over caller-owned finite cost surface.                       |
-| Multivariate time-series alignment         | `dtw.AlignMatrix`                       | squared-L2 row-cost alignment result.                            |
-| Complete route matrix optimization         | `tsp.SolveMatrix`                       | tour, cost, exactness/timeout/ratio metadata.                    |
+| Problem                                      | Package                                  | Main output                                                           |
+|:---------------------------------------------|:-----------------------------------------|:----------------------------------------------------------------------|
+| Dense algebra                                | `matrix`                                 | matrix result with shape/error policy.                                |
+| Stable mean and population/sample variance   | `stats.Summarize`                        | detached `Summary`, exact binary-input mean and scaled variance.      |
+| Streaming/partitioned moments                | `stats.Moments`                          | error-atomic Welford updates and Chan merges.                         |
+| Training-only feature scaling                | `stats.FitStandardizer`                  | immutable model and detached fit metadata.                            |
+| Numeric cleaning                             | `matrix`                                 | sanitized matrix.                                                     |
+| Matrix-native normalization                  | `matrix`                                 | matrix-specific transforms under their own contract.                  |
+| Covariance/correlation                       | `matrix`                                 | stable sample moments and direct Pearson coefficients.                |
+| Square linear solve with pivoting            | `matrix.FactorLU`                        | reusable factor, `P*A=L*U`, exact residual diagnostics.               |
+| Tall full-column-rank least squares          | `matrix.SolveLeastSquares` / `FactorQR`  | Householder QR; numerical rank and `kappa_1(R)` measurement.          |
+| Symmetric positive-definite system           | `matrix.FactorCholesky`                  | accepted symmetric midpoint, SPD check, reusable solves.              |
+| Symmetric spectral analysis                  | `matrix`                                 | eigenvalues/eigenvectors.                                             |
+| Exact nanosecond cadence checks              | `series.Validate`                        | sample count + ordered gap metadata.                                  |
+| Causal lag/difference/returns                | `series`                                 | length-preserving values + validity mask.                             |
+| Fractional equal-duration scalar compression | `paa.Transform` / `paa.TransformRange`   | Detached PAA means, exact rational intervals, original window length. |
+| Complete fixed index windows                 | `series.WindowRanges`                    | ordered half-open sample-index intervals.                             |
+| Scalar sequence alignment                    | `dtw.Align`                              | DTW `Result` with distance/reachability.                              |
+| Inclusive-limit scalar alignment             | `dtw.AlignBounded`                       | Exact/above-limit/unreachable status.                                 |
+| Globally exact window top-K                  | `dtw.Search`                             | Sorted fixed-length squared-DTW matches.                              |
+| Precomputed local-cost alignment             | `dtw.AlignCostMatrix`                    | DTW over caller-owned finite cost surface.                            |
+| Multivariate time-series alignment           | `dtw.AlignMatrix`                        | squared-L2 row-cost alignment result.                                 |
+| Complete route matrix optimization           | `tsp.SolveMatrix`                        | tour, cost, exactness/timeout/ratio metadata.                         |
 
 ### If the goal is documentation or testing
 
@@ -1529,7 +1588,7 @@ Use this tutorial as the entry point, then move into package-specific material:
 
 > If you are doing sequence comparison:
 >
->   [`SERIES.md`](SERIES.md) -> [`STATS.md`](STATS.md) -> [`DTW.md`](DTW.md) -> [`DTW_SEARCH.md`](DTW_SEARCH.md)
+>   [`SERIES.md`](SERIES.md) -> [`PAA.md`](PAA.md) -> [`STATS.md`](STATS.md) -> [`DTW.md`](DTW.md) -> [`DTW_SEARCH.md`](DTW_SEARCH.md)
 
 > If you are contributing:
 >

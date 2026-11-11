@@ -63,6 +63,7 @@ It is built for people who need algorithmic tools they can explain in a code rev
 * weighted routing keeps `+Inf`, unknown targets, disabled path tracking, and unreachable targets separate;
 * `matrix` turns topology into dense numeric objects without erasing zero-weight or metric-closure semantics, and provides stable covariance plus reusable pivoted linear-system solvers;
 * `series` checks exact timestamp grids and exposes mask-aware causal transformations without interpolation;
+* `paa` compresses every sample of a finite series into exact fractional equal-duration averages, without dropped tails or padding;
 * `stats` provides scaled Welford/Chan moments and immutable training-only feature standardization without refit;
 * flow, MST, TSP, DTW, grid, and builder packages extend the same discipline into optimization, alignment, fixtures, and examples.
 
@@ -158,6 +159,7 @@ lvlath/
 ├── flow/                  # Ford-Fulkerson, Edmonds-Karp, Dinic
 ├── dtw/                   # temporal alignment, bounded outcomes and exact window search
 ├── series/                # exact timestamp grids, causal transforms, complete index windows
+├── paa/                   # fractional PAA, exact rational geometry, detached averages
 ├── stats/                 # scaled Welford/Chan moments and immutable fitted scaling
 ├── gridgraph/             # 2D lattice graph generation
 ├── matrix/                # dense graph algebra, stable statistics, pivoted factors and solves
@@ -248,23 +250,30 @@ lvlath/docs/{PACKAGE}.md
                                              │ multivariate sequences  │
                                              └─────────────────────────┘
 
-                           ┌────────────────────────────────────────────┐
-                           │ series                                     │
-                           │ exact grids / causal masks / index ranges  │
-                           │ standard library only; no graph dependency │
-                           └────────────────────────────────────────────┘
+                                   ┌────────────────────────────────────────────┐
+                                   │ series                                     │
+                                   │ exact grids / causal masks / index ranges  │
+                                   │ standard library; no graph dependencies    │
+                                   └────────────────────────────────────────────┘
 
-                           ┌────────────────────────────────────────────┐
-                           │ stats                                      │
-                           │ stable Welford/Chan moments, fitted scaling│
-                           │ matrix.Matrix input, immutable inference   │
-                           └────────────────────────────────────────────┘
+                                   ┌────────────────────────────────────────────┐
+                                   │ paa                                        │
+                                   │ rational fractional boundaries / means     │
+                                   │ standard library; no graph dependencies    │
+                                   └────────────────────────────────────────────┘
+
+                                   ┌────────────────────────────────────────────┐
+                                   │ stats                                      │
+                                   │ stable Welford/Chan moments, fitted scaling│
+                                   │ matrix.Matrix input, immutable inference   │
+                                   └────────────────────────────────────────────┘
 
 Composition rule:
   core owns topology.
   matrix owns dense graph/numeric artifacts.
   dtw owns temporal alignment artifacts.
   series owns exact-grid validation and causal array artifacts.
+  paa owns fractional step-function compression and exact rational boundaries.
   stats owns stable scalar moments and immutable matrix feature scaling.
   mst / flow / tsp own optimization artifacts.
   builder and gridgraph produce reproducible input worlds.
@@ -284,6 +293,7 @@ Composition rule:
 | `flow`      | Ford-Fulkerson, Edmonds-Karp, and Dinic over `core.Graph`, returning max flow and residual graph.                                              | Preserves residual semantics and supports algorithm selection from simple to high-throughput.                            | Capacity planning, traffic engineering, assignment models, min-cut analysis.                   |
 | `dtw`       | General Dynamic Time Warping, bounded classification, certified exact top-K fixed-length squared-scalar window search.                         | Aligns sequences that share a pattern but differ in speed or local timing.                                               | Sensors, gestures, audio contours, time-series similarity.                                     |
 | `series`    | Exact signed-nanosecond grid checks, causal lag/difference/returns, and complete index windows.                                                | Detached validity masks, checked integer intervals, and explicit whole-slot gaps without interpolation.                  | Telemetry preparation, causal features, window scheduling, signal-quality gates.               |
+| `paa`       | Fractional PAA with exact, unsimplified rational segment geometry and a correctly rounded final binary64 mean.                                 | Never discards remainder samples or fabricates zeros; results are detached.                                              | SAX preparation, telemetry compression, fixed-dimensional sequence features.                   |
 | `stats`     | Stable scalar mean/variance, mergeable Welford/Chan states, train-only fitted feature standardization.                                         | Exact binary-input mean and scaled second moments, detached fitted metadata, immutable inference without refit.          | Telemetry aggregation, distributed metrics, ML feature preparation, anomaly-score calibration. |
 | `gridgraph` | 2D lattice graph generation with neighborhood and obstacle-style workflows.                                                                    | Avoids manual wiring for pathfinding maps and teaching graphs.                                                           | Grid routing, maps, demos, benchmark fixtures.                                                 |
 | `matrix`    | Dense algebra, graph adapters, scaled covariance/Pearson/L2, pivoted LU/QR, Cholesky, and multi-RHS solves.                                    | Deterministic pivots, detached factors, real condition diagnostics and true residual norms.                              | Graph features, calibration, linear systems and numerical preprocessing.                       |
@@ -348,6 +358,40 @@ application decision. Invalid warmup zeros are distinguished by `Valid`,
 not by a NaN sentinel. See [`docs/SERIES.md`](docs/SERIES.md) for exact error
 precedence, numerical stability, allocation bounds, and ownership guarantees.
 
+
+### PAA: fractional compression without losing observations
+
+`github.com/lvlath/go/paa` maps finite uniformly sampled `[]float64` observations into a chosen number of **equal-duration**, not floor-divided, output segments. Its rational `Segment` boundaries keep partial contributions at every fractional split. The result owns separate `Values` and `Segments` slices and records the original sample count.
+
+| Need                                                    | API                                                | Why                                                                           |
+|:--------------------------------------------------------|:---------------------------------------------------|:------------------------------------------------------------------------------|
+| Retain means, exact segment geometry and length         | `paa.Transform(values, segments)`                  | Canonical `*paa.Result` for safe composition with SAX and lower-bound proofs. |
+| Reduce one half-open interval without unchecked slicing | `paa.TransformRange(values, start, end, segments)` | The returned boundaries are **local to the selected interval**.               |
+| Produce a value-only feature vector                     | `paa.Means(values, segments)`                      | Projects only means; uses the same canonical kernel, but discards geometry.   |
+
+```go
+package main
+
+import (
+	"fmt"
+
+	"github.com/lvlath/go/paa"
+)
+
+func main() {
+	result, err := paa.Transform([]float64{0, 2, 4, 6, 8}, 2)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Printf("PAA: %.1f, %.1f; boundary: %d/%d\n", result.Values[0], result.Values[1], result.Segments[0].RightNumerator, result.Segments[0].Denominator)
+	// Output: PAA: 1.6, 6.4; boundary: 5/2
+}
+```
+
+This is not a calendar-aware resampler: validate timestamps and reject/handle missing grid cells using `series` first. PAA requires `1<=segments<=n`, rejects nonfinite observations, publishes no partial results, and preserves all source interval measure. The signed-zero identity `segments==n` is a detached bitwise copy; all other means use exact fixed-point weighted accumulation followed by nearest-even binary64 rounding. No new Options interface or `matrix` dependency is necessary.
+
+See [`docs/PAA.md`](docs/PAA.md), [`paa/doc.go`](paa/doc.go), and the runnable `go run ./examples/paa_window` scenario.
 
 ### Stats: stable reductions and train-only feature calibration
 
@@ -535,6 +579,7 @@ Target methods require **exactly representable binary64 stored costs and heurist
 | Flow spec            | [`docs/FLOW.md`](docs/FLOW.md)               | Max-flow/min-cut math, residual networks, Ford-Fulkerson, Edmonds-Karp, Dinic.                                      |
 | DTW spec             | [`docs/DTW.md`](docs/DTW.md)                 | Dynamic programming, numeric classification, windows, penalties and path recovery.                                  |
 | DTW exact search     | [`docs/DTW_SEARCH.md`](docs/DTW_SEARCH.md)   | Bounded classification, fixed-length top-K, certified pruning, budgets and worker law.                              |
+| Fractional PAA       | [`docs/PAA.md`](docs/PAA.md)                 | Exact step-function geometry, output ownership, nearest-even arithmetic, wrappers and integration.                  |
 | Series primitives    | [`docs/SERIES.md`](docs/SERIES.md)           | Exact integer grids, causal transforms, result masks, numeric safeguards, index windows.                            |
 | Stable statistics    | [`docs/STATS.md`](docs/STATS.md)             | Welford/Chan, exact mean sum, scaled M2, fitted scaling, sentinels, immutable inference.                            |
 | Grid spec            | [`docs/GRID_GRAPH.md`](docs/GRID_GRAPH.md)   | Grid/lattice graph modeling and pathfinding-oriented construction.                                                  |
@@ -975,7 +1020,7 @@ Prefer:
 
 ```go
 if errors.Is(err, dijkstra.ErrTargetNotFound) {
-// unknown target: not the same as known but unreachable
+    // unknown target: not the same as known but unreachable
 }
 ```
 
@@ -983,7 +1028,7 @@ Avoid:
 
 ```go
 if strings.Contains(err.Error(), "target") {
-// brittle and not part of the public contract
+    // brittle and not part of the public contract
 }
 ```
 
@@ -1062,6 +1107,7 @@ incidence matrix:       columns are edge identities, not vertex-pair weights
 | "What is the max source-to-sink capacity?"                                    | `flow.Dinic` or `flow.EdmondsKarp`                                | Flow algorithms reason over residual capacity.                            |
 | "How do I validate exact sample cadence and missing slots?"                   | `series.Validate`                                                 | Signed-nanosecond grid checks; no interpolation.                          |
 | "How do I compute causal lag, differences, or returns?"                       | `series.Lag` / `Difference` / `SimpleReturns` / `LogReturns`      | Length-preserving values and validity masks.                              |
+| "How do I compress a window without dropping fractional tails?"               | `paa.Transform` / `paa.TransformRange`                            | Exact fractional PAA, checked integer geometry and a detached result.     |
 | "How do I enumerate only complete index windows?"                             | `series.WindowRanges`                                             | Ordered half-open ranges without partial tails.                           |
 | "How do I compare two jittery sensor signatures?"                             | `dtw.Align`                                                       | Scalar DTW aligns timing drift.                                           |
 | "How do I align model-provided frame costs?"                                  | `dtw.AlignCostMatrix`                                             | Caller owns the local-cost surface.                                       |
@@ -1097,6 +1143,7 @@ incidence matrix:       columns are edge identities, not vertex-pair weights
 | Flow output hides residual state                             | Flow result includes residual-network semantics.                                                        |
 | DTW path requested from rolling memory                       | DTW memory/path policy is explicit; path needs full accumulated storage.                                |
 | Missing timestamps silently treated as samples               | `series.Validate` reports whole-slot gaps; no values or time slots are synthesized.                     |
+| PAA fractional remainder dropped or padded with zeros        | `paa.Transform` uses integer exact-overlap geometry; neither truncation nor padding occurs.             |
 | Warmup zero mistaken for a computed zero                     | `series.TransformResult.Valid` marks computed cells; retain it with `Values`.                           |
 | DTW over-warps a signal                                      | Use window and slope penalty deliberately.                                                              |
 | Feature scale dominates multivariate DTW                     | Normalize before `dtw.AlignMatrix`; it uses squared L2 row cost.                                        |
