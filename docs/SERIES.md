@@ -17,7 +17,7 @@
 
 `github.com/lvlath/go/series` supplies small, deterministic operations that can be composed without inventing observations or changing their order. The package checks exact integer-nanosecond grids, transforms finite scalar sequences using available history, and enumerates complete index windows. It has **no dependencies beyond the Go standard library** and deliberately does not depend on `core`, `matrix`, or `dtw`.
 
-This chapter teaches the implemented contract, not a proposed streaming engine. The authoritative callable surface is in [`series/api.go`](../series/api.go); the package charter is [`series/doc.go`](../series/doc.go); runnable output assertions are in [`series/example_test.go`](../series/example_test.go).
+This chapter teaches the implemented contract, not a proposed streaming engine. The authoritative callable surface is in [`series/api.go`](../series/api.go); the package charter is [`series/doc.go`](../../../../Downloads/series_nilable_examples_v4/series/doc.go); runnable output assertions are in [`series/example_test.go`](../../../../Downloads/series_nilable_examples_v4/series/example_test.go).
 
 ## Contents
 
@@ -117,9 +117,12 @@ func Difference(values []float64, lag int) (*TransformResult, error)
 func SimpleReturns(values []float64) (*TransformResult, error)
 func LogReturns(values []float64) (*TransformResult, error)
 func WindowRanges(length, width, stride int) ([]Range, error)
+
+func (r *ValidationResult) IsNil() bool
+func (r *TransformResult) IsNil() bool
 ```
 
-The block above is a **declaration reference**, not a file to paste into the package. Public GoDoc in [`types.go`](../series/types.go) explains each field individually.
+The block above is a **declaration reference**, not a file to paste into the package. Public GoDoc in [`types.go`](../../../../Downloads/series_nilable_examples_v4/series/types.go) explains each field individually.
 
 | Public carrier     | Interpretation                                         | Ownership / invariant                                                  |
 |:-------------------|:-------------------------------------------------------|:-----------------------------------------------------------------------|
@@ -130,6 +133,28 @@ The block above is a **declaration reference**, not a file to paste into the pac
 | `Range`            | Complete interval of sample indices                    | `Start` inclusive; `End` exclusive; emitted ranges have positive width |
 
 All five public structures expose fields directly. Adding fields to such exported structures later can affect positional composite literals; callers should prefer named fields such as `series.GridOptions{CadenceNS: 10, AllowGaps: true}`.
+
+### Nilable pointer results and typed-nil interfaces
+
+Both `*ValidationResult` and `*TransformResult` implement the existing
+[`core.Nilable`](../core/types.go) method set **structurally**, without importing
+`core` from production `series` code. `IsNil()` returns `true` exactly when the
+receiver pointer is nil. This is a pure, non-allocating `O(1)` check, safe to
+invoke on typed-nil receivers stored inside non-nil Go interfaces.
+
+An allocated zero-value `&series.ValidationResult{}` or
+`&series.TransformResult{}` always returns `false`, even if its public fields
+are empty or invalid. `IsNil` does not check sample counts, masks, domain,
+error provenance, input completeness, or mathematical validity. `nil` after
+an error and a non-nil successful result must remain distinct. In particular,
+never implement this method as `len(Values) == 0`, `Gaps == nil`, or an
+`interfaceValue == nil` test that misses typed-nil pointers.
+
+Executable examples and the `core.Nilable` compile-time assertions live in
+[`series/example_test.go`](../../../../Downloads/series_nilable_examples_v4/series/example_test.go) and
+[`series/nilable_test.go`](../../../../Downloads/series_nilable_examples_v4/series/nilable_test.go). The added methods do not
+change the six package functions, their sentinels, their result ownership,
+or the standard-library-only production dependency policy.
 
 ### The zero-value policies are not guesses
 
@@ -452,13 +477,22 @@ The public result is **nil on every error**; there is no successful-partial arti
 
 **Read-only input.** The package does not sort, mutate, or retain caller input. It does not take a snapshot at the start of a call: mutating a slice concurrently while it is being validated or transformed is unsupported.
 
+**Nilability.** Both pointer-backed result types support `IsNil()` even when
+stored as a typed nil inside `core.Nilable`. A non-nil result with an empty
+slice or an all-invalid warmup mask is **not** a nil pointer. Nilability is
+independent of data validity, and the methods access no fields or shared state.
+
 **Detached output.** `ValidationResult.Gaps`, `TransformResult.Values`, `TransformResult.Valid`, and the returned `[]Range` are independently allocated output slices. Mutating them after a successful call does not mutate the source. Different successful calls do not share package-owned mutable working buffers.
 
 **Concurrency boundary.** Calls may run simultaneously on inputs that remain immutable for the duration of those calls; returned outputs can be used independently. Mutating the same output concurrently still requires synchronization by the caller. There is no stateful model, accumulator, mutable cache, or streaming engine.
 
 ## 11. Executable Go workflows
 
-The programs below are independently compilable examples using only the published package API. The package also contains six runnable examples in [`series/example_test.go`](../series/example_test.go).
+The programs below are independently compilable examples using only the published package API. The package also contains **eight runnable examples** in
+[`series/example_test.go`](../../../../Downloads/series_nilable_examples_v4/series/example_test.go): six multi-observation
+operational cases, a floating-point stress case, and a typed-nil interface case.
+Fixtures represent plausible engineering measurements but are not falsely
+presented as recorded incidents.
 
 ### Workflow A: validate a telemetry grid without inventing samples
 
@@ -648,6 +682,48 @@ small step positive: true
 valid: [false true true]
 ```
 
+### Workflow E: gap-aware pressure investigation with a runnable command
+
+The standalone example [`examples/series_reliability/main.go`](../../../../Downloads/series_nilable_examples_v4/examples/series_reliability/main.go)
+models 38 five-minute pressure readings from a utility site. Two samples were
+lost in transit; the system must not pretend the received array is a perfectly
+continuous time grid. The program performs five deliberate stages:
+
+1. Construct fixed nanosecond timestamps and finite pressure readings in kPa.
+2. Call `Validate(..., GridOptions{CadenceNS: ..., AllowGaps: true})` and report
+   every missing lattice slot, without creating synthetic values.
+3. Compute `Difference(..., 3)` to compare with three earlier *received*
+   observations; classify it as a 15-minute change only when the validated
+   grid contains no missing slot between the two input indices. A prefix count
+   of reported gap boundaries makes this an O(1) per-comparison check without
+   subtracting distant signed `int64` timestamps.
+4. Enumerate complete `[Start, End)` ranges using `WindowRanges`, then reject
+   any window crossing a reported gap boundary before evaluating pressure levels.
+5. Report candidate investigation alarms and source-quality losses separately.
+
+Run from the repository root with the declared Go module:
+
+```bash
+go run ./examples/series_reliability
+```
+
+Its deterministic output is:
+
+```text
+admitted readings=38 gaps=2 missing slots=2
+15-minute comparisons=29 suppressed cross-gap=6 alerts=4
+first alert=2026-11-06T04:00:00Z decline=-36 kPa
+complete windows=11 clean=7 skipped cross-gap=4 low-pressure=3
+```
+
+The distinctions are operationally essential. `Validate` allows whole-slot
+gaps only under an explicit policy; `Difference` correctly computes an index
+lag but does not assert elapsed physical time; `WindowRanges` returns index
+ranges but does not certify time-contiguous windows. The application must
+compose these laws before treating a large decline as time-bounded evidence.
+The example uses illustrative fixed data, not verified field measurements or
+a safety-critical automatic actuator.
+
 ## 12. Complexity and memory
 
 Define `n = len(values)`, `g = number of reported Gap entries`, and `w = number of complete windows`.
@@ -678,6 +754,7 @@ The test suite lives in the external `package series_test`. Tests should use the
 - **Ownership:** mutations of returned buffers must not modify input or another result.
 - **Sentinels:** `errors.Is` classifies errors; error-string matching is not a contract test.
 - **No partial publication:** error calls return nil result, including a late overflow.
+- **Nilability:** both pointer result types satisfy `core.Nilable`; typed nil reports true, allocated zero-value reports false, with no allocations.
 
 ### Independent mathematical counterexamples
 
@@ -721,4 +798,4 @@ For numeric oracle tests, treat each source float64 as the exact binary number i
 
 ---
 
-For the canonical Go signatures and per-symbol failure classes, consult [`series/api.go`](../series/api.go), [`series/types.go`](../series/types.go), and [`series/errors.go`](../series/errors.go). For executable examples and boundary regressions, see [`series/example_test.go`](../series/example_test.go), [`series/independent_counterexamples_test.go`](../series/independent_counterexamples_test.go), and [`series/numeric_regression_test.go`](../series/numeric_regression_test.go).
+For the canonical Go signatures and per-symbol failure classes, consult [`series/api.go`](../series/api.go), [`series/types.go`](../../../../Downloads/series_nilable_examples_v4/series/types.go), and [`series/errors.go`](../series/errors.go). For executable examples, interface nilability tests, and boundary regressions, see [`series/example_test.go`](../../../../Downloads/series_nilable_examples_v4/series/example_test.go), [`series/nilable_test.go`](../../../../Downloads/series_nilable_examples_v4/series/nilable_test.go), [`series/independent_counterexamples_test.go`](../series/independent_counterexamples_test.go), and [`series/numeric_regression_test.go`](../series/numeric_regression_test.go).

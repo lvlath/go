@@ -14,7 +14,11 @@
 // Input slices must not be mutated concurrently with a call. Every returned
 // slice is detached and caller-owned. Calls share no mutable package state.
 // Public functions return a nil result on error; no partial results are
-// published. Finite inputs are mandatory, and unrepresentable floating-point
+// published. The pointer-backed ValidationResult and TransformResult carriers
+// expose IsNil() to implement the core.Nilable method set structurally. A typed
+// nil inside an interface reports true; an allocated zero-value result reports
+// false. IsNil is a non-allocating pointer check, never an artifact validator.
+// Finite inputs are mandatory, and unrepresentable floating-point
 // results are errors rather than infinity sentinels.
 //
 // Options are explicit: a zero GridOptions cadence checks order only, without

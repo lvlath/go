@@ -58,6 +58,7 @@ type Gap struct {
 //
 // Notes:
 //   - Gaps is always non-nil on success, including order-only validation.
+//   - IsNil implements pointer nilability without inspecting this result.
 //   - The caller owns the result and may mutate Gaps without changing inputs.
 //
 // AI-Hints:
@@ -73,6 +74,45 @@ type ValidationResult struct {
 	Gaps []Gap
 }
 
+// IsNil reports whether the ValidationResult receiver is a nil pointer.
+// It implements the core.Nilable method set without introducing a graph-package
+// dependency into the scalar series primitives.
+//
+// Implementation:
+//   - Stage 1: Compare the receiver directly against nil.
+//   - Stage 2: Return the comparison without inspecting the result fields.
+//   - Stage 3: No storage is allocated and no result state is modified.
+//
+// Behavior highlights:
+//   - Works with a typed-nil *ValidationResult stored inside an interface.
+//   - An allocated zero-value result is non-nil regardless of Samples or Gaps.
+//
+// Inputs:
+//   - r: possibly nil *ValidationResult receiver; no other inputs.
+//
+// Returns:
+//   - bool: true exactly when r == nil, false for every non-nil pointer.
+//
+// Errors:
+//   - None; a nil receiver does not panic.
+//
+// Determinism:
+//   - Pointer comparison only; no fields or package state are consulted.
+//
+// Complexity:
+//   - Time O(1), Space O(1); no allocations.
+//
+// Notes:
+//   - This method reports pointer nilability, not whether a grid is valid.
+//   - Calling IsNil on a shared result is safe even if its public fields are empty.
+//
+// AI-Hints:
+//   - Never infer nilability from Samples == 0 or Gaps == nil.
+//   - A typed-nil result inside a non-nil interface must still report true.
+func (r *ValidationResult) IsNil() bool {
+	return r == nil
+}
+
 // TransformResult is a length-preserving causal values-and-validity artifact.
 // At each index i, Valid[i] declares whether Values[i] is a computed result;
 // invalid warmup cells are exactly zero/false, never missing slice entries.
@@ -80,6 +120,7 @@ type ValidationResult struct {
 // Notes:
 //   - len(Values) == len(Valid) == len(input); valid cells are finite float64.
 //   - Both slices are detached, caller-owned, and independent of input memory.
+//   - IsNil checks receiver identity, not whether the mask has valid cells.
 //
 // AI-Hints:
 //   - Read Valid before interpreting a zero: zero may be a valid computed value.
@@ -93,6 +134,45 @@ type TransformResult struct {
 	// All missing-history positions are false, even when their zero value
 	// coincides with a legitimate numeric return or difference.
 	Valid []bool
+}
+
+// IsNil reports whether the TransformResult receiver is a nil pointer.
+// It implements the core.Nilable method set without inspecting the detached
+// Values and Valid buffers or changing their ownership rules.
+//
+// Implementation:
+//   - Stage 1: Compare the receiver directly against nil.
+//   - Stage 2: Return the boolean even when the receiver is a typed nil.
+//   - Stage 3: Leave every output buffer untouched; no allocation occurs.
+//
+// Behavior highlights:
+//   - A non-nil zero-value TransformResult is not a nil pointer.
+//   - Empty or caller-modified buffers do not affect this method's outcome.
+//
+// Inputs:
+//   - r: possibly nil *TransformResult receiver; no other inputs.
+//
+// Returns:
+//   - bool: true exactly when r == nil, otherwise false.
+//
+// Errors:
+//   - None; a nil receiver does not panic.
+//
+// Determinism:
+//   - Depends only on receiver pointer identity, never on numeric data.
+//
+// Complexity:
+//   - Time O(1), Space O(1); no allocations.
+//
+// Notes:
+//   - A false result does not validate lengths, masks, or numeric finiteness.
+//   - Results remain caller-owned and independent of their source slices.
+//
+// AI-Hints:
+//   - Do not replace the pointer check with len(Values) == 0 or Valid == nil.
+//   - In an interface, use IsNil to recognize a typed-nil *TransformResult.
+func (r *TransformResult) IsNil() bool {
+	return r == nil
 }
 
 // Range represents a complete half-open interval of sample indices.
