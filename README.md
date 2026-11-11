@@ -66,6 +66,7 @@ It is built for people who need algorithmic tools they can explain in a code rev
 * `paa` compresses every sample of a finite series into exact fractional equal-duration averages, without dropped tails or padding;
 * `sax` quantizes fractional PAA to compatible symbolic words with Euclidean MINDIST; it never promotes that bound to a DTW pruning certificate;
 * `stats` provides scaled Welford/Chan moments and immutable training-only feature standardization without refit;
+* `ols` fits full-rank original-unit linear models through pivoted QR, with an explicit zero-origin policy and frozen predictions;
 * flow, MST, TSP, DTW, grid, and builder packages extend the same discipline into optimization, alignment, fixtures, and examples.
 
 ---
@@ -164,6 +165,7 @@ lvlath/
 ├── paa/                   # fractional PAA, exact rational geometry, detached averages
 ├── sax/                   # symbolic PAA words, SHA-256 policy identity, Euclidean MINDIST
 ├── stats/                 # scaled Welford/Chan moments and immutable fitted scaling
+├── ols/                   # QR regression, full-rank gate, frozen physical coefficients
 ├── gridgraph/             # 2D lattice graph generation
 ├── matrix/                # dense graph algebra, stable statistics, pivoted factors and solves
 ├── tsp/                   # tour construction, local search, exact small-instance routing
@@ -181,6 +183,7 @@ lvlath/
 │   ├── DTW_SEARCH.md
 │   ├── SERIES.md
 │   ├── STATS.md
+│   ├── OLS.md
 │   ├── PAA.md
 │   ├── SAX.md
 │   ├── GRID_GRAPH.md
@@ -279,6 +282,12 @@ lvlath/docs/{PACKAGE}.md
                                    │ matrix.Matrix input, immutable inference   │
                                    └────────────────────────────────────────────┘
 
+                                   ┌────────────────────────────────────────────┐
+                                   │ ols                                        │
+                                   │ pivoted QR, full rank, frozen prediction  │
+                                   │ physical beta/intercept; train-only scale │
+                                   └────────────────────────────────────────────┘
+
 Composition rule:
   core owns topology.
   matrix owns dense graph/numeric artifacts.
@@ -287,6 +296,7 @@ Composition rule:
   paa owns fractional step-function compression and exact rational boundaries.
   sax owns compatible symbolic encoding and Euclidean lower-bound dissimilarity.
   stats owns stable scalar moments and immutable matrix feature scaling.
+  ols owns full-rank regression artifacts, intercept policy and frozen prediction.
   mst / flow / tsp own optimization artifacts.
   builder and gridgraph produce reproducible input worlds.
 ```
@@ -307,6 +317,7 @@ Composition rule:
 | `series`    | Exact signed-nanosecond grid checks, causal lag/difference/returns, and complete index windows.                                                | Detached validity masks, checked integer intervals, and explicit whole-slot gaps without interpolation.                  | Telemetry preparation, causal features, window scheduling, signal-quality gates.               |
 | `paa`       | Fractional PAA with exact, unsimplified rational segment geometry and a correctly rounded final binary64 mean.                                 | Never discards remainder samples or fabricates zeros; results are detached.                                              | SAX preparation, telemetry compression, fixed-dimensional sequence features.                   |
 | `sax`       | Fixed-length symbolic words, pinned Gaussian/custom thresholds, immutable encoders and Euclidean MINDIST.                                      | Right-bin equality, SHA-256 policy identity, detached results; no false DTW pruning claim.                               | Telemetry signatures, approximate candidate ranking, shape-change screening.                   |
+| `ols`       | Full-column-rank least-squares regression, immutable original-unit coefficients and QR diagnostics.                                            | Explicit intercept/scale-only origin policies, rank refusal, training SSE, no heldout refit.                             | CAPM factors, sensor calibration, energy-load forecasting.                                     |
 | `stats`     | Stable scalar mean/variance, mergeable Welford/Chan states, train-only fitted feature standardization.                                         | Exact binary-input mean and scaled second moments, detached fitted metadata, immutable inference without refit.          | Telemetry aggregation, distributed metrics, ML feature preparation, anomaly-score calibration. |
 | `gridgraph` | 2D lattice graph generation with neighborhood and obstacle-style workflows.                                                                    | Avoids manual wiring for pathfinding maps and teaching graphs.                                                           | Grid routing, maps, demos, benchmark fixtures.                                                 |
 | `matrix`    | Dense algebra, graph adapters, scaled covariance/Pearson/L2, pivoted LU/QR, Cholesky, and multi-RHS solves.                                    | Deterministic pivots, detached factors, real condition diagnostics and true residual norms.                              | Graph features, calibration, linear systems and numerical preprocessing.                       |
@@ -625,6 +636,95 @@ func main() {
 
 For larger runnable scenarios with checked errors, see [`docs/MATRICES.md`](docs/MATRICES.md#108-go-usage-examples) and [`matrix/example_test.go`](matrix/example_test.go). For why exact binary-input residuals can be expensive, and where `ErrNaNInf`, `ErrOverflow`, `ErrRankDeficient`, `ErrAsymmetry`, and `ErrNotPositiveDefinite` differ, see the [solver reference](docs/MATRICES.md#1013-error-classification-and-decision-table).
 
+### OLS: stable factor regression with an immutable prediction model
+
+`github.com/lvlath/go/ols` solves **finite, unweighted, full-column-rank
+ordinary least squares** by delegating to the existing pivoted Householder
+`matrix.SolveLeastSquares` kernel. It provides a regression-specific layer over
+`matrix` (numerical solver) and `stats` (population feature scales), without
+forming or inverting `XᵀX` or adding a hidden pseudoinverse fallback.
+
+| Need                                      | Public API                                  | Model and failure law                                                     |
+|:------------------------------------------|:--------------------------------------------|:--------------------------------------------------------------------------|
+| Affine baseline with intercept            | `ols.FitDefault(ctx,x,y)`                   | Explicit ones column, centered predictors, returned physical coefficients |
+| Affine model with uneven predictor scales | `ols.FitStandardized(ctx,x,y)`              | Train DDOF=0 scaling; heldout never refits                                |
+| Physically mandatory zero origin          | `ols.FitThroughOrigin(ctx,x,y)`             | Exactly positive-zero intercept, no centering                             |
+| Origin-constrained and uneven scales      | `ols.FitThroughOriginStandardized(ctx,x,y)` | Scale-only transform, never hidden affine correction                      |
+| Custom relative QR rank policy            | `ols.Fit(ctx,x,y,ols.Options{...})`         | Full-rank gate; invalid option/rank/overflow have distinct sentinels      |
+
+A successful `*ols.FitResult` contains `Model`, `Rank`, `ResidualSumSquares`
+(training **sum**, not mean squared error) and `ConditionEstimate` (the QR
+factor's `kappa_1(R)`, not a statistical confidence measure). `Model.Coefficients()`
+returns detached slopes in original feature units and an intercept scalar;
+`Model.Predict(ctx,future)` uses those **frozen** parameters without learning
+new means or variances. Independent concurrent predictions are safe with
+stable input matrices. An `ols.FitResult` also implements the `core.Nilable`
+`IsNil()` pointer-presence convention.
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+
+    "github.com/lvlath/go/matrix"
+    "github.com/lvlath/go/ols"
+)
+
+func main() {
+    // Each training row is temperature (C) and production-shift count.
+    training, err := matrix.NewDense(6, 2)
+    if err != nil {
+        fmt.Println("training:", err)
+        return
+    }
+    if err = training.Fill([]float64{
+        15, 2,
+        22, 4,
+        20, 3,
+        28, 5,
+        17, 6,
+        30, 1,
+    }); err != nil {
+        fmt.Println("training data:", err)
+        return
+    }
+    energyKWh := []float64{148, 175, 164, 192, 183, 163}
+
+    fit, err := ols.FitStandardized(context.Background(), training, energyKWh)
+    if err != nil {
+        fmt.Println("regression:", err)
+        return
+    }
+
+    future, err := matrix.NewDense(1, 2)
+    if err != nil {
+        fmt.Println("holdout:", err)
+        return
+    }
+    if err = future.Fill([]float64{26, 3}); err != nil {
+        fmt.Println("holdout data:", err)
+        return
+    }
+    prediction, err := fit.Model.Predict(context.Background(), future)
+    if err != nil {
+        fmt.Println("prediction:", err)
+        return
+    }
+    fmt.Printf("rank=%d, forecast=%.2f kWh\n", fit.Rank, prediction[0])
+}
+```
+
+OLS **does not** compute p-values, confidence intervals, automatically remove
+collinear factors, support weighted/Ridge regression, or guarantee heldout
+accuracy. Finance and telemetry may have dependent residuals, so a low training
+SSE is not a causal or IID-based inference claim. The five scenario-driven
+executable examples include CAPM, industrial calibration, origin-constrained
+charging, duplicate-feature rejection and chronological energy-demand holdout.
+See [`docs/OLS.md`](docs/OLS.md), [`ols/doc.go`](ols/doc.go) and
+[`ols/example_test.go`](ols/example_test.go).
+
 ### Weighted shortest paths: choose the result domain
 
 `github.com/lvlath/go/dijkstra` now exposes **two distinct API families**, not four variants of the same return type:
@@ -658,27 +758,28 @@ Target methods require **exactly representable binary64 stored costs and heurist
 
 ## Current contract documentation
 
-| Layer                | File                                         | Purpose                                                                                                             |
-|:---------------------|:---------------------------------------------|:--------------------------------------------------------------------------------------------------------------------|
-| Tutorial             | [`docs/TUTORIAL.md`](docs/TUTORIAL.md)       | First guided entry into graph/matrix concepts, package roles, examples, and best practices.                         |
-| Core spec            | [`docs/CORE.md`](docs/CORE.md)               | Graph model, capability law, deterministic enumeration, locks, topology invariants.                                 |
-| BFS spec             | [`docs/BFS.md`](docs/BFS.md)                 | Hop-distance math, BFS result semantics, partial results, weak components.                                          |
-| DFS spec             | [`docs/DFS.md`](docs/DFS.md)                 | Post-order semantics, cycle witnesses, DFS forest, topological sort.                                                |
-| Shortest paths spec  | [`docs/DIJKSTRA.md`](docs/DIJKSTRA.md)       | Full SSSP vs four target methods, consistency proofs, balanced potentials, exact arithmetic and runnable scenarios. |
-| MST spec             | [`docs/MST.md`](docs/MST.md)                 | Exact Prim/Kruskal, KMB Steiner approximation, tree-covering walks, original IDs, numeric/error contracts.          |
-| Flow spec            | [`docs/FLOW.md`](docs/FLOW.md)               | Max-flow/min-cut math, residual networks, Ford-Fulkerson, Edmonds-Karp, Dinic.                                      |
-| DTW spec             | [`docs/DTW.md`](docs/DTW.md)                 | Dynamic programming, numeric classification, windows, penalties and path recovery.                                  |
-| DTW exact search     | [`docs/DTW_SEARCH.md`](docs/DTW_SEARCH.md)   | Bounded classification, fixed-length top-K, certified pruning, budgets and worker law.                              |
-| Fractional PAA       | [`docs/PAA.md`](docs/PAA.md)                 | Exact step-function geometry, output ownership, nearest-even arithmetic, wrappers and integration.                  |
-| Symbolic SAX         | [`docs/SAX.md`](docs/SAX.md)                 | Canonical words, Euclidean MINDIST proof, versioned identity, errors and false-DTW-pruning counterexample.          |
-| Series primitives    | [`docs/SERIES.md`](docs/SERIES.md)           | Exact integer grids, causal transforms, result masks, numeric safeguards, index windows.                            |
-| Stable statistics    | [`docs/STATS.md`](docs/STATS.md)             | Welford/Chan, exact mean sum, scaled M2, fitted scaling, sentinels, immutable inference.                            |
-| Grid spec            | [`docs/GRID_GRAPH.md`](docs/GRID_GRAPH.md)   | Grid/lattice graph modeling and pathfinding-oriented construction.                                                  |
-| Matrix spec          | [`docs/MATRICES.md`](docs/MATRICES.md)       | Canonical dense/graph/statistics/factorization reference; [`MATRIX.md`](docs/MATRIX.md) is a navigation alias.      |
-| TSP spec             | [`docs/TSP.md`](docs/TSP.md)                 | Tour optimization, exact vs approximate methods, metric assumptions.                                                |
-| Engineering standard | [`docs/lvlath_UES.md`](docs/lvlath_UES.md)   | Repository engineering standard and quality expectations.                                                           |
-| FAQ                  | [`docs/FAQ_&_TIPS.md`](docs/FAQ_%26_TIPS.md) | Troubleshooting, common pitfalls, usage tips.                                                                       |
-| Contribution guide   | [`CONTRIBUTING.md`](CONTRIBUTING.md)         | Branching, tests, linting, coverage, PR rules.                                                                      |
+| Layer                 | File                                         | Purpose                                                                                                             |
+|:----------------------|:---------------------------------------------|:--------------------------------------------------------------------------------------------------------------------|
+| Tutorial              | [`docs/TUTORIAL.md`](docs/TUTORIAL.md)       | First guided entry into graph/matrix concepts, package roles, examples, and best practices.                         |
+| Core spec             | [`docs/CORE.md`](docs/CORE.md)               | Graph model, capability law, deterministic enumeration, locks, topology invariants.                                 |
+| BFS spec              | [`docs/BFS.md`](docs/BFS.md)                 | Hop-distance math, BFS result semantics, partial results, weak components.                                          |
+| DFS spec              | [`docs/DFS.md`](docs/DFS.md)                 | Post-order semantics, cycle witnesses, DFS forest, topological sort.                                                |
+| Shortest paths spec   | [`docs/DIJKSTRA.md`](docs/DIJKSTRA.md)       | Full SSSP vs four target methods, consistency proofs, balanced potentials, exact arithmetic and runnable scenarios. |
+| MST spec              | [`docs/MST.md`](docs/MST.md)                 | Exact Prim/Kruskal, KMB Steiner approximation, tree-covering walks, original IDs, numeric/error contracts.          |
+| Flow spec             | [`docs/FLOW.md`](docs/FLOW.md)               | Max-flow/min-cut math, residual networks, Ford-Fulkerson, Edmonds-Karp, Dinic.                                      |
+| DTW spec              | [`docs/DTW.md`](docs/DTW.md)                 | Dynamic programming, numeric classification, windows, penalties and path recovery.                                  |
+| DTW exact search      | [`docs/DTW_SEARCH.md`](docs/DTW_SEARCH.md)   | Bounded classification, fixed-length top-K, certified pruning, budgets and worker law.                              |
+| Fractional PAA        | [`docs/PAA.md`](docs/PAA.md)                 | Exact step-function geometry, output ownership, nearest-even arithmetic, wrappers and integration.                  |
+| Symbolic SAX          | [`docs/SAX.md`](docs/SAX.md)                 | Canonical words, Euclidean MINDIST proof, versioned identity, errors and false-DTW-pruning counterexample.          |
+| Series primitives     | [`docs/SERIES.md`](docs/SERIES.md)           | Exact integer grids, causal transforms, result masks, numeric safeguards, index windows.                            |
+| Stable statistics     | [`docs/STATS.md`](docs/STATS.md)             | Welford/Chan, exact mean sum, scaled M2, fitted scaling, sentinels, immutable inference.                            |
+| Stable OLS regression | [`docs/OLS.md`](docs/OLS.md)                 | Pivoted Householder QR, explicit intercept, physical coefficients, SSE, frozen Model and holdout pitfalls.          |
+| Grid spec             | [`docs/GRID_GRAPH.md`](docs/GRID_GRAPH.md)   | Grid/lattice graph modeling and pathfinding-oriented construction.                                                  |
+| Matrix spec           | [`docs/MATRICES.md`](docs/MATRICES.md)       | Canonical dense/graph/statistics/factorization reference; [`MATRIX.md`](docs/MATRIX.md) is a navigation alias.      |
+| TSP spec              | [`docs/TSP.md`](docs/TSP.md)                 | Tour optimization, exact vs approximate methods, metric assumptions.                                                |
+| Engineering standard  | [`docs/lvlath_UES.md`](docs/lvlath_UES.md)   | Repository engineering standard and quality expectations.                                                           |
+| FAQ                   | [`docs/FAQ_&_TIPS.md`](docs/FAQ_%26_TIPS.md) | Troubleshooting, common pitfalls, usage tips.                                                                       |
+| Contribution guide    | [`CONTRIBUTING.md`](CONTRIBUTING.md)         | Branching, tests, linting, coverage, PR rules.                                                                      |
 
 ---
 
@@ -1097,6 +1198,7 @@ Determinism is not "sort something at the end." It is a cross-package contract.
 * `flow` builds and consumes residual state through deterministic algorithm policy.
 * `matrix` uses fixed row-major loops and deterministic graph-adapter publication; LU/QR pivot ties prefer the smallest original index.
 * `stats` visits scalar samples in input order and matrix cells row-major; a caller fixes the merge-tree order when grouping floating-point moments.
+* `ols` validates rows and features ascending, inherits QR deterministic pivot tie rules and predicts with original columns in the given order.
 * `dtw` runs row-major DP and backtracks ties as diagonal, then vertical/up, then horizontal/left.
 * `series` scans samples in index order, reports gaps and ranges in that order, and preserves length and validity masks.
 * `tsp` uses matrix order, deterministic solver tie-breaks, explicit seed-governed local search, and result fields that report exactness, timeout, and approximation status.
@@ -1140,6 +1242,7 @@ Maximum feasible throughput?                   flow
 All-pairs shortest distances?                  matrix.BuildMetricClosure
 Dense topology/covariance/spectral features?   matrix
 Stable mean/variance and partition merges?     stats
+Fit full-rank factor regression?                ols
 Train-only standardization / no refit?         stats
 Exact timestamp grid / causal sample features? series
 Symbolic Euclidean screening of windows?       sax
@@ -1159,6 +1262,7 @@ Important distinctions:
 * DTW aligns time-warped sequences, not graph routes.
 * `series` operates on supplied sample indices and exact nanosecond checks; it does not fill missing timestamp slots.
 * `stats` aggregates finite observations and transforms features with parameters learned on training data only; it does not interpret series validity masks or refit.
+* `ols` uses pivoted QR to fit finite, full-rank linear models and returns frozen original-unit coefficients; it never substitutes normal equations, drops rank-deficient factors or refits at inference.
 * `sax` quantizes the same fractional PAA geometry into symbolic words; its Euclidean MINDIST is not a metric on words or a certified bound for arbitrary DTW.
 * TSP solves a closed tour over a complete finite cost model, not sparse reachability.
 
@@ -1210,6 +1314,8 @@ incidence matrix:       columns are edge identities, not vertex-pair weights
 | "How do I calculate stable population/sample variance?"                       | `stats.Summarize`                                                 | Stable central moments and explicit DDOF denominator.                     |
 | "How do I combine independent streaming statistics?"                          | `stats.Moments.Update` / `Merge`                                  | Error-atomic, count-checked Welford/Chan partition reductions.            |
 | "How do I scale test features using only training data?"                      | `stats.FitStandardizer` followed by `Model.Transform`             | Frozen per-column means and scales, no inference refit.                   |
+| "How do I fit reusable linear-factor coefficients with an intercept?"         | `ols.FitDefault` / `ols.FitStandardized`                          | Original-unit beta and b, training SSE, no heldout refit.                 |
+| "How do I force a physical zero intercept?"                                   | `ols.FitThroughOrigin` / `FitThroughOriginStandardized`           | No feature centering; b exactly +0 even when scaling.                     |
 | "How do I fit a full-rank tall calibration model?"                            | `matrix.SolveLeastSquares` / `FactorQR`                           | Pivoted Householder QR, rank refusal and residual diagnostics.            |
 | "How do I solve a reusable SPD coupling system?"                              | `matrix.FactorCholesky`                                           | Symmetry/SPD validation, measured condition and detached solutions.       |
 | "How do I compute topology features?"                                         | `matrix.NewAdjacencyMatrix`, `NewIncidenceMatrix`, `DegreeVector` | Matrix artifacts preserve topology policy.                                |

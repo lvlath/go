@@ -1138,3 +1138,68 @@ func (v *View) Set(i, j int, val float64) error {
 	// Finalize: success.
 	return nil
 }
+
+// Clone creates an independent owning Dense copy of only the view's window.
+// Unlike the original View, the returned Matrix does not share storage with
+// the parent Dense or any sibling views and preserves the parent's numeric policy.
+//
+// Implementation:
+//   - Stage 1: reject nil/unbound view receivers without dereferencing the base.
+//   - Stage 2: allocate exactly r*c elements and copy each view row with its stride.
+//   - Stage 3: publish a Dense with the original window shape and numeric policy.
+//
+// Behavior highlights:
+//   - A view's original coordinates are not carried into the clone: (0,0) is its corner.
+//   - An empty but valid view produces a non-nil, zero-element Dense of the same shape.
+//   - Inf/NaN validation and distance-sentinel settings are preserved from the base.
+//
+// Inputs:
+//   - v: a view constructed by Dense.View; its base must not be concurrently mutated.
+//
+// Returns:
+//   - Matrix: a freshly allocated *Dense with no backing-array alias, or nil for
+//     a nil/unbound view receiver.
+//
+// Errors:
+//   - None: Matrix.Clone has no error return; Dense.View already validates ranges.
+//
+// Determinism:
+//   - Rows are copied ascending, with columns ascending within each row.
+//
+// Complexity:
+//   - Time O(r*c), Space O(r*c) for an r-by-c view, not O(parent.rows*parent.cols).
+//
+// Notes:
+//   - View itself remains a write-through alias; only Clone severs ownership.
+//   - The returned interface uses the same numeric policy as Dense.Clone.
+//
+// AI-Hints:
+//   - Do not implement Clone as `return v.base.Clone()`: that copies the wrong shape.
+//   - Do not return v or share its base.data: QR and other callers may mutate clones.
+func (v *View) Clone() Matrix {
+	if v == nil || v.base == nil {
+		return nil
+	}
+
+	var values []float64
+	if v.r != 0 && v.c != 0 {
+		values = make([]float64, v.r*v.c)
+		for row := 0; row < v.r; row++ {
+			// The parent is row-major but view rows may be strided by parent width.
+			sourceStart := (v.r0+row)*v.base.c + v.c0
+			destinationStart := row * v.c
+			copy(values[destinationStart:destinationStart+v.c],
+				v.base.data[sourceStart:sourceStart+v.c])
+		}
+	}
+	return &Dense{
+		r:                 v.r,
+		c:                 v.c,
+		data:              values,
+		validateNaNInf:    v.base.validateNaNInf,
+		allowInfDistances: v.base.allowInfDistances,
+	}
+}
+
+// Compile-time check ensures View implements every Matrix method, including Clone.
+var _ Matrix = (*View)(nil)

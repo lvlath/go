@@ -3,7 +3,7 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/FAQ_&_TIPS.md
-  Package reference: core, matrix, series, stats, paa, sax and the wider lvlath package family
+  Package reference: core, matrix, series, stats, paa, sax, ols and the wider lvlath package family
   lvlath - FAQ & Tips
 
   Purpose:
@@ -56,6 +56,7 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
 12. [Stats FAQ](#12-stats-faq)
 13. [PAA FAQ](#13-paa-faq)
     13a. [SAX FAQ](#13a-sax-faq)
+    13b. [OLS FAQ](#13b-ols-faq)
 14. [Builder and gridgraph tips](#14-builder-and-gridgraph-tips)
 15. [Errors and diagnostics](#15-errors-and-diagnostics)
 16. [Determinism and concurrency](#16-determinism-and-concurrency)
@@ -72,25 +73,26 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
 
 Start with the question, not the algorithm name.
 
-| Question                                                    | Use                   | Reason                                                                      |
-|:------------------------------------------------------------|:----------------------|:----------------------------------------------------------------------------|
-| “How many hops away is this vertex?”                        | `bfs`                 | BFS minimizes edge count.                                                   |
-| “Which vertices are in the same weak island?”               | `bfs.Components`      | Weak membership ignores direction for component grouping.                   |
-| “What is a deterministic deep traversal?”                   | `dfs`                 | DFS gives post-order and forest-style structure.                            |
-| “Does this graph contain a cycle?”                          | `dfs.DetectCycles`    | Returns deterministic witness cycles.                                       |
-| “What order can I execute a DAG?”                           | `dfs.TopologicalSort` | Topological order is a directed acyclic graph contract.                     |
-| “What is the cheapest route by weight?”                     | `dijkstra`            | Dijkstra minimizes non-negative total cost.                                 |
-| “What is the cheapest connected backbone?”                  | `mst`                 | MST solves minimum connected spanning structure.                            |
-| “What is the maximum throughput?”                           | `flow`                | Flow solves capacity-constrained source-to-sink movement.                   |
-| “How do I turn graph topology into numeric features?”       | `matrix`              | Adjacency, incidence, degree vector, metric closure, algebra.               |
-| “How do I model a grid map?”                                | `gridgraph`           | Generates lattice topology instead of manual wiring.                        |
-| “How do I build repeatable fixtures?”                       | `builder`             | Deterministic graph/data generation.                                        |
-| “How do I compress a fixed-size scalar time-series window?” | `paa`                 | Exact fractional PAA averages with rational boundaries and no dropped tail. |
-| “How do I encode a fixed-length symbolic signature?”        | `sax`                 | Fractional PAA + right-bin quantization, compatible Euclidean MINDIST.      |
-| “How do I align two time series?”                           | `dtw`                 | Dynamic Time Warping handles local timing drift.                            |
-| “How do I compute robust moments or merge workers?”         | `stats`               | Welford/Chan moments, exact mean sum, scaled M2.                            |
-| “How do I normalize heldout features without refit?”        | `stats`               | Immutable fitted model over matrix columns.                                 |
-| “How do I visit all cities in a route?”                     | `tsp`                 | Tour construction/improvement/exact-small-instance routing.                 |
+| Question                                                       | Use                   | Reason                                                                      |
+|:---------------------------------------------------------------|:----------------------|:----------------------------------------------------------------------------|
+| “How many hops away is this vertex?”                           | `bfs`                 | BFS minimizes edge count.                                                   |
+| “Which vertices are in the same weak island?”                  | `bfs.Components`      | Weak membership ignores direction for component grouping.                   |
+| “What is a deterministic deep traversal?”                      | `dfs`                 | DFS gives post-order and forest-style structure.                            |
+| “Does this graph contain a cycle?”                             | `dfs.DetectCycles`    | Returns deterministic witness cycles.                                       |
+| “What order can I execute a DAG?”                              | `dfs.TopologicalSort` | Topological order is a directed acyclic graph contract.                     |
+| “What is the cheapest route by weight?”                        | `dijkstra`            | Dijkstra minimizes non-negative total cost.                                 |
+| “What is the cheapest connected backbone?”                     | `mst`                 | MST solves minimum connected spanning structure.                            |
+| “What is the maximum throughput?”                              | `flow`                | Flow solves capacity-constrained source-to-sink movement.                   |
+| “How do I turn graph topology into numeric features?”          | `matrix`              | Adjacency, incidence, degree vector, metric closure, algebra.               |
+| “How do I model a grid map?”                                   | `gridgraph`           | Generates lattice topology instead of manual wiring.                        |
+| “How do I build repeatable fixtures?”                          | `builder`             | Deterministic graph/data generation.                                        |
+| “How do I compress a fixed-size scalar time-series window?”    | `paa`                 | Exact fractional PAA averages with rational boundaries and no dropped tail. |
+| “How do I encode a fixed-length symbolic signature?”           | `sax`                 | Fractional PAA + right-bin quantization, compatible Euclidean MINDIST.      |
+| “How do I align two time series?”                              | `dtw`                 | Dynamic Time Warping handles local timing drift.                            |
+| “How do I compute robust moments or merge workers?”            | `stats`               | Welford/Chan moments, exact mean sum, scaled M2.                            |
+| “How do I normalize heldout features without refit?”           | `stats`               | Immutable fitted model over matrix columns.                                 |
+| “How do I estimate linear factor coefficients and reuse them?” | `ols`                 | Full-rank QR, original-unit beta/intercept, immutable prediction.           |
+| “How do I visit all cities in a route?”                        | `tsp`                 | Tour construction/improvement/exact-small-instance routing.                 |
 
 ### Q1.2. How do I avoid using the wrong algorithm?
 
@@ -108,6 +110,7 @@ compute all-pairs costs       -> Matrix metric closure
 validate grid/causal features -> Series
 stream/merge stable moments   -> Stats
 fit training-only scaling     -> Stats
+fit linear factor model       -> OLS (pivoted QR, no refit)
 encode symbolic SAX words     -> SAX
 align time-warped signals     -> DTW
 build a closed tour           -> TSP
@@ -643,6 +646,8 @@ View.Set writes into the base Dense.
 ```
 
 Use `Induced` when the submatrix needs independent lifetime or safe mutation.
+
+`View` now satisfies the `Matrix` interface through `Clone()`: the **view itself** still aliases its parent for `At`/`Set`; `Clone()` publishes a detached owning matrix containing only the selected window. Never infer that simply assigning a View to `matrix.Matrix` snapshots its source.
 
 ### Q6.8. Why does covariance require at least two rows, even with no features?
 
@@ -1689,6 +1694,136 @@ Use `sax.EncodeGaussian(values,w,a)` for an occasional normalized Gaussian word,
 ### Q13a.14. How do I connect `series`, SAX and DTW safely?
 
 Validate cadence and gaps with `series.Validate` first if you have timestamps, choose complete sample-index windows with `series.WindowRanges`, and explicitly reject or segment windows crossing missing timestamp slots. `sax.Encode` neither checks timestamps nor consumes `series.TransformResult.Valid` masks; a warmup placeholder zero must not be mistaken for a genuine sample. Encode windows of equal length with one compatible policy and retain the original observations if DTW refinement is required. Ranking a SAX shortlist followed by exact per-candidate `dtw.Align` is only **approximate global retrieval**. For error tables, proofs and five executable synthetic scenarios see [`SAX.md`](SAX.md), [`sax/doc.go`](../../../../Downloads/sax-phase8-documentation/sax/doc.go) and [`sax/example_test.go`](../sax/example_test.go).
+
+---
+
+## 13b. OLS FAQ
+
+### Q13b.1. Why do I need `ols` if `matrix.SolveLeastSquares` already exists?
+
+`matrix` solves a **given** rectangular linear system using pivoted QR.
+`ols` defines the regression model around that solver: intercept semantics,
+training-only feature scaling, rank gate, back-conversion to physical
+coefficients, independent training SSE and a frozen `Model.Predict` API.
+
+Use `stats` when you need moments or a stand-alone fitted feature transform,
+`matrix` for general linear systems or reusable QR factors, and `ols` when a
+response vector must be explained by a stable linear factor model. These
+packages do not silently substitute for one another.
+
+### Q13b.2. Why does `FitDefault` center features even though Standardize is false?
+
+The explicit intercept basis is `design=[ones, x-trainingMean]` with unit
+scales; this is a numerically useful *change of coordinates*, not a change of
+the class of affine models. `ols` restores the physical intercept via
+`b=thetaIntercept-sum(trainingMean[j]*beta[j])`. Disabling `Standardize`
+disables population scaling but **does not disable intercept centering**.
+
+When `NoIntercept=true`, centering is completely forbidden. With
+`Standardize=true` the design is `x/trainScale` and the returned intercept is
+exactly positive zero. This prevents the hidden-constant defect of fitting
+`x-mean` while publicly advertising an origin-constrained model.
+
+### Q13b.3. Why did `Predict` return `2.999999999999999` for an exact line?
+
+Because Householder QR, coefficient back-conversion and FMA calculations
+round in IEEE-754 `float64`. A few ULPs of error are normal; the exact
+mathematical line `y=1+2*x` does not imply bit-identical computed predictions.
+
+For a fixture with expected value `3`, write a scale-aware check such as:
+
+```go
+const tolerance = 1e-12
+if math.Abs(predicted[0]-3) > tolerance*math.Max(1, math.Abs(3)) {
+    t.Fatalf("prediction %.17g not close to 3", predicted[0])
+}
+```
+
+The test snippet assumes an existing `predicted` slice, `t *testing.T`, and
+`math` import. **Do not round internal coefficients**, weaken the QR solver,
+or alter an exact `NoIntercept`/rank/ownership assertion to placate a bad
+float-equality test.
+
+### Q13b.4. Why does a constant or duplicate feature return `ErrRankDeficient`?
+
+OLS v0.1 requires **full numerical column rank**. Duplicate predictors do
+not identify separate coefficients; a constant predictor alongside an
+intercept duplicates the ones column. `stats.UnitScaleConstant` sets scale
+one for a constant predictor but does not erase the column, so the QR solver
+correctly rejects the deficient design.
+
+Fix the **caller feature schema** deliberately, then refit if appropriate.
+Do not silently drop a predictor, introduce a pseudoinverse, or reduce the
+rank tolerance until a dependent model produces coefficients. A nonzero
+constant *without* an intercept can be a valid rank-one predictor.
+
+### Q13b.5. Why are `ConditionEstimate` and `ResidualSumSquares` not p-values?
+
+`ConditionEstimate` measures the induced 1-norm condition estimate
+`kappa_1(R)` of the **transformed QR triangular factor**; standardizing
+features changes that diagnostic. It is not the spectral condition of raw X,
+a coefficient error bound, or proof of statistical independence.
+
+`ResidualSumSquares` is `sum((y_i-Predict(x_i))²)` on **training data** in
+response units squared, not an RMS error, holdout score, or significance
+test. Financial and industrial data may be autocorrelated or
+heteroskedastic; OLS intentionally does not invent IID Gaussian t/F tests,
+p-values, or confidence intervals.
+
+### Q13b.6. Can I standardize test data again before calling `Predict`?
+
+No. `FitStandardized` learned training means and population scales
+(`DDOF=0`) once. It then converted slopes and intercept back to physical
+units. `Model.Predict` already expects the **original feature units** and
+the exact training column order. Independently normalizing or refitting on
+test data changes the model and leaks future information into inference.
+
+A 0-row inference matrix with the trained number of columns is valid and
+returns a **non-nil empty** prediction slice; a different feature count is
+`ErrShape`. Input matrices must remain unchanged during each prediction.
+
+### Q13b.7. Can I mutate `FitResult.Model`, a coefficient slice, or input matrix?
+
+The exported `FitResult` fields are caller-owned metadata. Replacing
+`result.Model` does not mutate the previously retained `*ols.Model`.
+`Coefficients()` returns a detached slope slice; editing it cannot affect
+predictions. `Predict()` returns a new output slice per call. On the other
+hand, mutating a passed `matrix.Dense` or a write-through `matrix.View`
+while a `Fit`/`Predict` call is reading it is unsupported; an immutable
+Model is not a snapshot transaction over caller data.
+
+`(*ols.FitResult).IsNil()` checks the receiver pointer only. A non-nil
+zero-value result is still present; check the error returned by `Fit` to
+establish training success. Nil `Model.Predict` returns `ErrNilInput`, while
+nil `Model.Coefficients` returns `(nil,0)` because it has no error result.
+
+### Q13b.8. What happens if all inputs are finite but SSE overflows?
+
+An individual residual near `1e200` is finite, but its square may exceed
+`math.MaxFloat64`. `ols` uses a scaled sum-of-squares accumulator so it does
+not falsely overflow on intermediate squaring; if the **required final SSE**
+cannot be represented, Fit returns `nil, ErrOverflow`. Failing Fit never
+publishes a partial model, and a canceled Predict never publishes a partial
+prediction slice.
+
+### Q13b.9. What is the public validation and cancellation order?
+
+`Fit`: context → RankTolerance → nil/typed-nil → shape/count → finite input
+cells → QR rank → coefficient/SSE computation. A canceled context takes
+precedence over invalid options, and invalid options precede data reads.
+Use `errors.Is(err, ols.ErrRankDeficient)`, not string comparisons;
+wrapped QR/stats roots remain available to `errors.Is`. Cancellation is
+cooperative, including after the non-context-taking stats fitter returns.
+
+### Q13b.10. Which realistic regression scenarios are included?
+
+Five executable `// Output:` examples cover a 24-month CAPM beta and alpha
+with a stress scenario, a 24-point industrial sensor calibration, a strict
+zero-origin two-channel charging model, rank-deficient duplicate telemetry
+with caller-driven schema correction, and a chronological six-day holdout
+for energy-load forecasting. Their data are **synthetic**, not live feeds.
+See [`OLS.md`](OLS.md), [`ols/doc.go`](../../../../Downloads/lvlath_ols_phase09_v2/ols/doc.go), and
+[`ols/example_test.go`](../../../../Downloads/lvlath_ols_phase09_v2/ols/example_test.go) for the proofs and real API.
 
 ---
 

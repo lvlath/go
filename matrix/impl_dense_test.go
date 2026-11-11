@@ -442,11 +442,11 @@ func TestInducedCoversZeroSizedAndBounds(t *testing.T) {
 	// Zero-sized results are legal
 	z1, err := m.Induced([]int{}, []int{0, 1})
 	if err != nil || z1.Rows() != 0 || z1.Cols() != 2 {
-		t.Fatalf("Induced zero×2 failed: z1=(%d,%d), err=%v", z1.Rows(), z1.Cols(), err)
+		t.Fatalf("Induced zero×2 failed: z1=(%d,%d), err=%w", z1.Rows(), z1.Cols(), err)
 	}
 	z2, err := m.Induced([]int{0, 1}, []int{})
 	if err != nil || z2.Rows() != 2 || z2.Cols() != 0 {
-		t.Fatalf("Induced 2×zero failed: z2=(%d,%d), err=%v", z2.Rows(), z2.Cols(), err)
+		t.Fatalf("Induced 2×zero failed: z2=(%d,%d), err=%w", z2.Rows(), z2.Cols(), err)
 	}
 
 	// Bounds checking on indices
@@ -583,5 +583,118 @@ func TestNewDenseCheckedElementCount(t *testing.T) {
 	}
 	if got, err := matrix.NewDense(0, maxInt); err != nil || got == nil || got.Rows() != 0 || got.Cols() != maxInt {
 		t.Fatalf("NewDense zero-domain shape: got=%v err=%v", got, err)
+	}
+}
+
+// TestViewClone_DetachedWindow verifies row-stride selection and two-way isolation.
+func TestViewClone_DetachedWindow(t *testing.T) {
+	parent, err := matrix.NewDense(4, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for row := 0; row < 4; row++ {
+		for col := 0; col < 5; col++ {
+			if err = parent.Set(row, col, float64(10*row+col)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	view, err := parent.View(1, 1, 2, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var source matrix.Matrix = view // The compile-time interface gate.
+	cloned := source.Clone()
+	if cloned == nil || cloned.Rows() != 2 || cloned.Cols() != 3 {
+		t.Fatalf("unexpected clone shape: %v", cloned)
+	}
+	for row := 0; row < 2; row++ {
+		for col := 0; col < 3; col++ {
+			got, err := cloned.At(row, col)
+			if err != nil || got != float64(10*(row+1)+col+1) {
+				t.Fatalf("clone[%d,%d] = %v, %v", row, col, got, err)
+			}
+		}
+	}
+	if err = cloned.Set(0, 0, 900); err != nil {
+		t.Fatal(err)
+	}
+	if original, err := parent.At(1, 1); err != nil || original != 11 {
+		t.Fatalf("clone wrote through: %v, %v", original, err)
+	}
+	if err = parent.Set(1, 2, 800); err != nil {
+		t.Fatal(err)
+	}
+	if still, err := cloned.At(0, 1); err != nil || still != 12 {
+		t.Fatalf("clone retained base alias: %v, %v", still, err)
+	}
+}
+
+// TestViewClone_NilAndEmpty locks nil safety and exact empty-window dimensions.
+func TestViewClone_NilAndEmpty(t *testing.T) {
+	var nilView *matrix.View
+	if nilView.Clone() != nil {
+		t.Fatal("nil view must return nil clone")
+	}
+	if (&matrix.View{}).Clone() != nil {
+		t.Fatal("unbound view must return nil clone")
+	}
+	parent, err := matrix.NewDense(3, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, shape := range []struct{ row, col, rows, cols int }{
+		{3, 0, 0, 4}, {0, 4, 3, 0}, {3, 4, 0, 0},
+	} {
+		view, err := parent.View(shape.row, shape.col, shape.rows, shape.cols)
+		if err != nil {
+			t.Fatal(err)
+		}
+		clone := view.Clone()
+		if clone == nil || clone.Rows() != shape.rows || clone.Cols() != shape.cols {
+			t.Fatalf("empty clone dimensions: %v", shape)
+		}
+	}
+}
+
+// TestViewClone_PreservesNumericPolicy checks distance sentinels and the
+// source matrix's explicit nonfinite-validation policy across ownership copy.
+func TestViewClone_PreservesNumericPolicy(t *testing.T) {
+	parent, err := matrix.NewPreparedDense(2, 2, matrix.WithAllowInfDistances())
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := parent.View(0, 0, 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clone := view.Clone()
+	if err = clone.Set(0, 0, math.Inf(1)); err != nil {
+		t.Fatalf("clone lost +Inf policy: %v", err)
+	}
+	value, err := parent.At(0, 0)
+	if err != nil || value != 0 {
+		t.Fatalf("clone changed parent: %v, %v", value, err)
+	}
+
+	// NaN/Inf policy is metadata, not inferred from the currently stored data.
+	unvalidated, err := matrix.NewPreparedDense(2, 2, matrix.WithNoValidateNaNInf())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = unvalidated.Set(0, 0, math.NaN()); err != nil {
+		t.Fatal(err)
+	}
+	window, err := unvalidated.View(0, 0, 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copyWindow := window.Clone()
+	clonedNaN, err := copyWindow.At(0, 0)
+	if err != nil || !math.IsNaN(clonedNaN) {
+		t.Fatalf("clone changed permitted nonfinite value: %v, %v", clonedNaN, err)
+	}
+	if err = copyWindow.Set(0, 1, math.NaN()); err != nil {
+		t.Fatalf("clone lost disabled-validation policy: %v", err)
 	}
 }
