@@ -3,7 +3,7 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/TUTORIAL.md
-  Package reference: matrix, stats, ols and the wider lvlath package family
+  Package reference: matrix, stats, ols, ridge and the wider lvlath package family
   Contract status: learning guide; package doc.go and source define the public API.
   Scope: graph, matrix, factorization, statistical and temporal workflows.
   lvlath - Repository Tutorial
@@ -48,6 +48,7 @@ This tutorial is the beginning of the learning path. It introduces the objects a
     11a. [PAA Foundations: Fractional Dimensionality Reduction](#11a-paa-foundations-fractional-dimensionality-reduction)
     11b. [SAX Foundations: Symbolic Words and Euclidean Screening](#11b-sax-foundations-symbolic-words-and-euclidean-screening)
     11c. [OLS Foundations: Stable QR Regression and Frozen Prediction](#11c-ols-foundations-stable-qr-regression-and-frozen-prediction)
+    11d. [Ridge Foundations: Correlated Factors, Wide Matrices and Numerical Preconditioning](#11d-ridge-foundations-correlated-factors-wide-matrices-and-numerical-preconditioning)
 12. [Algorithm Selection Guide](#12-algorithm-selection-guide)
 13. [Professional Best Practices](#13-professional-best-practices)
 14. [Where To Go Next](#14-where-to-go-next)
@@ -77,6 +78,7 @@ The library covers:
 * `series` exact integer-nanosecond grid validation, causal lag/difference/returns, and complete index windows;
 * `stats` stable Welford/Chan moments, mergeable partitions, and immutable fitted feature standardization;
 * `ols` immutable full-rank regression models trained by pivoted Householder QR, with exact zero-origin policy and physical-unit coefficients;
+* `ridge` explicit positive-Lambda Tikhonov regression for correlated and wide designs, unpenalized intercept, protected augmented QR and physical-unit predictions;
 * `paa` exact fractional time-series compression, rational segment boundaries and value-only feature projection;
 * `sax` symbolic words from fractional PAA and compatible Euclidean MINDIST (not a DTW lower bound);
 * `tsp` matrix-backed tour optimization with exact, approximate, matching, and local-search regimes;
@@ -102,6 +104,7 @@ timestamp-grid inspection  *series.ValidationResult    exact cadence / missing s
 streaming statistics      *stats.Summary               exact-binary-input mean / scaled variance
 train-only scaling        *stats.ScaleFitResult        detached fit metadata / immutable model
 full-rank regression      *ols.FitResult               physical beta / intercept / rank / SSE / QR condition
+L2 regularized regression *ridge.FitResult             physical beta / SSE / penalty / objective
 fractional PAA             *paa.Result                 detached means / exact rational segments
 SAX symbolic word         *sax.Result                 detached symbols / policy identity / optional PAA
 closed tour                *tsp.Result                 cost, exactness, timeout, ratio
@@ -176,6 +179,7 @@ Read these files as a learning path. `doc.go` files define implemented package c
 | 8b   | [`PAA.md`](PAA.md)                         | Exact fractional segment geometry, nearest-even floating arithmetic, wrappers, and SAX-oriented ownership.                  |
 | 8c   | [`SAX.md`](SAX.md)                         | Right-bin quantization, SHA-256 policy identity, Euclidean MINDIST, DTW non-pruning law and examples.                       |
 | 8d   | [`OLS.md`](OLS.md)                         | Pivoted-QR full-rank regression, scale-only origin policy, frozen coefficients, SSE and error contracts.                    |
+| 8e   | [`RIDGE.md`](RIDGE.md)                     | Positive-Lambda augmented Householder QR, unpenalized intercept, stable strongly regularized slopes, immutable models.      |
 | 9    | [`DTW.md`](DTW.md)                         | `Align`, `AlignCostMatrix`, `AlignMatrix`, `AlignBounded`, exact `Search`, numeric and path artifacts.                      |
 | 9a   | [`DTW_SEARCH.md`](DTW_SEARCH.md)           | Fixed-length exact top-K, certified LB_Keogh, workers, budgets, and partial-result law.                                     |
 | 10   | [`TSP.md`](TSP.md)                         | Matrix-backed tours, exact regimes, Christofides, Blossom matching, local search, timeouts.                                 |
@@ -198,6 +202,7 @@ Working on numeric/time-series workflows:
   SERIES -> STATS -> DTW -> MATRICES
   MATRICES -> STATS -> DTW
   MATRICES -> STATS -> OLS -> chronological holdout prediction
+  MATRICES -> STATS -> RIDGE -> wide/collinear factor predictions with shrinkage
   SAX (Euclidean screening) != DTW (nonlinear alignment)
   MATRICES -> TSP
 
@@ -271,6 +276,12 @@ Think of `lvlath` as a contract stack.
                          │ ols                                           │
                          │ pivoted QR regression / immutable Model       │
                          │ original units, train-only scaling            │
+                         └───────────────────────────────────────────────┘
+
+                         ┌───────────────────────────────────────────────┐
+                         │ ridge                                         │
+                         │ explicit positive Lambda / augmented QR       │
+                         │ unpenalized intercept, stable small slopes    │
                          └───────────────────────────────────────────────┘
 ```
 
@@ -852,6 +863,7 @@ The full derivation, dimension rules, numerical limits, and the separate LU/QR/C
 * `sax` reuses `paa` for fractional aggregation and publishes symbolic Euclidean lower bounds; its words are not compatible DTW pruning certificates.
 * `stats` streams finite scalar data and fits immutable per-feature transforms over `matrix.Matrix`; it never changes the matrix or infers a validity mask.
 * `ols` uses the same QR and stats kernels for full-rank linear-factor modeling, preserves physical coefficients and never refits on heldout data.
+* `ridge` builds a positive-Lambda augmented system, equilibrates its QR coordinates and accepts collinear/wide designs without hidden OLS fallback; it also predicts from frozen physical parameters.
 
 ---
 
@@ -1708,6 +1720,132 @@ limits, and five operational `// Output:` examples, continue to
 
 ---
 
+## 11d. Ridge Foundations: Correlated Factors, Wide Matrices and Numerical Preconditioning
+
+`ridge` is appropriate when a linear response depends on **related or redundant predictors** and the application explicitly accepts the bias introduced by L2 shrinkage to reduce coefficient instability. It does not make time-series observations independent, remove leakage, or select a regularization strength automatically. Unlike `ols`, it admits a wide `n × p` feature matrix with `p>n`, provided the *augmented* QR problem is numerically accepted.
+
+### 11d.1. What is being minimized?
+
+![Normalized ridge objective](https://latex.codecogs.com/svg.image?%5Cfrac%7B%5Cmathrm%7BSSE%7D%7D%7B2n%7D%2B%5Cfrac%7B%5Clambda%7D%7B2%7D%5C%7C%5Ctheta%5C%7C_2%5E2)
+
+Here `n` is the number of training observations, `theta` is the **optimization-coordinate** slope vector, and `Lambda` is finite and strictly positive. The free intercept is never penalized. The extra `p` penalty rows of the canonical least-squares system implement exactly this objective:
+
+```text
+  original observations                         p penalty rows
+  ┌─────────────────────────────────┐          ┌────────────────────────┐
+  │ ones | (X - trainMean)/scale    │          │ zero | sqrt(nλ) * I_p  │
+  └─────────────────────────────────┘          └────────────────────────┘
+                 n × (p+1)                               p × (p+1)
+
+  with a free intercept:
+    A = [1, Z; 0, sqrt(nλ) * I_p]
+    yAug = [observed y; zero_p]
+    SSE(A*c,yAug) = SSE(original observations) + nλ||theta||²
+```
+
+If `NoIntercept=true`, there is **no column of ones**, the physical intercept is exactly zero and the preprocessing is **scale-only** (`x/scale`, never `(x-mean)/scale`). The population standard deviation uses `DDOF=0`; constant training columns are retained with scale one. Calling `ridge.Fit` with `Lambda=0` is always `ErrInvalidOption`, not a request to route into the OLS package.
+
+### 11d.2. Why is a safe penalty weight not enough?
+
+With two observations `X=[1,2]`, `y=[1,2]`, `NoIntercept=true`, and `Lambda=1e100`, the **correct** coefficient is `5/(5+2*Lambda)≈2.5e-100` — exceptionally small but nonzero. Forming `sqrt(n*Lambda)` through the naive floating multiplication can overflow at high Lambda, but even `sqrt(n)*sqrt(Lambda)` alone does not eliminate Householder cancellation: original observation rows placed before a much larger penalty row can lose the tiny `Qᵀ*y` projection and produce `-0`.
+
+The fitted QR input is an *exactly equivalent system* that performs three deterministic operations:
+
+1. Place all `p` **zero-response penalty rows first**, followed by the real observation rows (an orthogonal row permutation).
+2. Put penalized slope columns **before** the optional unpenalized intercept column.
+3. Divide each slope column by its maximum absolute augmented entry, and divide the intercept by `sqrt(n)`. Undo these positive column divisors **after** the solve.
+
+The independent ordinary least-squares minimization remains `matrix.SolveLeastSquares`; no Gram matrix, OLS fallback, or hidden increase in Lambda is introduced. The trained penalty is computed from recovered `theta`, **not** the temporary QR coordinates `gamma` or public physical-unit slopes after `Standardize=true`.
+
+```text
+Canonical A_aug, y_aug                 Stable QR representation
+───────────────────────              ───────────────────────────
+ original y rows                      p penalty rows, RHS zero
+ p diagonal penalty rows    ────>     n original rows, RHS y
+ intercept column first               slopes first; intercept last
+ raw column magnitudes                positive column equilibration
+
+       matrix.SolveLeastSquares(ctx, A_QR, y_QR, options)
+                               │
+                    gamma_j / divisor_j
+                               │
+                      theta and intercept
+                               │
+                  beta_j = theta_j / scale_j
+                               │
+                immutable Model + SSE + Penalty + Objective
+```
+
+Very small Lambda can still fail the **numerical** rank cutoff, and extremely disparate features can lose representability even under preconditioning. That must return the appropriate sentinel; the package does not invent a stronger numerical guarantee than the QR backend supports. See [`RIDGE.md`](RIDGE.md#2-proving-the-augmented-least-squares-equivalence) for the proof.
+
+### 11d.3. A runnable correlated-factor stress scenario
+
+The following synthetic data contain two perfectly duplicated factor columns. Plain OLS would not identify separate slopes, whereas positive-Lambda Ridge has a unique accepted regularized solution. The heldout observation is not used when fitting feature scales.
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+
+    "github.com/lvlath/go/matrix"
+    "github.com/lvlath/go/ridge"
+)
+
+func main() {
+    x, err := matrix.NewDense(6, 3)
+    if err != nil { fmt.Println("allocate:", err); return }
+    // Feature columns: correlated demand indexes, and capacity utilization (%).
+    if err = x.Fill([]float64{
+        -2, -2, 38,
+        -1, -1, 45,
+         0,  0, 51,
+         1,  1, 56,
+         2,  2, 64,
+         3,  3, 70,
+    }); err != nil { fmt.Println("training:", err); return }
+    responses := []float64{80, 83, 87, 91, 95, 99} // Demand, MWh.
+
+    fit, err := ridge.FitStandardized(context.Background(), x, responses, 0.2)
+    if err != nil { fmt.Println("fit:", err); return }
+
+    upcoming, err := matrix.NewDense(2, 3)
+    if err != nil { fmt.Println("allocate future:", err); return }
+    if err = upcoming.Fill([]float64{4, 4, 73, -3, -3, 35}); err != nil {
+        fmt.Println("future:", err)
+        return
+    }
+    predicted, err := fit.Model.Predict(context.Background(), upcoming)
+    if err != nil { fmt.Println("predict:", err); return }
+    slopes, _ := fit.Model.Coefficients()
+    fmt.Printf("features=%d scenarios=%d monotone=%t\n",
+        len(slopes), len(predicted), predicted[0] > predicted[1])
+    fmt.Printf("SSE=%.2f penalty=%.2f objective=%.2f\n",
+        fit.ResidualSumSquares, fit.Penalty, fit.Objective)
+}
+```
+
+This intentionally prints its diagnostics rather than treating them as calibrated confidence intervals. In an actual deployment, a separate chronological holdout or a live sensor validation program is required; the six training samples alone cannot support an accuracy claim.
+
+### 11d.4. OLS, Ridge and numerical matrix QR are not interchangeable
+
+| Question                | `ols`                              | `ridge`                                     | `matrix.SolveLeastSquares`                              |
+|-------------------------|------------------------------------|---------------------------------------------|---------------------------------------------------------|
+| Objective               | Minimize original-unit SSE         | Minimize `SSE/(2n)+Lambda*                  |                                                         |theta||²/2` | Minimize RHS residual for a supplied matrix |
+| Penalty strength        | None                               | Finite, strictly positive, caller-chosen    | No automatic penalty                                    |
+| Duplicated predictors   | Rejected by full-rank QR           | Accepted if augmented numerical rank passes | Depends on supplied design rank                         |
+| `p>n` original features | Rejected by shape for an OLS fit   | Allowed after p penalty rows                | Original wide QR input rejected                         |
+| Intercept               | Optional and unpenalized by nature | Optional and explicitly unpenalized         | Caller must construct any intercept                     |
+| Physical Model          | Frozen original-unit slopes        | Frozen original-unit slopes                 | Generic solution Matrix                                 |
+| Model diagnostics       | SSE and QR condition estimate      | SSE, slope Penalty, normalized Objective    | Rank, original-coordinate residuals, condition estimate |
+
+Both regression packages use `stats` population scaling and `matrix` QR; neither performs automatic cross-validation or IID statistical inference. An internal shared helper should be introduced only when its numeric, ownership and error contracts are provably identical, not simply because the public signatures look similar.
+
+For six executable examples with real decision workflows (chronological macro holdout, optical spectroscopy, seasonal AR(12), strict-origin detector, single-standard insufficiency and extreme-Lambda shrinkage), read [`ridge/example_test.go`](../ridge/example_test.go). The independent multi-factor command-line experiment is [`examples/ridge/main.go`](../examples/ridge/main.go).
+
+---
+
 ## 12. Algorithm Selection Guide
 
 ### If the input is a graph
@@ -1745,6 +1883,7 @@ limits, and five operational `// Output:` examples, continue to
 | Covariance/correlation                       | `matrix`                                    | stable sample moments and direct Pearson coefficients.                                  |
 | Square linear solve with pivoting            | `matrix.FactorLU`                           | reusable factor, `P*A=L*U`, exact residual diagnostics.                                 |
 | Tall full-column-rank least squares          | `matrix.SolveLeastSquares` / `FactorQR`     | Householder QR; numerical rank and `kappa_1(R)` measurement.                            |
+| Regularized regression for collinear/wide features | `ridge.Fit` / `ridge.FitStandardized` | Positive-Lambda slope shrinkage, unpenalized intercept, frozen original-unit coefficients. |
 | Fitted regression for future physical inputs | `ols.Fit` / `ols.FitStandardized`           | Immutable Model, original-unit coefficients, training SSE, no refit.                    |
 | Symmetric positive-definite system           | `matrix.FactorCholesky`                     | accepted symmetric midpoint, SPD check, reusable solves.                                |
 | Symmetric spectral analysis                  | `matrix`                                    | eigenvalues/eigenvectors.                                                               |

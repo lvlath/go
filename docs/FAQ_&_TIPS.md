@@ -57,6 +57,7 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
 13. [PAA FAQ](#13-paa-faq)
     13a. [SAX FAQ](#13a-sax-faq)
     13b. [OLS FAQ](#13b-ols-faq)
+    13c. [Ridge FAQ](#13c-ridge-faq)
 14. [Builder and gridgraph tips](#14-builder-and-gridgraph-tips)
 15. [Errors and diagnostics](#15-errors-and-diagnostics)
 16. [Determinism and concurrency](#16-determinism-and-concurrency)
@@ -73,26 +74,27 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
 
 Start with the question, not the algorithm name.
 
-| Question                                                       | Use                   | Reason                                                                      |
-|:---------------------------------------------------------------|:----------------------|:----------------------------------------------------------------------------|
-| “How many hops away is this vertex?”                           | `bfs`                 | BFS minimizes edge count.                                                   |
-| “Which vertices are in the same weak island?”                  | `bfs.Components`      | Weak membership ignores direction for component grouping.                   |
-| “What is a deterministic deep traversal?”                      | `dfs`                 | DFS gives post-order and forest-style structure.                            |
-| “Does this graph contain a cycle?”                             | `dfs.DetectCycles`    | Returns deterministic witness cycles.                                       |
-| “What order can I execute a DAG?”                              | `dfs.TopologicalSort` | Topological order is a directed acyclic graph contract.                     |
-| “What is the cheapest route by weight?”                        | `dijkstra`            | Dijkstra minimizes non-negative total cost.                                 |
-| “What is the cheapest connected backbone?”                     | `mst`                 | MST solves minimum connected spanning structure.                            |
-| “What is the maximum throughput?”                              | `flow`                | Flow solves capacity-constrained source-to-sink movement.                   |
-| “How do I turn graph topology into numeric features?”          | `matrix`              | Adjacency, incidence, degree vector, metric closure, algebra.               |
-| “How do I model a grid map?”                                   | `gridgraph`           | Generates lattice topology instead of manual wiring.                        |
-| “How do I build repeatable fixtures?”                          | `builder`             | Deterministic graph/data generation.                                        |
-| “How do I compress a fixed-size scalar time-series window?”    | `paa`                 | Exact fractional PAA averages with rational boundaries and no dropped tail. |
-| “How do I encode a fixed-length symbolic signature?”           | `sax`                 | Fractional PAA + right-bin quantization, compatible Euclidean MINDIST.      |
-| “How do I align two time series?”                              | `dtw`                 | Dynamic Time Warping handles local timing drift.                            |
-| “How do I compute robust moments or merge workers?”            | `stats`               | Welford/Chan moments, exact mean sum, scaled M2.                            |
-| “How do I normalize heldout features without refit?”           | `stats`               | Immutable fitted model over matrix columns.                                 |
-| “How do I estimate linear factor coefficients and reuse them?” | `ols`                 | Full-rank QR, original-unit beta/intercept, immutable prediction.           |
-| “How do I visit all cities in a route?”                        | `tsp`                 | Tour construction/improvement/exact-small-instance routing.                 |
+| Question                                                                     | Use                   | Reason                                                                                |
+|:-----------------------------------------------------------------------------|:----------------------|:--------------------------------------------------------------------------------------|
+| “How many hops away is this vertex?”                                         | `bfs`                 | BFS minimizes edge count.                                                             |
+| “Which vertices are in the same weak island?”                                | `bfs.Components`      | Weak membership ignores direction for component grouping.                             |
+| “What is a deterministic deep traversal?”                                    | `dfs`                 | DFS gives post-order and forest-style structure.                                      |
+| “Does this graph contain a cycle?”                                           | `dfs.DetectCycles`    | Returns deterministic witness cycles.                                                 |
+| “What order can I execute a DAG?”                                            | `dfs.TopologicalSort` | Topological order is a directed acyclic graph contract.                               |
+| “What is the cheapest route by weight?”                                      | `dijkstra`            | Dijkstra minimizes non-negative total cost.                                           |
+| “What is the cheapest connected backbone?”                                   | `mst`                 | MST solves minimum connected spanning structure.                                      |
+| “What is the maximum throughput?”                                            | `flow`                | Flow solves capacity-constrained source-to-sink movement.                             |
+| “How do I turn graph topology into numeric features?”                        | `matrix`              | Adjacency, incidence, degree vector, metric closure, algebra.                         |
+| “How do I model a grid map?”                                                 | `gridgraph`           | Generates lattice topology instead of manual wiring.                                  |
+| “How do I build repeatable fixtures?”                                        | `builder`             | Deterministic graph/data generation.                                                  |
+| “How do I compress a fixed-size scalar time-series window?”                  | `paa`                 | Exact fractional PAA averages with rational boundaries and no dropped tail.           |
+| “How do I encode a fixed-length symbolic signature?”                         | `sax`                 | Fractional PAA + right-bin quantization, compatible Euclidean MINDIST.                |
+| “How do I align two time series?”                                            | `dtw`                 | Dynamic Time Warping handles local timing drift.                                      |
+| “How do I compute robust moments or merge workers?”                          | `stats`               | Welford/Chan moments, exact mean sum, scaled M2.                                      |
+| “How do I normalize heldout features without refit?”                         | `stats`               | Immutable fitted model over matrix columns.                                           |
+| “How do I estimate linear factor coefficients and reuse them?”               | `ols`                 | Full-rank QR, original-unit beta/intercept, immutable prediction.                     |
+| “How do I fit correlated or wide linear factors with explicit L2 shrinkage?” | `ridge`               | Augmented QR, positive Lambda, unpenalized intercept and frozen physical predictions. |
+| “How do I visit all cities in a route?”                                      | `tsp`                 | Tour construction/improvement/exact-small-instance routing.                           |
 
 ### Q1.2. How do I avoid using the wrong algorithm?
 
@@ -110,7 +112,8 @@ compute all-pairs costs       -> Matrix metric closure
 validate grid/causal features -> Series
 stream/merge stable moments   -> Stats
 fit training-only scaling     -> Stats
-fit linear factor model       -> OLS (pivoted QR, no refit)
+fit full-rank linear factors  -> OLS (pivoted QR, no refit)
+fit correlated/wide factors   -> Ridge (positive Lambda, unpenalized intercept)
 encode symbolic SAX words     -> SAX
 align time-warped signals     -> DTW
 build a closed tour           -> TSP
@@ -1824,6 +1827,78 @@ with caller-driven schema correction, and a chronological six-day holdout
 for energy-load forecasting. Their data are **synthetic**, not live feeds.
 See [`OLS.md`](OLS.md), [`ols/doc.go`](../../../../Downloads/lvlath_ols_phase09_v2/ols/doc.go), and
 [`ols/example_test.go`](../../../../Downloads/lvlath_ols_phase09_v2/ols/example_test.go) for the proofs and real API.
+
+---
+
+## 13c. Ridge FAQ
+
+### Q13c.1. When should I use `ridge` rather than `ols` or a raw matrix QR solve?
+
+Use `ols` when the unregularized linear factor model is identifiable under its full-column-rank contract. Use `ridge` when your **explicit modeling decision** is to control slope magnitude and accept shrinkage bias, especially with duplicated/correlated predictors or `p>n`. Use `matrix.SolveLeastSquares` for a general rectangular least-squares system that already has its design and RHS and does not need a regression-specific training transform or public objective diagnostics.
+
+The canonical Ridge objective is **`SSE/(2*n) + Lambda/2*sum(theta_j²)`**. `Lambda` must be finite and strictly positive. `Lambda=0` returns `ridge.ErrInvalidOption`; it does not invoke OLS. The package does not choose Lambda, cross-validate, compute p-values or provide a statistical uncertainty model.
+
+### Q13c.2. Which API fits my data, and what does the Lambda argument mean?
+
+| Need                                 | Call                                                                | Important contract                                       |
+|--------------------------------------|---------------------------------------------------------------------|----------------------------------------------------------|
+| Affine, original feature units       | `ridge.FitWithLambda(ctx,X,y,lambda)`                               | Penalize only physical slopes; intercept is free         |
+| Affine, population-scaled predictors | `ridge.FitStandardized(ctx,X,y,lambda)`                             | Penalize optimization slopes theta; return physical beta |
+| Physical zero-origin calibration     | `ridge.FitThroughOrigin(ctx,X,y,lambda)`                            | Intercept exactly +0; no centering                       |
+| Zero-origin with balanced predictors | `ridge.FitThroughOriginStandardized(ctx,X,y,lambda)`                | Scale-only, no implicit offset                           |
+| Custom relative QR cutoff            | `ridge.Fit(ctx,X,y,ridge.Options{Lambda: ..., RankTolerance: ...})` | Positive Lambda remains mandatory                        |
+
+These are wrappers over the one canonical `Fit`. None performs automatic hyperparameter selection or changes the penalty when a solve fails. In particular, a standardized `theta` and the physical `beta` differ: `theta_j=beta_j*trainingScale_j`. Therefore the same numeric Lambda does not define an equivalent objective with `Standardize=true` versus false.
+
+### Q13c.3. Why is the intercept never penalized?
+
+The affine model is `y≈b+X*beta`. An intercept represents the output level when the selected feature reference is zero. Shrinking it with L2 would incorrectly pull that level toward zero. Ridge therefore creates **exactly p penalty rows**, with zeros in the intercept column, and puts `sqrt(n*Lambda)` only on slope diagonals. An original constant feature is **not the same as an intercept**: its slope remains penalized, and the explicit unpenalized intercept can absorb the constant level.
+
+At `X=[-1,1]`, `y=[4,4]`, with any finite positive Lambda, the optimal intercept is `4`, both residuals vanish, and the slope is zero. This is a useful oracle for catching accidental intercept penalization.
+
+### Q13c.4. Why must `NoIntercept + Standardize` be scale-only?
+
+Centering would change the physical prediction law. If `z=(x-mean)/scale` and an apparently zero-intercept model fits `theta*z`, then in original units the output is `x*(theta/scale) - mean*(theta/scale)`: **the second term is a hidden intercept**. The origin-constrained mode must instead use `z=x/scale`, ensuring that `Predict([0,...,0])` returns exactly positive zero. The population scales (`DDOF=0`, `stats.UnitScaleConstant`) are learned only on training rows and are never fitted again during inference.
+
+### Q13c.5. Why can a correct huge-Lambda coefficient become `-0` in naive QR?
+
+A safe `sqrt(n)*sqrt(Lambda)` prevents intermediate multiplication overflow, but it does **not** prevent loss of precision during `Qᵀ*y` in Householder QR. With `NoIntercept=true`, `X=[1,2]`, `y=[1,2]`, and `Lambda=1e100`, the exact optimum is `5/(5+2e100) ≈ 2.5e-100`. This is a representable, nonzero coefficient. If the augmented matrix is fed to QR in the naive row order `[1,2,sqrt(2*Lambda)]ᵀ`, subtracting large RHS components during a reflector can destroy the tiny projection, producing `-0`.
+
+`ridge` protects this by constructing the canonical augmented model, then passing a **mathematically equivalent QR representation** that moves the *zero-response penalty rows first*, places slope columns before the optional intercept, and equilibrates columns by strictly positive divisors. If `P` is a row permutation, `C` a column permutation and `D` positive diagonal, the solver sees `P*A*C*D^-1` and `P*yAug`; the recovered canonical coefficients are `C*D^-1*gamma`. This is preconditioning, **not** a silent change of Lambda. Full mathematics and the independent oracles are documented in [`RIDGE.md`](RIDGE.md#21-why-the-qr-representation-needs-its-own-coordinate-system).
+
+### Q13c.6. Does strict Lambda>0 guarantee the numerical QR solver will always succeed?
+
+No. The penalty establishes positive definiteness of the **exact slope Hessian**. With an intercept and at least one row, the exact augmented matrix has full column rank. But float64 can still underflow an extremely small penalty contribution or fail the QR relative rank cutoff. `RankTolerance=0` selects the `matrix` solver's dimension-dependent automatic cutoff; positive tolerances are relative to the pivoted QR diagonal of the *equilibrated* system. A numerical rank failure returns `ErrRankDeficient` (also matching `matrix.ErrRankDeficient` when reported by that dependency). Never decrease tolerance or increase Lambda automatically to make a test pass.
+
+### Q13c.7. Can Ridge fit `p>n` or duplicated columns?
+
+Yes, when the augmented QR rank is accepted. The original `n × p` matrix may be wide or have repeated columns; the additional `p` diagonal penalty rows make the regularized slope problem algebraically identifiable. `ridge` does **not** drop duplicates, expose a pseudoinverse, or change into OLS. For perfectly duplicated inputs and equal penalty weights, the exact optimum assigns equal slopes in the matching symmetric coordinates. Unit-scale constant features remain present and penalized, not silently discarded.
+
+### Q13c.8. How should I interpret `ResidualSumSquares`, `Penalty`, and `Objective`?
+
+`ResidualSumSquares` is **unscaled** original-unit training SSE. `Penalty` is the already-normalized term `Lambda*sum(theta_j²)/2` in training optimization coordinates; it never includes the intercept. `Objective` equals `ResidualSumSquares/(2*n) + Penalty`. With `Standardize=false`, `theta=beta`; otherwise use the learned training scales to interpret the implicit penalty. The public `Coefficients()` method returns original-unit beta, so recomputing penalty from its output after standardized training is generally **wrong**.
+
+A low training Objective is not a cross-validated loss, holdout MAE, confidence interval, or portfolio-risk guarantee. For a performance claim, measure an independent, suitably ordered validation dataset with exactly the same frozen model and feature schema.
+
+### Q13c.9. How do I choose Lambda without leaking future information?
+
+This package deliberately has no automatic selection policy. In financial, industrial and temporal settings, define training/validation splits **in time order** and choose Lambda using a separate application-controlled sweep. Fit population means/scales only on the candidate's training fold; compute validation error using physical heldout features and the fitted `Model.Predict`. For the final model, refit on the intended training period with the selected explicit Lambda, then test once on untouched evaluation data. A good result for a synthetic fixture is not evidence of performance on live measurements.
+
+### Q13c.10. What do empty batches, nil receivers, and typed nils mean?
+
+A successful fit returns a non-nil `*ridge.FitResult` implementing `core.Nilable`. `(*FitResult)(nil).IsNil()` is true, including behind an interface; `(&FitResult{}).IsNil()` is false because this tests pointer **presence**, not training success. Nil `(*Model).Coefficients()` returns `(nil,0)`, while nil or unfitted `Model.Predict` returns `ErrNilInput`. `Predict` accepts a detached, non-nil empty result for a `0 × trainedFeatureCount` matrix; an incompatible feature width returns `ErrShape`. A nil context produces `ErrInvalidOption`; cancellation preserves `ctx.Err()`.
+
+### Q13c.11. What is the failure order, and can an output be partially returned?
+
+`Fit`: context → Lambda and rank options → nil/typed-nil → shape/checked allocation → entire input finiteness → transformation/QR rank → physical coefficients/SSE/Penalty/Objective. `Predict`: context → model/matrix presence → shape/size → *all* input finiteness → row calculation. `ErrNonFinite` means an invalid source observation; `ErrOverflow` means unrepresentable derived arithmetic or size. Matrix/stats root causes remain available via `errors.Is` when wrapped.
+
+Both APIs return **nil output on error**, not partially filled results. Neither retains or mutates caller-owned training matrices. Do not mutate a matrix during either training or inference; successful Model inference can be called concurrently with stable inputs and independent per-call buffers.
+
+### Q13c.12. What real-world scenarios and numeric oracles are executable?
+
+Six deterministic `// Output:` examples model a chronological multi-factor portfolio holdout plus macro stress tests, 64-channel optical spectroscopy trained on only ten mixtures, AR(12) monthly energy demand against a seasonal-naive baseline, strict-zero dosimetry with an illustrative alarm threshold, the inability to identify 32 channel sensitivities from a single observation, and nonzero extreme-Lambda coefficients. All data are **synthetic engineering fixtures**, not market feeds or certified safety measurements. The independent test suite also checks correlated factors, wide systems, large Lambda with and without intercept, `Lambda=math.MaxFloat64`, original-unit predictions, and `core.Nilable`.
+
+For the precise contract, see [`RIDGE.md`](RIDGE.md), [`ridge/doc.go`](../ridge/doc.go), [`ridge/example_test.go`](../ridge/example_test.go), and the runnable [`examples/ridge/main.go`](../../../../Downloads/ridge-phase10-final/examples/ridge/main.go) scenario.
 
 ---
 

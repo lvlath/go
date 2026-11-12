@@ -31,7 +31,7 @@ func mustDense(t *testing.T, data [][]float64) *matrix.Dense {
 			t.Fatalf("ragged fixture at row %d: got %d columns, want %d", row, len(values), cols)
 		}
 		for col, value := range values {
-			if err := m.Set(row, col, value); err != nil {
+			if err = m.Set(row, col, value); err != nil {
 				t.Fatalf("fixture Set(%d,%d): %v", row, col, err)
 			}
 		}
