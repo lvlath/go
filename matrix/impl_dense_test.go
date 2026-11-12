@@ -442,11 +442,11 @@ func TestInducedCoversZeroSizedAndBounds(t *testing.T) {
 	// Zero-sized results are legal
 	z1, err := m.Induced([]int{}, []int{0, 1})
 	if err != nil || z1.Rows() != 0 || z1.Cols() != 2 {
-		t.Fatalf("Induced zero×2 failed: z1=(%d,%d), err=%w", z1.Rows(), z1.Cols(), err)
+		t.Fatalf("Induced zero×2 failed: z1=(%d,%d), err=%v", z1.Rows(), z1.Cols(), err)
 	}
 	z2, err := m.Induced([]int{0, 1}, []int{})
 	if err != nil || z2.Rows() != 2 || z2.Cols() != 0 {
-		t.Fatalf("Induced 2×zero failed: z2=(%d,%d), err=%w", z2.Rows(), z2.Cols(), err)
+		t.Fatalf("Induced 2×zero failed: z2=(%d,%d), err=%v", z2.Rows(), z2.Cols(), err)
 	}
 
 	// Bounds checking on indices
