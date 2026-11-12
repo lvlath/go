@@ -3,7 +3,7 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/FAQ_&_TIPS.md
-  Package reference: core, matrix, series, stats, paa, sax, ols and the wider lvlath package family
+  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca and the wider lvlath package family
   lvlath - FAQ & Tips
 
   Purpose:
@@ -25,6 +25,7 @@
     - Common troubleshooting for core, bfs, dfs, dijkstra, matrix, flow, dtw, tsp,
       gridgraph, builder, series, stats, sax, and examples.
     - Testing, benchmarking, documentation, and contribution best practices.
+    - Certified PCA covariance factors, leakage-safe reconstruction and spectral diagnostics.
 
   License:
     lvlath is licensed under AGPL-3.0-only. See ../LICENSE.
@@ -58,6 +59,7 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
     13a. [SAX FAQ](#13a-sax-faq)
     13b. [OLS FAQ](#13b-ols-faq)
     13c. [Ridge FAQ](#13c-ridge-faq)
+    13d. [PCA FAQ](#13d-pca-faq)
 14. [Builder and gridgraph tips](#14-builder-and-gridgraph-tips)
 15. [Errors and diagnostics](#15-errors-and-diagnostics)
 16. [Determinism and concurrency](#16-determinism-and-concurrency)
@@ -94,6 +96,7 @@ Start with the question, not the algorithm name.
 | “How do I normalize heldout features without refit?”                         | `stats`               | Immutable fitted model over matrix columns.                                           |
 | “How do I estimate linear factor coefficients and reuse them?”               | `ols`                 | Full-rank QR, original-unit beta/intercept, immutable prediction.                     |
 | “How do I fit correlated or wide linear factors with explicit L2 shrinkage?” | `ridge`               | Augmented QR, positive Lambda, unpenalized intercept and frozen physical predictions. |
+| “How do I reduce multivariate dimensions without a response variable?”       | `pca`                 | Validated covariance spectrum and a frozen loadings model for holdout inference.      |
 | “How do I visit all cities in a route?”                                      | `tsp`                 | Tour construction/improvement/exact-small-instance routing.                           |
 
 ### Q1.2. How do I avoid using the wrong algorithm?
@@ -114,6 +117,7 @@ stream/merge stable moments   -> Stats
 fit training-only scaling     -> Stats
 fit full-rank linear factors  -> OLS (pivoted QR, no refit)
 fit correlated/wide factors   -> Ridge (positive Lambda, unpenalized intercept)
+compress latent features      -> PCA (train-only covariance basis; no target)
 encode symbolic SAX words     -> SAX
 align time-warped signals     -> DTW
 build a closed tour           -> TSP
@@ -1696,7 +1700,7 @@ Use `sax.EncodeGaussian(values,w,a)` for an occasional normalized Gaussian word,
 
 ### Q13a.14. How do I connect `series`, SAX and DTW safely?
 
-Validate cadence and gaps with `series.Validate` first if you have timestamps, choose complete sample-index windows with `series.WindowRanges`, and explicitly reject or segment windows crossing missing timestamp slots. `sax.Encode` neither checks timestamps nor consumes `series.TransformResult.Valid` masks; a warmup placeholder zero must not be mistaken for a genuine sample. Encode windows of equal length with one compatible policy and retain the original observations if DTW refinement is required. Ranking a SAX shortlist followed by exact per-candidate `dtw.Align` is only **approximate global retrieval**. For error tables, proofs and five executable synthetic scenarios see [`SAX.md`](SAX.md), [`sax/doc.go`](../../../../Downloads/sax-phase8-documentation/sax/doc.go) and [`sax/example_test.go`](../sax/example_test.go).
+Validate cadence and gaps with `series.Validate` first if you have timestamps, choose complete sample-index windows with `series.WindowRanges`, and explicitly reject or segment windows crossing missing timestamp slots. `sax.Encode` neither checks timestamps nor consumes `series.TransformResult.Valid` masks; a warmup placeholder zero must not be mistaken for a genuine sample. Encode windows of equal length with one compatible policy and retain the original observations if DTW refinement is required. Ranking a SAX shortlist followed by exact per-candidate `dtw.Align` is only **approximate global retrieval**. For error tables, proofs and five executable synthetic scenarios see [`SAX.md`](SAX.md), [`sax/doc.go`](../sax/doc.go) and [`sax/example_test.go`](../sax/example_test.go).
 
 ---
 
@@ -1825,8 +1829,8 @@ with a stress scenario, a 24-point industrial sensor calibration, a strict
 zero-origin two-channel charging model, rank-deficient duplicate telemetry
 with caller-driven schema correction, and a chronological six-day holdout
 for energy-load forecasting. Their data are **synthetic**, not live feeds.
-See [`OLS.md`](OLS.md), [`ols/doc.go`](../../../../Downloads/lvlath_ols_phase09_v2/ols/doc.go), and
-[`ols/example_test.go`](../../../../Downloads/lvlath_ols_phase09_v2/ols/example_test.go) for the proofs and real API.
+See [`OLS.md`](OLS.md), [`ols/doc.go`](../ols/doc.go), and
+[`ols/example_test.go`](../ols/example_test.go) for the proofs and real API.
 
 ---
 
@@ -1898,7 +1902,63 @@ Both APIs return **nil output on error**, not partially filled results. Neither 
 
 Six deterministic `// Output:` examples model a chronological multi-factor portfolio holdout plus macro stress tests, 64-channel optical spectroscopy trained on only ten mixtures, AR(12) monthly energy demand against a seasonal-naive baseline, strict-zero dosimetry with an illustrative alarm threshold, the inability to identify 32 channel sensitivities from a single observation, and nonzero extreme-Lambda coefficients. All data are **synthetic engineering fixtures**, not market feeds or certified safety measurements. The independent test suite also checks correlated factors, wide systems, large Lambda with and without intercept, `Lambda=math.MaxFloat64`, original-unit predictions, and `core.Nilable`.
 
-For the precise contract, see [`RIDGE.md`](RIDGE.md), [`ridge/doc.go`](../ridge/doc.go), [`ridge/example_test.go`](../ridge/example_test.go), and the runnable [`examples/ridge/main.go`](../../../../Downloads/ridge-phase10-final/examples/ridge/main.go) scenario.
+For the precise contract, see [`RIDGE.md`](RIDGE.md), [`ridge/doc.go`](../ridge/doc.go), [`ridge/example_test.go`](../ridge/example_test.go), and the runnable [`examples/ridge/main.go`](../examples/ridge/main.go) scenario.
+
+---
+
+## 13d. PCA FAQ
+
+### Q13d.1. Why does PCA reject `ThinSVD` instead of silently running the covariance solver?
+
+`ThinSVD` is a reserved, **unimplemented** enum value. `pca.Fit` returns `ErrUnsupportedSolver` before reading matrix data. A covariance eigensolver squares the conditioning burden and cannot be relabeled a direct SVD. Use `CovarianceEigen` only when its numeric acceptance and validation requirements are appropriate; there is no hidden fallback.
+
+### Q13d.2. How are `Components=0` and `RankTolerance=0` interpreted?
+
+`Components=0` retains all **detected numerical-rank** directions. `RankTolerance=0` selects `epsilon*max(n,d)` relative to the **covariance eigenvalue spectrum**. If a caller explicitly requests more directions than the detected rank, the result is nil with `ErrRankDeficient`. A smaller threshold does not magically restore information lost when forming covariance.
+
+### Q13d.3. Does the result's explained-variance ratio sum to one?
+
+Only when the retained eigenvalues account for the full accepted nonnegative covariance trace, within floating-point rounding. The denominator always uses the **complete accepted spectrum**. For `k<rank`, a positive omitted tail means the sum of published ratios is below one. Do not renormalize truncated ratios or treat high training variance retention as proven holdout reconstruction quality.
+
+### Q13d.4. Why do I get `ErrNotConverged` or `ErrNumerical` for apparently simple data?
+
+These errors describe **different** failures. `ErrNotConverged` means Jacobi exhausted the configured rotation budget; `errors.Is(err,matrix.ErrMatrixEigenFailed)` also remains true. `ErrNumerical` means the returned covariance/eigenpairs fail PSD, symmetry, orthogonality or equation-residual acceptance. A very loose `EigenTolerance` can let Jacobi stop prematurely but **cannot** relax the independent PCA publication check. Never suppress either error or clip all negative eigenvalues.
+
+### Q13d.5. Why does Transform not center each incoming test batch?
+
+Re-centering changes the coordinate origin and introduces holdout leakage. `Model.Transform(ctx,x)` uses **only** fitted training means and (if enabled) training population scales. A single out-of-range observation must retain a nonzero score rather than being translated to zero because its one-row batch mean equals itself.
+
+### Q13d.6. Is `Components()` a writable view? Is `FitResult.IsNil()` a fit-status check?
+
+No. `Components()` returns a detached `d×k` matrix whose mutation cannot change the fitted model. `FitResult.IsNil()` satisfies `core.Nilable`: a nil receiver is absent, while `&pca.FitResult{}` is present but unfitted. Check `Fit`'s error and the `Model` returned on success. Concurrent read-only inference on the same fitted model is safe because each call owns its workspace; caller mutation of input matrices during calls is not.
+
+### Q13d.7. How do I use PCA for industrial SPE or Hotelling T² alerts?
+
+Compute residuals from the frozen model, then independently calibrate a domain-specific threshold using **healthy validation data excluded from Fit**. Equal physical units permit an unweighted physical-unit SPE; mixed units require justified scaling or a single-channel diagnostic. The current `pca` package **does not** publish `SPE`, `T²`, threshold fitting, Nelson–Siegel estimation, anomaly root-cause attribution or automatic safety decisions. Do not mistake a demonstration's calibrated engineering threshold for a certified alarm limit.
+
+### Q13d.8. How should I interpret repeated eigenvalues, very high condition numbers, or rotation limits?
+
+Signs are canonicalized by the first maximum-absolute coordinate, but repeated eigenspaces permit rotations of the entire basis. Compare projectors only across **completely retained** degenerate subspaces. Covariance rank is more fragile than direct SVD for nearly dependent features; do not force a full-rank result with a smaller tolerance. `MaxRotations=0` means checked `50*d*d` Jacobi rotations, not sweeps. The underlying `matrix.EigenSym` has no context-aware internal cancellation hook.
+
+### Q13d.9. Can I use PCA with constant features, or interpret all zero-rank outputs as valid?
+
+Without standardization, a constant feature is allowed if other columns provide positive total covariance variance; its centered contribution vanishes. With `Standardize=true`, `stats.RejectConstant` rejects **any exactly constant training column** through `ErrZeroVariance`, rather than silently removing it. A constant *entire* training batch is also `ErrZeroVariance`. A nonzero spectrum can still have no eigenvalue above an excessively high user rank cutoff: this is `ErrRankDeficient`, not an acceptable zero-column fitted Model. No successful Fit publishes a `Model` with `k=0`.
+
+### Q13d.10. How should I select k and compare alternative PCA models without leakage?
+
+Fix the chronological/entity partition first. Fit means, scales and eigenvectors on **training rows**; choose `k`, rank policy and application-specific thresholds using only training and designated calibration/validation data, then keep an untouched final holdout for reporting. A high in-sample `ExplainedVarianceRatio` is not proof of good holdout reconstruction, anomaly detection recall or future yield-curve forecasting. Compare model variants in the same feature units and against a training-only baseline.
+
+### Q13d.11. How does physical residual energy differ from the model's training residual?
+
+`FitResult.ReconstructionResidual` is a **single Frobenius norm over all training rows in prepared coordinates**, not a per-observation SPE. `Model.Reconstruct(ctx,observations)` returns **original-unit** approximations. For a standardized model, summing raw squared differences between original and reconstructed columns produces a **physical-unit weighted mixture**, not automatically the standardized training objective. `Model` intentionally exposes no public scale snapshot; if a downstream score needs a dimensionless metric, define and freeze a separate, audited weighting policy. For equal-unit sensor channels an original-unit SPE is meaningful once calibrated separately.
+
+### Q13d.12. Does a PCA yield-curve factor represent Nelson–Siegel level, slope, or curvature?
+
+Not automatically. PCA eigenvectors diagonalize **sample covariance** for the selected maturities and observation window. Their signs are fixed for display, but economically named level/slope/curvature interpretations require inspecting maturity loadings and checking stability on holdout curves. Nelson–Siegel uses a separate parametric yield-curve model, which `pca` does not fit; PCA scores also do not predict tomorrow's yields.
+
+### Q13d.13. What must I validate before admitting PCA to a production analytics pipeline?
+
+Use the exact repository toolchain; check `go test ./pca -count=1`, `go test -race ./pca`, `go test ./...`, `go vet ./...`, and `golangci-lint run`. Independently test extreme covariance construction, residual identities, repeated-subspace projectors, holdout-only evaluation, and numeric error classification through `errors.Is`. Benchmark **real** dependencies, not a compatibility stand-in. See [`PCA.md`](PCA.md) for the full API and [`pca/example_test.go`](../pca/example_test.go) for executable workflows.
 
 ---
 
@@ -2019,6 +2079,10 @@ Concurrent read-only access is safe when no goroutine mutates the matrix. Concur
 
 Yes, once successfully fitted. Its parameter slices are private and immutable, and each `Transform` or `InverseTransform` allocates a detached output. Input matrices must remain unchanged during the entire call, including both read passes. `stats.Moments` is **not** safe for simultaneous updates/merges without external synchronization.
 
+### Q16.6. Can multiple goroutines share one fitted PCA Model?
+
+Yes. `pca.Model.Transform`, `InverseTransform`, and `Reconstruct` use immutable private training parameters and per-call output/workspace. Keep every caller-owned input matrix stable for each call, and do not infer that `matrix.Dense` itself permits concurrent mutation. `Components()` returns a detached copy, not writable access to the trained basis. The underlying `matrix.EigenSym` is a fit-time operation and has no mid-rotation cancellation hook.
+
 ---
 
 ## 17. Testing tips
@@ -2068,6 +2132,8 @@ if math.Abs(got-want) > tol {
 For matrix-wide comparison, use the package’s tolerant comparison surface where appropriate.
 
 For `stats`, compare the mean against an independent exact binary-input rational oracle; compare compensated `M2`/variance against a separate high-precision central-moment oracle using an explicitly justified magnitude-aware error budget. Do not use the production kernel as its own oracle.
+
+For `pca`, verify the original covariance with a high-precision oracle on small matrices; check `C*v=lambda*v`, `VᵀV≈I`, heldout invariance under batch splitting, and `||Y-YVVᵀ||_F²≈(n-1)*sum(discarded eigenvalues)`. Compare projectors over complete repeated-eigenvalue subspaces, not individual eigenvectors. Nonconvergence and material PSD violations must remain classified errors.
 
 For `series`, compare integer timestamps, gap counts, index ranges, and Valid masks **exactly**. For return-value or log-transformation oracles, base high-precision reference calculations on the original binary64 input values, not rounded printed decimals; use justified magnitude-aware error budgets rather than making epsilon a validity policy.
 
@@ -2290,6 +2356,13 @@ Stream finite observations into one `stats.Moments` per completed partition. Mer
 ### Recipe J. Train-only scaling before multivariate DTW
 
 Fit `stats.FitStandardizer` on a stable training `matrix.Matrix` with explicit `ConstantPolicy`. Apply the **same immutable model** to both heldout matrices before `dtw.AlignMatrix`; never independently refit the candidate sequence. Preserve feature-column ordering and use `errors.Is` to classify failures.
+
+
+### Recipe K. Calibrate a PCA residual detector without touching the final holdout
+
+Fit `pca.FitWithComponents` on the healthy **training** matrix and retain the immutable `Model`. Reconstruct a separate healthy **calibration** matrix and derive a documented threshold from its per-row residuals in consistent units. Score untouched holdout/production rows with the same model; do not refit PCA or recompute feature means for the incoming batch. A threshold exceedance is an **investigation signal**, not a hardware shutdown or clinical decision. For mixed-unit channels, calibrate physical-channel residuals separately or define an independently fitted weighting rule; the PCA Model does not expose its internal scales.
+
+See [`PCA.md`](PCA.md) and [`pca/example_test.go`](../pca/example_test.go) for the actual public API and deterministic examples.
 
 ---
 

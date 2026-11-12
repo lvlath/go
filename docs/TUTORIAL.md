@@ -25,7 +25,7 @@
 
 > **hard math on an easy level**
 
-Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fitted feature scaling, and time-series alignment.
+Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fitted feature scaling, covariance PCA, and time-series alignment.
 
 This tutorial is the beginning of the learning path. It introduces the objects and ideas that most packages share: graphs, matrices, options, result artifacts, error contracts, and deterministic algorithm execution.
 
@@ -49,6 +49,7 @@ This tutorial is the beginning of the learning path. It introduces the objects a
     11b. [SAX Foundations: Symbolic Words and Euclidean Screening](#11b-sax-foundations-symbolic-words-and-euclidean-screening)
     11c. [OLS Foundations: Stable QR Regression and Frozen Prediction](#11c-ols-foundations-stable-qr-regression-and-frozen-prediction)
     11d. [Ridge Foundations: Correlated Factors, Wide Matrices and Numerical Preconditioning](#11d-ridge-foundations-correlated-factors-wide-matrices-and-numerical-preconditioning)
+    11e. [PCA Foundations: Certified Covariance Factors and Frozen Inference](#11e-pca-foundations-certified-covariance-factors-and-frozen-inference)
 12. [Algorithm Selection Guide](#12-algorithm-selection-guide)
 13. [Professional Best Practices](#13-professional-best-practices)
 14. [Where To Go Next](#14-where-to-go-next)
@@ -79,6 +80,7 @@ The library covers:
 * `stats` stable Welford/Chan moments, mergeable partitions, and immutable fitted feature standardization;
 * `ols` immutable full-rank regression models trained by pivoted Householder QR, with exact zero-origin policy and physical-unit coefficients;
 * `ridge` explicit positive-Lambda Tikhonov regression for correlated and wide designs, unpenalized intercept, protected augmented QR and physical-unit predictions;
+* `pca` immutable train-only principal component projection, certified covariance eigenspectrum, and original-unit reconstruction;
 * `paa` exact fractional time-series compression, rational segment boundaries and value-only feature projection;
 * `sax` symbolic words from fractional PAA and compatible Euclidean MINDIST (not a DTW lower bound);
 * `tsp` matrix-backed tour optimization with exact, approximate, matching, and local-search regimes;
@@ -105,6 +107,7 @@ streaming statistics      *stats.Summary               exact-binary-input mean /
 train-only scaling        *stats.ScaleFitResult        detached fit metadata / immutable model
 full-rank regression      *ols.FitResult               physical beta / intercept / rank / SSE / QR condition
 L2 regularized regression *ridge.FitResult             physical beta / SSE / penalty / objective
+fitted PCA subspace       *pca.FitResult               verified covariance rank / loadings / reconstruction
 fractional PAA             *paa.Result                 detached means / exact rational segments
 SAX symbolic word         *sax.Result                 detached symbols / policy identity / optional PAA
 closed tour                *tsp.Result                 cost, exactness, timeout, ratio
@@ -180,6 +183,7 @@ Read these files as a learning path. `doc.go` files define implemented package c
 | 8c   | [`SAX.md`](SAX.md)                         | Right-bin quantization, SHA-256 policy identity, Euclidean MINDIST, DTW non-pruning law and examples.                       |
 | 8d   | [`OLS.md`](OLS.md)                         | Pivoted-QR full-rank regression, scale-only origin policy, frozen coefficients, SSE and error contracts.                    |
 | 8e   | [`RIDGE.md`](RIDGE.md)                     | Positive-Lambda augmented Householder QR, unpenalized intercept, stable strongly regularized slopes, immutable models.      |
+| 8f   | [`PCA.md`](PCA.md)                         | Strict covariance eigenanalysis, train-only latent factors, reconstruction residuals and solver limitations.                |
 | 9    | [`DTW.md`](DTW.md)                         | `Align`, `AlignCostMatrix`, `AlignMatrix`, `AlignBounded`, exact `Search`, numeric and path artifacts.                      |
 | 9a   | [`DTW_SEARCH.md`](DTW_SEARCH.md)           | Fixed-length exact top-K, certified LB_Keogh, workers, budgets, and partial-result law.                                     |
 | 10   | [`TSP.md`](TSP.md)                         | Matrix-backed tours, exact regimes, Christofides, Blossom matching, local search, timeouts.                                 |
@@ -203,6 +207,7 @@ Working on numeric/time-series workflows:
   MATRICES -> STATS -> DTW
   MATRICES -> STATS -> OLS -> chronological holdout prediction
   MATRICES -> STATS -> RIDGE -> wide/collinear factor predictions with shrinkage
+  MATRICES -> STATS -> PCA -> independent holdout reconstruction and residual review
   SAX (Euclidean screening) != DTW (nonlinear alignment)
   MATRICES -> TSP
 
@@ -282,6 +287,12 @@ Think of `lvlath` as a contract stack.
                          │ ridge                                         │
                          │ explicit positive Lambda / augmented QR       │
                          │ unpenalized intercept, stable small slopes    │
+                         └───────────────────────────────────────────────┘
+
+                         ┌───────────────────────────────────────────────┐
+                         │ pca                                           │
+                         │ stable covariance + checked Jacobi spectrum   │
+                         │ frozen loadings / inference without refit     │
                          └───────────────────────────────────────────────┘
 ```
 
@@ -864,6 +875,7 @@ The full derivation, dimension rules, numerical limits, and the separate LU/QR/C
 * `stats` streams finite scalar data and fits immutable per-feature transforms over `matrix.Matrix`; it never changes the matrix or infers a validity mask.
 * `ols` uses the same QR and stats kernels for full-rank linear-factor modeling, preserves physical coefficients and never refits on heldout data.
 * `ridge` builds a positive-Lambda augmented system, equilibrates its QR coordinates and accepts collinear/wide designs without hidden OLS fallback; it also predicts from frozen physical parameters.
+* `pca` delegates sample covariance and symmetric Jacobi to `matrix`, freezes train-only means/scales and eigenvectors, and reconstructs new observations without recalibrating their coordinate origin.
 
 ---
 
@@ -1550,14 +1562,14 @@ This `80` is a **lower bound on Raw Euclidean distance between two eight-sample 
 
 ### 11b.4. Picking the policy and keeping results comparable
 
-| Question | Choose | Why |
-|:--|:--|:--|
-| Are amplitude and physical units the signal? | `Raw` + calibrated `Breakpoints` | No per-window rescaling; easier to audit threshold meaning. |
-| Do offsets and amplitudes vary but shape matters? | `ZPopulation` + Gaussian | Per-window population fit emphasizes normalized shape. |
-| Should an exactly constant normalized window be accepted? | Explicit `ZeroWord` | Emits a flagged degenerate result; all normalized coordinates become zero. |
-| Do I need threshold diagnostics? | `ReturnPAA=true` | Publishes a detached PAA slice in the same transformed coordinates. |
-| Do I compare many windows with one policy? | `sax.NewEncoder(opts)` reused | Immutable thresholds and `EncodingID`; per-call detached results. |
-| Do source windows have differing `n`, `w`, `a`, or thresholds? | Do **not** compare with MINDIST | The geometric scale or symbolic meaning differs; `ErrIncompatible`. |
+| Question                                                       | Choose                           | Why                                                                        |
+|:---------------------------------------------------------------|:---------------------------------|:---------------------------------------------------------------------------|
+| Are amplitude and physical units the signal?                   | `Raw` + calibrated `Breakpoints` | No per-window rescaling; easier to audit threshold meaning.                |
+| Do offsets and amplitudes vary but shape matters?              | `ZPopulation` + Gaussian         | Per-window population fit emphasizes normalized shape.                     |
+| Should an exactly constant normalized window be accepted?      | Explicit `ZeroWord`              | Emits a flagged degenerate result; all normalized coordinates become zero. |
+| Do I need threshold diagnostics?                               | `ReturnPAA=true`                 | Publishes a detached PAA slice in the same transformed coordinates.        |
+| Do I compare many windows with one policy?                     | `sax.NewEncoder(opts)` reused    | Immutable thresholds and `EncodingID`; per-call detached results.          |
+| Do source windows have differing `n`, `w`, `a`, or thresholds? | Do **not** compare with MINDIST  | The geometric scale or symbolic meaning differs; `ErrIncompatible`.        |
 
 `Result.EncodingID` is a SHA-256 identifier of mathematical policy, not of input observations and not an authentication tag. The custom `BreakpointID` label is for human audit, not compatibility. `OriginalLength` is validated separately. `Result.IsNil` implements `core.Nilable` by checking pointer presence; it does not test whether manually edited fields remain valid.
 
@@ -1830,19 +1842,150 @@ This intentionally prints its diagnostics rather than treating them as calibrate
 
 ### 11d.4. OLS, Ridge and numerical matrix QR are not interchangeable
 
-| Question                | `ols`                              | `ridge`                                     | `matrix.SolveLeastSquares`                              |
-|-------------------------|------------------------------------|---------------------------------------------|---------------------------------------------------------|
-| Objective               | Minimize original-unit SSE         | Minimize `SSE/(2n)+Lambda*                  |                                                         |theta||²/2` | Minimize RHS residual for a supplied matrix |
-| Penalty strength        | None                               | Finite, strictly positive, caller-chosen    | No automatic penalty                                    |
-| Duplicated predictors   | Rejected by full-rank QR           | Accepted if augmented numerical rank passes | Depends on supplied design rank                         |
-| `p>n` original features | Rejected by shape for an OLS fit   | Allowed after p penalty rows                | Original wide QR input rejected                         |
-| Intercept               | Optional and unpenalized by nature | Optional and explicitly unpenalized         | Caller must construct any intercept                     |
-| Physical Model          | Frozen original-unit slopes        | Frozen original-unit slopes                 | Generic solution Matrix                                 |
-| Model diagnostics       | SSE and QR condition estimate      | SSE, slope Penalty, normalized Objective    | Rank, original-coordinate residuals, condition estimate |
+| Question                | `ols`                              | `ridge`                                      | `matrix.SolveLeastSquares`                              |
+|-------------------------|------------------------------------|----------------------------------------------|---------------------------------------------------------|
+| Objective               | Minimize original-unit SSE         | Minimize `SSE/(2n) + Lambda*norm(theta)^2/2` | Minimize RHS residual for a supplied matrix             |
+| Penalty strength        | None                               | Finite, strictly positive, caller-chosen     | No automatic penalty                                    |
+| Duplicated predictors   | Rejected by full-rank QR           | Accepted if augmented numerical rank passes  | Depends on supplied design rank                         |
+| `p>n` original features | Rejected by shape for an OLS fit   | Allowed after p penalty rows                 | Original wide QR input rejected                         |
+| Intercept               | Optional and unpenalized by nature | Optional and explicitly unpenalized          | Caller must construct any intercept                     |
+| Physical Model          | Frozen original-unit slopes        | Frozen original-unit slopes                  | Generic solution Matrix                                 |
+| Model diagnostics       | SSE and QR condition estimate      | SSE, slope Penalty, normalized Objective     | Rank, original-coordinate residuals, condition estimate |
 
 Both regression packages use `stats` population scaling and `matrix` QR; neither performs automatic cross-validation or IID statistical inference. An internal shared helper should be introduced only when its numeric, ownership and error contracts are provably identical, not simply because the public signatures look similar.
 
 For six executable examples with real decision workflows (chronological macro holdout, optical spectroscopy, seasonal AR(12), strict-origin detector, single-standard insufficiency and extreme-Lambda shrinkage), read [`ridge/example_test.go`](../ridge/example_test.go). The independent multi-factor command-line experiment is [`examples/ridge/main.go`](../examples/ridge/main.go).
+
+---
+
+## 11e. PCA Foundations: Certified Covariance Factors and Frozen Inference
+
+`stats` tells us what each feature's population spread is; `matrix` forms the covariance and supplies a symmetric eigensolver; `pca` turns those primitives into an **immutable fitted orthogonal transform** and checks whether its returned spectrum can be trusted.
+
+### 11e.1. Train-only origin and scale
+
+Training observations form `X` with `n>=2` rows and `d>=1` features. `Fit` always centers columns; `Standardize=true` additionally fits **population** standard deviations (`DDOF=0`, `stats.RejectConstant`). Sample covariance uses the distinct `n-1` denominator:
+
+$$
+Y_{ij}=\frac{X_{ij}-\mu_j}{s_j},\qquad C=\frac{1}{n-1}(Y-\bar{Y})^\mathsf{T}(Y-\bar{Y}).
+$$
+
+![PCA sample covariance](https://latex.codecogs.com/svg.image?C%3D%5Cfrac%7B1%7D%7Bn-1%7D%28Y-%5Cbar%7BY%7D%29%5E%7B%5Cmathsf%7BT%7D%7D%28Y-%5Cbar%7BY%7D%29)
+
+The frozen fitted map projects **new** rows as `Z=((Xnew-mu)/s) * Vk`, with `k<=rank`. Calling `FitStandardizer` or `Fit` again on holdout data changes the origin, destroys comparability and leaks the future into a trained pipeline.
+
+### 11e.2. Rank, verification, and two different failure causes
+
+`CovarianceEigen` uses `matrix.Covariance` and `matrix.EigenSym`. Jacobi receives a checked `50*d*d` default rotation budget and a norm-scaled absolute pivot threshold. The adapter then independently verifies orthonormality and `C*v=lambda*v` against the **original covariance**. When the solver exhausts rotations, `ErrNotConverged` retains `matrix.ErrMatrixEigenFailed`; when it returns an inaccurate eigenbasis, `ErrNumerical` refuses publication. Materially negative eigenvalues are never blindly clipped, and `ThinSVD` immediately returns `ErrUnsupportedSolver`.
+
+Numerical rank counts `lambda > tau*lambdaMax`, where `tau=epsilon*max(n,d)` by default. `Components=0` selects that rank; a positive request exceeding rank fails. PCA covariance conditioning can be substantially worse than a direct SVD: never loosen tolerances to force high-condition data into an apparently full-rank result.
+
+### 11e.3. What the result means
+
+`FitResult.Model` privately owns means, scales and `d×k` loading matrix; its public diagnostic slices are detached. `Model.Components()` returns a **copy**, not a writable model view. `Model.Transform(ctx,holdout)` gives `holdoutRows×k` scores; `InverseTransform` and `Reconstruct` return original-unit approximations.
+
+`ExplainedVarianceRatio[i]` divides retained eigenvalue `i` by the **complete** accepted spectrum. The returned ratios do not automatically sum to one when dimensions are discarded. `ReconstructionResidual` is the **training Frobenius norm in prepared coordinates**, not a forecast score or an industrial alarm threshold:
+
+$$
+\lVert Y-YV_kV_k^\mathsf{T}\rVert_F^2\approx(n-1)\sum_{j>k}\lambda_j.
+$$
+
+Repeated-eigenvalue eigenspaces have nonunique bases. Compare `Vk*Vk^T` across implementations if `k` retains the **whole** repeated subspace; comparing individual loading signs is not a valid cross-solver oracle.
+
+### 11e.4. A complete frozen-inference example
+
+The deliberately rank-one training rows below represent three temperature-related sensor channels whose calibrated signals move together. This is a **small ownership-law example**, not a substitute for the full industrial and financial scenarios linked below.
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"math"
+
+	"github.com/lvlath/go/matrix"
+	"github.com/lvlath/go/pca"
+)
+
+func main() {
+	ctx := context.Background()
+	train, err := matrix.NewDense(5, 3)
+	if err != nil {
+		fmt.Println("allocate:", err)
+		return
+	}
+	if err = train.Fill([]float64{
+		20, 30, 40,
+		22, 32, 42,
+		24, 34, 44,
+		26, 36, 46,
+		28, 38, 48,
+	}); err != nil {
+		fmt.Println("training:", err)
+		return
+	}
+
+	fit, err := pca.FitWithComponents(ctx, train, 1)
+	if err != nil {
+		fmt.Println("fit:", err)
+		return
+	}
+
+	holdout, err := matrix.NewDense(1, 3)
+	if err != nil {
+		fmt.Println("allocate holdout:", err)
+		return
+	}
+	if err = holdout.Fill([]float64{32, 42, 52}); err != nil {
+		fmt.Println("holdout:", err)
+		return
+	}
+	scores, err := fit.Model.Transform(ctx, holdout)
+	if err != nil {
+		fmt.Println("transform:", err)
+		return
+	}
+	reconstructed, err := fit.Model.InverseTransform(ctx, scores)
+	if err != nil {
+		fmt.Println("inverse:", err)
+		return
+	}
+	score, err := scores.At(0, 0)
+	if err != nil {
+		fmt.Println("score:", err)
+		return
+	}
+	restored, err := reconstructed.At(0, 0)
+	if err != nil {
+		fmt.Println("restored:", err)
+		return
+	}
+	fmt.Printf("rank=%d scores=%dx%d restored=%dx%d\n",
+		fit.Rank, scores.Rows(), scores.Cols(),
+		reconstructed.Rows(), reconstructed.Cols())
+	fmt.Printf("heldout-offset-preserved=%t recovered-channel=%t\n",
+		math.Abs(score) > 1, math.Abs(restored-32) < 1e-8)
+	// Output:
+	// rank=1 scores=1x1 restored=1x3
+	// heldout-offset-preserved=true recovered-channel=true
+}
+```
+
+A one-row holdout batch does not have its own learned center: the nonzero score retains the displacement from the **training** mean. Output values are tested through stable invariants rather than fragile signs or exact floating-point digits.
+
+### 11e.5. An operational pipeline: fault review without leakage
+
+```text
+healthy train  -> pca.FitWithComponents(k=2) -> frozen Model
+healthy calibrate -> Model.Reconstruct -> calibrate SPE threshold
+heldout normal -> Model.Reconstruct -> residual <= threshold?
+heldout suspect -> Model.Reconstruct -> residual > threshold? -> maintenance review
+```
+
+When all vibration sensors use mm/s RMS, squared reconstruction errors have consistent `(mm/s)^2` units. Mixed pH, temperature and conductivity readings **do not** have a meaningful unweighted raw SPE; use separate calibrated physical-channel checks or justified dimensionless weighting. PCA identifies deviation from a learned subspace, not its physical root cause or safe machine-action policy.
+
+The complete executable stories in [`pca/example_test.go`](../pca/example_test.go) show chronological bond-curve holdout and rate stress, turbine SPE threshold calibration, 12-lead ECG clean-reference RMSE, electrical-feeder compression and mixed-unit water treatment. The runnable CLI scenario is [`examples/pca/main.go`](../examples/pca/main.go). The full public contract and failure taxonomy are in [`PCA.md`](PCA.md).
 
 ---
 
@@ -1872,33 +2015,34 @@ For six executable examples with real decision workflows (chronological macro ho
 
 ### If the input is numeric data
 
-| Problem                                      | Package                                     | Main output                                                                             |
-|:---------------------------------------------|:--------------------------------------------|:----------------------------------------------------------------------------------------|
-| Dense algebra                                | `matrix`                                    | matrix result with shape/error policy.                                                  |
-| Stable mean and population/sample variance   | `stats.Summarize`                           | detached `Summary`, exact binary-input mean and scaled variance.                        |
-| Streaming/partitioned moments                | `stats.Moments`                             | error-atomic Welford updates and Chan merges.                                           |
-| Training-only feature scaling                | `stats.FitStandardizer`                     | immutable model and detached fit metadata.                                              |
-| Numeric cleaning                             | `matrix`                                    | sanitized matrix.                                                                       |
-| Matrix-native normalization                  | `matrix`                                    | matrix-specific transforms under their own contract.                                    |
-| Covariance/correlation                       | `matrix`                                    | stable sample moments and direct Pearson coefficients.                                  |
-| Square linear solve with pivoting            | `matrix.FactorLU`                           | reusable factor, `P*A=L*U`, exact residual diagnostics.                                 |
-| Tall full-column-rank least squares          | `matrix.SolveLeastSquares` / `FactorQR`     | Householder QR; numerical rank and `kappa_1(R)` measurement.                            |
-| Regularized regression for collinear/wide features | `ridge.Fit` / `ridge.FitStandardized` | Positive-Lambda slope shrinkage, unpenalized intercept, frozen original-unit coefficients. |
-| Fitted regression for future physical inputs | `ols.Fit` / `ols.FitStandardized`           | Immutable Model, original-unit coefficients, training SSE, no refit.                    |
-| Symmetric positive-definite system           | `matrix.FactorCholesky`                     | accepted symmetric midpoint, SPD check, reusable solves.                                |
-| Symmetric spectral analysis                  | `matrix`                                    | eigenvalues/eigenvectors.                                                               |
-| Exact nanosecond cadence checks              | `series.Validate`                           | sample count + ordered gap metadata.                                                    |
-| Causal lag/difference/returns                | `series`                                    | length-preserving values + validity mask.                                               |
-| Fractional equal-duration scalar compression | `paa.Transform` / `paa.TransformRange`      | Detached PAA means, exact rational intervals, original window length.                   |
-| Fixed-alphabet symbolic window encoding      | `sax.Encode` / `sax.Encoder.Encode`         | Detached symbol word, policy identity and optional transformed PAA.                     |
-| Compatible Euclidean symbolic lower bound    | `sax.Encoder.Mindist` / `sax.MindistValues` | Lower-bound dissimilarity in the selected transformed space, never a general DTW bound. |
-| Complete fixed index windows                 | `series.WindowRanges`                       | ordered half-open sample-index intervals.                                               |
-| Scalar sequence alignment                    | `dtw.Align`                                 | DTW `Result` with distance/reachability.                                                |
-| Inclusive-limit scalar alignment             | `dtw.AlignBounded`                          | Exact/above-limit/unreachable status.                                                   |
-| Globally exact window top-K                  | `dtw.Search`                                | Sorted fixed-length squared-DTW matches.                                                |
-| Precomputed local-cost alignment             | `dtw.AlignCostMatrix`                       | DTW over caller-owned finite cost surface.                                              |
-| Multivariate time-series alignment           | `dtw.AlignMatrix`                           | squared-L2 row-cost alignment result.                                                   |
-| Complete route matrix optimization           | `tsp.SolveMatrix`                           | tour, cost, exactness/timeout/ratio metadata.                                           |
+| Problem                                            | Package                                       | Main output                                                                                |
+|:---------------------------------------------------|:----------------------------------------------|:-------------------------------------------------------------------------------------------|
+| Dense algebra                                      | `matrix`                                      | matrix result with shape/error policy.                                                     |
+| Stable mean and population/sample variance         | `stats.Summarize`                             | detached `Summary`, exact binary-input mean and scaled variance.                           |
+| Streaming/partitioned moments                      | `stats.Moments`                               | error-atomic Welford updates and Chan merges.                                              |
+| Training-only feature scaling                      | `stats.FitStandardizer`                       | immutable model and detached fit metadata.                                                 |
+| Numeric cleaning                                   | `matrix`                                      | sanitized matrix.                                                                          |
+| Matrix-native normalization                        | `matrix`                                      | matrix-specific transforms under their own contract.                                       |
+| Covariance/correlation                             | `matrix`                                      | stable sample moments and direct Pearson coefficients.                                     |
+| Fitted PCA subspace and reconstruction             | `pca.FitWithComponents` / `Model.Reconstruct` | Frozen orthogonal basis, strict eigenpair gate, original-unit reconstruction.              |
+| Square linear solve with pivoting                  | `matrix.FactorLU`                             | reusable factor, `P*A=L*U`, exact residual diagnostics.                                    |
+| Tall full-column-rank least squares                | `matrix.SolveLeastSquares` / `FactorQR`       | Householder QR; numerical rank and `kappa_1(R)` measurement.                               |
+| Regularized regression for collinear/wide features | `ridge.Fit` / `ridge.FitStandardized`         | Positive-Lambda slope shrinkage, unpenalized intercept, frozen original-unit coefficients. |
+| Fitted regression for future physical inputs       | `ols.Fit` / `ols.FitStandardized`             | Immutable Model, original-unit coefficients, training SSE, no refit.                       |
+| Symmetric positive-definite system                 | `matrix.FactorCholesky`                       | accepted symmetric midpoint, SPD check, reusable solves.                                   |
+| Symmetric spectral analysis                        | `matrix`                                      | eigenvalues/eigenvectors.                                                                  |
+| Exact nanosecond cadence checks                    | `series.Validate`                             | sample count + ordered gap metadata.                                                       |
+| Causal lag/difference/returns                      | `series`                                      | length-preserving values + validity mask.                                                  |
+| Fractional equal-duration scalar compression       | `paa.Transform` / `paa.TransformRange`        | Detached PAA means, exact rational intervals, original window length.                      |
+| Fixed-alphabet symbolic window encoding            | `sax.Encode` / `sax.Encoder.Encode`           | Detached symbol word, policy identity and optional transformed PAA.                        |
+| Compatible Euclidean symbolic lower bound          | `sax.Encoder.Mindist` / `sax.MindistValues`   | Lower-bound dissimilarity in the selected transformed space, never a general DTW bound.    |
+| Complete fixed index windows                       | `series.WindowRanges`                         | ordered half-open sample-index intervals.                                                  |
+| Scalar sequence alignment                          | `dtw.Align`                                   | DTW `Result` with distance/reachability.                                                   |
+| Inclusive-limit scalar alignment                   | `dtw.AlignBounded`                            | Exact/above-limit/unreachable status.                                                      |
+| Globally exact window top-K                        | `dtw.Search`                                  | Sorted fixed-length squared-DTW matches.                                                   |
+| Precomputed local-cost alignment                   | `dtw.AlignCostMatrix`                         | DTW over caller-owned finite cost surface.                                                 |
+| Multivariate time-series alignment                 | `dtw.AlignMatrix`                             | squared-L2 row-cost alignment result.                                                      |
+| Complete route matrix optimization                 | `tsp.SolveMatrix`                             | tour, cost, exactness/timeout/ratio metadata.                                              |
 
 ### If the goal is documentation or testing
 
@@ -1918,21 +2062,22 @@ For six executable examples with real decision workflows (chronological macro ho
 ### 13.1. Start from the objective, not the function name
 
 ```text
-min hops                          -> bfs
-post-order / cycle / DAG order    -> dfs
-min non-negative route cost       -> dijkstra
-min acyclic full backbone cost    -> mst.Kruskal / mst.Prim
-approx terminal-only backbone     -> mst.SteinerTree
-cover all edges of a given tree   -> mst.SteinerWalk
-max feasible throughput           -> flow
-all-pairs distances               -> matrix metric closure
-dense topology/covariance         -> matrix
-streaming mean/variance             -> stats.Moments / stats.Summarize
-train-only standardization          -> stats.FitStandardizer
+min hops                             -> bfs
+post-order / cycle / DAG order       -> dfs
+min non-negative route cost          -> dijkstra
+min acyclic full backbone cost       -> mst.Kruskal / mst.Prim
+approx terminal-only backbone        -> mst.SteinerTree
+cover all edges of a given tree      -> mst.SteinerWalk
+max feasible throughput              -> flow
+all-pairs distances                  -> matrix metric closure
+dense topology/covariance            -> matrix
+streaming mean/variance              -> stats.Moments / stats.Summarize
+train-only standardization           -> stats.FitStandardizer
+frozen orthogonal compression        -> pca.FitWithComponents
 exact timestamp grid / causal arrays -> series
-symbolic Euclidean screening     -> sax
-time-warped sequence similarity   -> dtw
-closed tour cost                  -> tsp
+symbolic Euclidean screening         -> sax
+time-warped sequence similarity      -> dtw
+closed tour cost                     -> tsp
 ```
 
 ### 13.2. Model graph capabilities honestly
@@ -1961,6 +2106,7 @@ Do not collapse rich result artifacts into anonymous tuples. Inspect the fields 
 * Flow: residual graph;
 * DTW: `Reachable`, `PathTracked`, `MemoryMode`;
 * Stats: `Summary.Count/Mean/Variance`, `ScaleFitResult.Model`, detached metadata and constant flags;
+* PCA: `FitResult.Model`, sorted retained eigenvalues and full-trace variance ratios, numerical `Rank`, prepared-space `ReconstructionResidual`;
 * TSP: `Exact`, `Optimal`, `TimedOut`, `ApproximationRatio`.
 
 ### 13.6. Separate numeric domains explicitly
@@ -1998,6 +2144,7 @@ A zero-cost replication or transfer edge is real topology. Use zero-preserving m
 * 2-opt/3-opt are improvements, not optimality certificates.
 * DTW distance is not generally a metric.
 * Stats mean is correctly rounded from the exact binary-input sum, but its compensated Welford/Chan variance is approximate; no universal `M2` error certificate is implied.
+* PCA cannot certify a direct-SVD numerical rank or holdout predictive accuracy from a covariance eigenspectrum alone.
 
 ### 13.10. Make examples deterministic and inspectable
 
@@ -2027,6 +2174,10 @@ Use this tutorial as the entry point, then move into package-specific material:
 > If you are validating telemetry or preparing causal features:
 >
 >   [`SERIES.md`](SERIES.md) -> [`STATS.md`](STATS.md) -> [`stats/example_test.go`](../stats/example_test.go) -> [`DTW.md`](DTW.md)
+>
+> If you are fitting latent factors to multivariate observations:
+>
+>   [`MATRICES.md`](MATRICES.md) -> [`STATS.md`](STATS.md) -> [`PCA.md`](PCA.md) -> [`pca/example_test.go`](../pca/example_test.go)
 
 > If you are doing numeric graph analytics:
 >

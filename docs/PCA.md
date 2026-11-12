@@ -15,7 +15,7 @@
 
 > Package: [`pca`](../pca/) | Contract: immutable fitted transform, covariance-based reference solver | Go 1.23.4+
 
-The `pca` package learns an **orthogonal latent coordinate system** from a training matrix and reuses that fixed coordinate system on future data. It provides dimensionality reduction, controlled reconstruction, a variance spectrum, and training-space reconstruction diagnostics. It does **not** choose alert thresholds, forecast future observations, estimate Nelson–Siegel parameters, or perform direct singular-value decomposition.
+The `pca` package learns an **orthogonal latent coordinate system** from a training matrix and reuses that fixed coordinate system on future data. It provides dimensionality reduction, controlled reconstruction, a variance spectrum, and training-space reconstruction diagnostics. It does **not** choose alert thresholds, forecast future observations, estimate Nelson–Siegel parameters, or perform direct singular-value decomposition. Rows are observations, but temporal independence, stationarity and causal interpretations are not inferred by this algorithm.
 
 **Numerical admission is strict.** PCA does not compensate for corrupted sample covariance by symmetrizing it, does not clip a materially negative eigenvalue, and does not publish an unconverged Jacobi result. The `CovarianceEigen` solver is a reference implementation; nearly rank-deficient data can require a future direct SVD solver rather than a looser tolerance.
 
@@ -29,6 +29,7 @@ The `pca` package learns an **orthogonal latent coordinate system** from a train
 6. [Errors and precedence](#7-errors-and-precedence)
 7. [Determinism, performance, and concurrency](#8-determinism-performance-and-concurrency)
 8. [Tests and operational constraints](#9-tests-and-operational-constraints)
+9. [Operational decision checklist](#10-operational-decision-checklist)
 
 ## 2. Data and fitted ownership
 
@@ -84,6 +85,8 @@ Z = \left[(X_{new}-\mu)\oslash s\right] V_k,
 \widehat{X}_{new}=(Z V_k^{\mathsf T})\odot s+\mu.
 $$
 
+![PCA projection and reconstruction](https://latex.codecogs.com/svg.image?Z%3D%5B%28X_%7Bnew%7D-%5Cmu%29%5Coslash%20s%5DV_k%2C%5Cquad%20%5Cwidehat%7BX%7D_%7Bnew%7D%3D%28ZV_k%5E%7B%5Cmathsf%7BT%7D%7D%29%5Codot%20s%2B%5Cmu)
+
 `Transform(ctx,x)` returns `nnew×k` scores. `InverseTransform(ctx,scores)` returns `nnew×d` values in the **original feature units**. `Reconstruct(ctx,x)` calls these two operations in sequence. Every output is detached; valid zero-row inference returns an allocated zero-row matrix with correct width. When `k` is truncated, reconstruction is intentionally lossy.
 
 `Components()` returns an independent `d×k` matrix. Mutating that return value cannot modify subsequent `Transform` results. The method returns nil for nil/unfitted receivers because its signature has no error return.
@@ -96,7 +99,7 @@ $$
 r_i=\frac{\lambda_i}{\sum_{j=1}^{d}\lambda_j},\qquad i=1,\ldots,k.
 $$
 
-The denominator includes **all** accepted nonnegative eigenvalues, even positive modes excluded from the detected numerical rank by a chosen rank tolerance. Hence the retained `r_i` are **not renormalized** to sum to one when `k<rank`. For high-range values, the implementation divides by `lambdaMax` before forming the normalized trace to avoid an unnecessary overflow.
+The denominator includes **all** accepted nonnegative eigenvalues, even positive modes excluded from the detected numerical rank by a chosen rank tolerance. Hence the retained `r_i` are **not renormalized** to sum to one when `k<rank`; even `k=Rank` need not account for every strictly positive numerical tail. For high-range values, the implementation divides by `lambdaMax` before forming the normalized trace to avoid an unnecessary overflow.
 
 The training diagnostic is the Frobenius norm of reconstruction error in **prepared** coordinates:
 
@@ -105,7 +108,11 @@ R=\left\|Y-YV_kV_k^{\mathsf T}\right\|_F,\qquad
 R^2\approx(n-1)\sum_{j=k+1}^{d}\lambda_j.
 $$
 
-This identity is a *test oracle*, not an instruction to replace the direct residual kernel with the eigenvalue tail. A per-observation squared prediction error (SPE) must be computed from residuals and calibrated as a separate domain-specific decision policy. Hotelling's `T²` likewise requires an explicit threshold and a defensible treatment of small eigenvalues; `pca` exports no `T²` or alarm threshold API.
+![PCA reconstruction residual identity](https://latex.codecogs.com/svg.image?R%5E2%3D%5C%7CY-YV_kV_k%5E%7B%5Cmathsf%7BT%7D%7D%5C%7C_F%5E2%5Capprox%28n-1%29%5Csum_%7Bj%3Dk%2B1%7D%5E%7Bd%7D%5Clambda_j)
+
+This identity is a *test oracle*, not an instruction to replace the direct residual kernel with the eigenvalue tail. The residual is measured across **all n training observations**, not on a single row. A heldout per-observation squared prediction error (SPE) instead starts from the difference between the **measured** row and its `Model.Reconstruct` output. With `Standardize=false` and physically homogeneous features, `SPE(x)=sum_j (x_j-xhat_j)^2` has squared sensor units; with `Standardize=true`, the corresponding optimization-space score requires frozen training scales and is not obtained by naively adding mixed-unit raw squares. The current `Model` intentionally exposes no fitted-scale getter: downstream code must explicitly define and freeze its own independently auditable weighting policy when such a metric is needed.
+
+Hotelling's `T²` is a *different* retained-score statistic, typically proportional to `sum_i score_i^2/lambda_i` with validated positive retained eigenvalues. It requires independent threshold calibration, a defensible near-zero-eigenvalue policy and population assumptions. The package exports no `SPE`, `T²`, Nelson–Siegel or alarm-threshold API.
 
 ## 4. Solver, rank, and numerical certification
 
@@ -156,6 +163,27 @@ For `n` rows, `d` features, `k` retained components and at most `R` Jacobi rotat
 
 `R=50d²` is an **upper bound** when omitted, not a claim that every dataset needs that many rotations. Covariance formation squares the condition number: poorly separated tiny eigenmodes can disappear even when a direct SVD would retain them. The current implementation does not promise a condition-number certificate or high-condition rank reliability.
 
+### 4.5. Canonical computation and publication order
+
+The kernel separates numeric obligations rather than equating a returned eigenvector matrix with a successful fit:
+
+```text
+validate context -> validate options -> validate input/size -> finite scan
+  -> (optional) fit population scales on TRAINING data only
+  -> matrix.Covariance(prepared training matrix) [sample n-1]
+  -> require finite, exactly symmetric covariance; preserve original snapshot
+  -> matrix.EigenSym(C, absolute pivot threshold, checked rotations)
+  -> stable descending eigenpair order + first-max-abs sign orientation
+  -> verify PSD allowance and all d original-C eigenpair equations
+  -> determine covariance numerical rank; reject impossible k
+  -> freeze mean, scale, loading copies; calculate direct training residual
+  -> publish complete FitResult OR nil result + classified error
+```
+
+**Why verify all d directions?** Even if a caller requests `k=1`, an inaccurate discarded eigenvector or a materially negative omitted eigenvalue may signal invalid covariance or premature Jacobi termination. Checking only the retained prefix could conceal that failure. A loose `EigenTolerance` changes the *solver's* pivot stopping rule; it does not grant a looser publication certificate.
+
+**Why does the default rotation budget matter?** The kernel scans a d-by-d off-diagonal surface to find each Jacobi pivot. With `R <= 50*d*d` the scan alone has an `O(R*d*d)` upper bound, i.e. `O(d^4)` under the default maximum. This is a worst-case budget bound, not evidence that typical data need all rotations. A direct thin SVD, once actually implemented, would have different conditioning and complexity contracts.
+
 ## 5. Public Go API
 
 ### 5.1. Training entry points
@@ -184,41 +212,62 @@ Use the full `Fit` when a numerical rank policy or rotation budget must be expli
 
 ### 5.2. An executable leakage-safe pipeline
 
-This example compiles against the actual public functions. For richer scenarios with physical units and independent validation, use [`pca/example_test.go`](../../../../Downloads/lvlath_pca_phase11_ci_docs_v3/pca/example_test.go) and [`examples/pca/main.go`](../../../../Downloads/lvlath_pca_phase11_ci_docs_v3/examples/pca/main.go).
+This example compiles against the actual public functions. For richer scenarios with physical units and independent validation, use [`pca/example_test.go`](../pca/example_test.go) and [`examples/pca/main.go`](../examples/pca/main.go).
 
 ```go
 package main
 
 import (
-    "context"
-    "fmt"
+	"context"
+	"fmt"
 
-    "github.com/lvlath/go/matrix"
-    "github.com/lvlath/go/pca"
+	"github.com/lvlath/go/matrix"
+	"github.com/lvlath/go/pca"
 )
 
 func main() {
-    ctx := context.Background()
-    training, err := matrix.NewDense(4, 2)
-    if err != nil { fmt.Println(err); return }
-    if err = training.Fill([]float64{
-        10, 3, 12, 5, 14, 7, 16, 9,
-    }); err != nil { fmt.Println(err); return }
+	ctx := context.Background()
+	training, err := matrix.NewDense(4, 2)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	if err = training.Fill([]float64{
+		10, 3, 12, 5, 14, 7, 16, 9,
+	}); err != nil {
+		fmt.Println(err)
+		return
+	}
 
-    fit, err := pca.FitWithComponents(ctx, training, 1)
-    if err != nil { fmt.Println(err); return }
-    holdout, err := matrix.NewDense(1, 2)
-    if err != nil { fmt.Println(err); return }
-    if err = holdout.Fill([]float64{20, 13}); err != nil { fmt.Println(err); return }
+	fit, err := pca.FitWithComponents(ctx, training, 1)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	holdout, err := matrix.NewDense(1, 2)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	if err = holdout.Fill([]float64{20, 13}); err != nil {
+		fmt.Println(err)
+		return
+	}
 
-    projected, err := fit.Model.Transform(ctx, holdout)
-    if err != nil { fmt.Println(err); return }
-    reconstructed, err := fit.Model.InverseTransform(ctx, projected)
-    if err != nil { fmt.Println(err); return }
-    fmt.Printf("rank=%d score=%dx%d restored=%dx%d\n",
-        fit.Rank, projected.Rows(), projected.Cols(),
-        reconstructed.Rows(), reconstructed.Cols())
-    // Output: rank=1 score=1x1 restored=1x2
+	projected, err := fit.Model.Transform(ctx, holdout)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	reconstructed, err := fit.Model.InverseTransform(ctx, projected)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Printf("rank=%d score=%dx%d restored=%dx%d\n",
+		fit.Rank, projected.Rows(), projected.Cols(),
+		reconstructed.Rows(), reconstructed.Cols())
+	// Output: rank=1 score=1x1 restored=1x2
 }
 ```
 
@@ -228,11 +277,11 @@ There is no computation of the holdout mean. This is essential: a single new obs
 
 ### 6.1. Yield-curve factor decomposition and stress
 
-Rows represent time-ordered curves; columns represent fixed maturities such as 6 months, 1, 2, 3, 5, 10, 20, and 30 years. Train the factor model on an initial window, reconstruct future observed curves without refitting, and compare out-of-sample RMSE to a **frozen training-mean curve**. Inspect loading shapes before assigning economic *level/slope/curvature* labels: PCA does not promise the Nelson–Siegel functional form and cannot forecast yield changes from scores alone. Apply a deliberate parallel-rate shock to a heldout curve and analyze the displacement in the frozen factor coordinates. See `ExampleFit_yieldCurveFactorRisk`.
+Rows represent time-ordered curves; columns represent fixed maturities such as 6 months, 1, 2, 3, 5, 10, 20, and 30 years. Train the factor model on an initial window, reconstruct future **observed** curves without refitting, and compare out-of-sample RMSE to a **frozen training-mean curve**. A reconstruction check is not a forward forecast: the full future curve is already an input to `Reconstruct`. Inspect loading shapes before assigning economic *level/slope/curvature* labels: PCA does not promise the Nelson–Siegel functional form and cannot forecast yield changes from scores alone. Apply a deliberate parallel-rate shock to a heldout curve and analyze the displacement in the frozen factor coordinates. See `ExampleFit_yieldCurveFactorRisk`.
 
 ### 6.2. Industrial fault review using squared prediction error
 
-For a bank of vibration sensors sharing mm/s RMS units, train on healthy windows, calibrate the SPE threshold on **separate healthy validation data**, and flag a subsequent out-of-envelope reading for maintenance review. A useful operator trace includes `(normal SPE, threshold, fault SPE, fault/threshold)` rather than a lone boolean. The threshold is domain policy outside `pca`; it must be revalidated under changes in sensor noise, operating regimes, and false-alarm cost. See `ExampleFit_turbineBearingSPE`.
+For a bank of vibration sensors sharing mm/s RMS units, train on healthy windows, calibrate the SPE threshold on **separate healthy validation data**, and flag a subsequent out-of-envelope reading for maintenance review. When sensor channels share units, physical-unit SPE from `Model.Reconstruct` can be compared within a documented operating regime; changing the units or channel set invalidates a threshold calibrated for the previous metric. A useful operator trace includes `(normal SPE, threshold, fault SPE, fault/threshold)` rather than a lone boolean. The threshold is domain policy outside `pca`; it must be revalidated under changes in sensor noise, operating regimes, and false-alarm cost. See `ExampleFit_turbineBearingSPE`.
 
 ### 6.3. Multichannel ECG denoising
 
@@ -244,7 +293,7 @@ Ten correlated feeder measurements can be represented by three scores per hour i
 
 ### 6.5. Mixed-unit water-treatment instrumentation
 
-Temperature, flow, pH and conductivity have incompatible physical units. Fit `Standardize=true`, then evaluate a **specific conductivity-channel** reconstruction deviation in μS/cm against a separately calibrated threshold. Never sum raw squared residuals across heterogeneous units and call the result physical-unit SPE. See `ExampleFit_standardizedWaterQuality`.
+Temperature, flow, pH and conductivity have incompatible physical units. Fit `Standardize=true`, then evaluate a **specific conductivity-channel** reconstruction deviation in μS/cm against a separately calibrated threshold. The model returns original-unit reconstructed features, so a single-channel physical error is interpretable without pretending to recover hidden fitted scaling parameters. Never sum raw squared residuals across heterogeneous units and call the result dimensionless SPE. See `ExampleFit_standardizedWaterQuality`.
 
 ## 7. Errors and precedence
 
@@ -292,6 +341,20 @@ go tool cover -func=pca.cover
 ```
 
 A package that only passes against compatibility stand-ins is **not** verified against the real `matrix.Covariance`, `matrix.EigenSym`, and `stats.FitStandardizer` dependency versions. In particular, test behavior and benchmark figures from alternate kernels must not be reported as real-repository CI results.
+
+## 10. Operational decision checklist
+
+Before publishing PCA-based compression or an anomaly signal, record these application-owned decisions:
+
+1. **Feature schema:** fixed ordered columns, physical units, finite-value policy and verified sample provenance. PCA does not verify temporal stationarity or repair missing observations.
+2. **Data partition:** fit the basis on a declared training partition; use separate calibration/validation for `k` and thresholds; reserve untouched final holdout for a performance claim. Do not select `k` from the reporting holdout.
+3. **Solver admission:** use `CovarianceEigen` only when the covariance rank is credible for the condition regime. On near-singular data, `ThinSVD` is unavailable, not a fallback to enable by lowering tolerances.
+4. **Independent numerical evidence:** check eigen-equation residuals, repeated-eigenspace projectors, scale-extreme covariance oracles and direct reconstruction residuals. Do not declare PSD from clipping alone.
+5. **Physical metric:** decide whether the alarm uses original-unit channel errors, homogeneous-channel SPE or an explicitly weighted dimensionless score. `ReconstructionResidual` does not provide a ready-made per-row anomaly metric.
+6. **Alert interpretation:** a threshold exceedance initiates a documented investigation; it does not identify the failing component, predict a price move or authorize an automatic safety action.
+7. **Operational verification:** run full-module tests, race, vet and the repository's pinned lint configuration against real dependencies; inspect resource usage for representative `n`, `d` and rotation budgets.
+
+A useful audit record retains training/calibration/holdout boundaries, source feature names and units, `Options` (including resolved defaults), selected `k`, numerical rank, method version, runtime Go version and the threshold/calibration policy. The current `FitResult` exposes spectral diagnostics but is **not** itself a serialized model provenance record; applications must retain those metadata separately.
 
 ---
 
