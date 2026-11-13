@@ -3,7 +3,7 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/FAQ_&_TIPS.md
-  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca and the wider lvlath package family
+  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm and the wider lvlath package family
   lvlath - FAQ & Tips
 
   Purpose:
@@ -26,6 +26,7 @@
       gridgraph, builder, series, stats, sax, and examples.
     - Testing, benchmarking, documentation, and contribution best practices.
     - Certified PCA covariance factors, leakage-safe reconstruction and spectral diagnostics.
+    - Causal hidden-state filtering versus future-conditioned smoothing and MAP-EM training.
 
   License:
     lvlath is licensed under AGPL-3.0-only. See ../LICENSE.
@@ -60,6 +61,7 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
     13b. [OLS FAQ](#13b-ols-faq)
     13c. [Ridge FAQ](#13c-ridge-faq)
     13d. [PCA FAQ](#13d-pca-faq)
+    13e. [HMM FAQ](#13e-hmm-faq--causal-regimes-smoothing-decoding-and-em)
 14. [Builder and gridgraph tips](#14-builder-and-gridgraph-tips)
 15. [Errors and diagnostics](#15-errors-and-diagnostics)
 16. [Determinism and concurrency](#16-determinism-and-concurrency)
@@ -96,6 +98,7 @@ Start with the question, not the algorithm name.
 | “How do I normalize heldout features without refit?”                         | `stats`               | Immutable fitted model over matrix columns.                                           |
 | “How do I estimate linear factor coefficients and reuse them?”               | `ols`                 | Full-rank QR, original-unit beta/intercept, immutable prediction.                     |
 | “How do I fit correlated or wide linear factors with explicit L2 shrinkage?” | `ridge`               | Augmented QR, positive Lambda, unpenalized intercept and frozen physical predictions. |
+| “How do I infer a hidden operating regime from time-ordered observations?”   | `hmm`                 | Typed causal filtering, smoothing, Viterbi, and independent-sequence EM.              |
 | “How do I reduce multivariate dimensions without a response variable?”       | `pca`                 | Validated covariance spectrum and a frozen loadings model for holdout inference.      |
 | “How do I visit all cities in a route?”                                      | `tsp`                 | Tour construction/improvement/exact-small-instance routing.                           |
 
@@ -118,6 +121,8 @@ fit training-only scaling     -> Stats
 fit full-rank linear factors  -> OLS (pivoted QR, no refit)
 fit correlated/wide factors   -> Ridge (positive Lambda, unpenalized intercept)
 compress latent features      -> PCA (train-only covariance basis; no target)
+infer hidden temporal regime  -> HMM FilterStep (causal; no future observations)
+retrospective regime audit    -> HMM Smooth / Decode (future-conditioned)
 encode symbolic SAX words     -> SAX
 align time-warped signals     -> DTW
 build a closed tour           -> TSP
@@ -1959,6 +1964,74 @@ Not automatically. PCA eigenvectors diagonalize **sample covariance** for the se
 ### Q13d.13. What must I validate before admitting PCA to a production analytics pipeline?
 
 Use the exact repository toolchain; check `go test ./pca -count=1`, `go test -race ./pca`, `go test ./...`, `go vet ./...`, and `golangci-lint run`. Independently test extreme covariance construction, residual identities, repeated-subspace projectors, holdout-only evaluation, and numeric error classification through `errors.Is`. Benchmark **real** dependencies, not a compatibility stand-in. See [`PCA.md`](PCA.md) for the full API and [`pca/example_test.go`](../pca/example_test.go) for executable workflows.
+
+---
+
+### 13e. HMM FAQ — causal regimes, smoothing, decoding and EM
+
+#### Q13e.1. When do I use `FilterStep`, `FilterWithHistory`, `Smooth` or `Decode`?
+
+They return different mathematical objects. `FilterStep(ctx,prev,x)` returns the causal `P(z_t|x_0:t)` for one new observation and a detachable `FilterState`. `FilterWithHistory` returns those same *causal* distributions at each time, `Smooth` returns `P(z_t|x_0:T-1)` using **future** observations, and `Decode` returns the maximum-joint-probability sequence of states. Viterbi is not the per-row argmax of smoothed probabilities. For online alerts and historically faithful backtests, only the **causal** APIs are appropriate.
+
+#### Q13e.2. Can adding tomorrow's observation change today's posterior?
+
+For a successful causal filter, **no**. At time `t` the recursion reads only the previous normalized log posterior, fixed transition parameters and the current emission score. Appending future observations leaves all preceding filtered rows unchanged (subject to the original and appended calls both succeeding). Smoothing intentionally *can* revise them; in an absorbing two-state model, an initial reassuring event can later be reclassified after successive alarms. See [`HMM.md`](HMM.md#4-causal-forward-and-stateful-replay).
+
+#### Q13e.3. Why does `LogLikelihood` remain finite on 100,000 small-probability observations?
+
+The package never multiplies hundreds of raw probabilities together. It works in log space and normalizes each Forward step with `LogSumExp`. `LogSumExp(all -Inf)` returns exactly `-Inf` and is classified as `ErrImpossibleSequence` if no categorical state can produce an observation. Gaussian log densities are **not** probabilities and can be positive. Finite inputs that lead to an unrepresentable log-density or total yield `ErrOverflow`, not `ErrImpossibleSequence`.
+
+#### Q13e.4. What are the accepted categorical and Gaussian shapes?
+
+Categorical construction requires `Prior[K]`, `Transition[K,K]` and `Emission[K,A]` where `K,A>=1`; observations are `[]uint32` with each symbol `<A`. Gaussian construction requires `Prior[K]`, `Transition[K,K]`, `Means[K,D]`, and `Variances[K,D]` with `D>=1`, finite means and strictly positive finite variances. Gaussian observations are `matrix.Matrix` with **T rows, D columns**. Inputs with missing values, unknown symbols, NaN and infinities are rejected. A numeric signal cannot be used directly as a categorical index without a stable encoder.
+
+#### Q13e.5. Why does a model with zero transitions or emissions fail at runtime?
+
+Exact zero probabilities are legal and remain zero after constructor validation. If at some step every hidden state has zero possible path mass, the sequence is **impossible under the chosen model**, not numerically too small. `Filter`, `Smooth` and `Decode` return nil result plus `ErrImpossibleSequence`; they do not synthesize tiny epsilon mass or a `NaN` posterior. For Gaussian densities with positive variances, the mathematical support is the whole real feature space; nonrepresentable arithmetic is an overflow problem instead.
+
+#### Q13e.6. Why is a previous `FilterState` rejected after retraining?
+
+`FilterState.ModelID` is a SHA-256 digest of normalized parameters, emission family, dimensions and algorithm revision. `FilterStep` checks the ID, K log posterior elements, `Steps>=1`, finite accumulated log evidence, and log normalization within `1e-12`. Retraining changes parameters and normally changes the ID. **Never** fix an `ErrStateVersion` by editing the public string: initialize a new filter or explicitly migrate the application state under an external, mathematically justified policy. Copying a Go struct does **not** deep-copy its `LogPosterior` slice; call `append([]float64(nil), old.LogPosterior...)` when an independent editable copy is required.
+
+#### Q13e.7. What does `Pseudocount` do in Baum–Welch?
+
+`Pseudocount=lambda>=0` corresponds to symmetric Dirichlet MAP prior `alpha=1+lambda` over prior/transition rows and categorical emission rows. Its optimization target is **data log likelihood plus `lambda * sum(log(simplex cell))`**. With `lambda=0`, the penalty is disabled completely, including exact zero cells. Gaussian means and variances are not Dirichlet-regularized. Never test only whether raw log likelihood increases when `lambda>0`; the objective used for convergence has changed.
+
+#### Q13e.8. Why can't I merge independent training sessions into one long series?
+
+With independent sequences, each one gets its **own** initial hidden state drawn from Prior. Prior counts sum `gamma_0` over **every** sequence; transition counts sum `xi_t` over **only** `t<T_s-1` inside that sequence. Concatenating sessions invents transitions across boundaries and changes the statistical model. Two independent length-one sessions provide exactly zero observed within-sequence transitions, though both contribute prior and emission responsibilities.
+
+#### Q13e.9. Why does `FitGaussian` reject a positive initial variance below the floor?
+
+`NewGaussian` accepts any strictly positive finite diagonal variance. `FitGaussian` additionally requires **initial variance >= effective `VarianceFloor`**, which defaults to `1e-8` in *feature²* units. The constrained M-step uses `max(empiricalVariance,VarianceFloor)`—it does not add the floor as noise. If the seed is outside the constrained feasible domain, it is `ErrInvalidOption`, not a silently repaired start. Scaling training features changes the physical interpretation of the variance floor; freeze preprocessing units first.
+
+#### Q13e.10. What happens to a dead hidden state with zero posterior occupancy?
+
+No state is deleted or randomly reseeded. With `lambda=0`, a categorical emission row or transition row with no expected counts keeps its previous values. Gaussian means and variances for a zero-occupancy state remain unchanged. With `lambda>0`, zero-count categorical/transition simplexes are normalized from the pseudocount and become uniform. `Diagnostics.Occupancy` reports final posterior expected visits; its length remains K.
+
+#### Q13e.11. Does an EM error always mean a nil model?
+
+**No.** Invalid options, invalid input, impossible observations or context cancellation return nil. `ErrNotConverged` means the iteration budget was exhausted and returns the **last accepted immutable model** with `Converged=false`; `ErrNumerical` on objective decline returns the last accepted model for diagnosis. Neither constitutes a successful fit. The current code rejects *any* negative finite penalized-objective change (including tiny roundoff) rather than allowing a tolerance band; callers must not silently reinterpret that as convergence. Use `errors.Is` and inspect `Diagnostics.Objective`, `Iterations`, `Converged`, and `Occupancy`.
+
+#### Q13e.12. What does `IsNil()` test, and is an empty result valid?
+
+`FilterResult`, `SmoothResult`, `DecodeResult`, `CategoricalFitResult`, and `GaussianFitResult` each implement `core.Nilable`. Their `IsNil()` checks **only whether the receiver pointer is nil**, including typed nil held in an interface. A non-nil zero-valued result is not necessarily a valid inference artifact. A successful `FilterResult` may intentionally have `Posterior==nil` when `ReturnHistory=false`; check `Last` instead. Do not treat a nil history matrix as a failed filter.
+
+#### Q13e.13. How are input matrices validated without `reflect`?
+
+Supported pointer-backed lvlath matrix types implement the nil-safe `IsNil()` convention. The HMM checks the interface for nil, optionally calls `IsNil`, validates dimensions and finite cells via `Matrix.At`, then copies values into private row-major buffers. A custom pointer-backed matrix must implement `IsNil()` to make its typed-nil discoverable without reflection. `*matrix.Dense` is useful for efficient reads, but the O(TK²) transition hot path already operates on private flat parameters and does not access another package's unexported backing slice.
+
+#### Q13e.14. Is immutable model inference safe from multiple goroutines?
+
+Independent `Filter`, `Smooth`, `Decode`, and `FilterStep` calls use per-call workspaces and do not mutate fitted parameters. They are safe concurrently **only while caller-owned input matrices/slices remain unchanged**. Public `FilterState.LogPosterior`, histories, and diagnostics are mutable by their owners and require synchronization if shared for writes. There is no snapshot isolation across concurrent `matrix.Set` calls and no public mutable streaming accumulator.
+
+#### Q13e.15. How much memory do long sequences use?
+
+Categorical `FilterDefault` requires O(K) live workspace plus immutable model; `FilterWithHistory` returns a T×K matrix. `Smooth` uses O(TK) messages and a detached T×K result; Viterbi stores T×K predecessor indexes. EM additionally materializes `(T_s-1)*K²` pair responsibilities for one sequence at a time. Gaussian batch inference also copies T×D observation cells on input validation. These are **peak live space**, not a promise of zero per-observation allocations: current batch filtering still creates per-step snapshots. Memory budgets are caller-owned even when integer allocation products are checked.
+
+#### Q13e.16. Where can I see practical, executable scenarios and independent proofs?
+
+[`hmm/example_test.go`](../hmm/example_test.go) exercises clickstream intent, live market regime monitoring, retrospective incident interpretation, industrial state decoding, and independent-session EM. [`examples/hmm`](../examples/hmm) (when installed) shows a standalone synthetic streaming regime scenario. The `hmm_test` suite checks exact tiny hidden-path enumeration, prefix invariance, state detachment, long-sequence log evidence, Viterbi ties, MAP objective behavior and concurrent inference. The worked formulas and decision boundaries are in [`HMM.md`](HMM.md). Real deployments must separately validate regime semantics, policy thresholds and out-of-sample calibration.
 
 ---
 

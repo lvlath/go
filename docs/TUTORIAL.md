@@ -50,6 +50,7 @@ This tutorial is the beginning of the learning path. It introduces the objects a
     11c. [OLS Foundations: Stable QR Regression and Frozen Prediction](#11c-ols-foundations-stable-qr-regression-and-frozen-prediction)
     11d. [Ridge Foundations: Correlated Factors, Wide Matrices and Numerical Preconditioning](#11d-ridge-foundations-correlated-factors-wide-matrices-and-numerical-preconditioning)
     11e. [PCA Foundations: Certified Covariance Factors and Frozen Inference](#11e-pca-foundations-certified-covariance-factors-and-frozen-inference)
+    11f. [HMM Foundations: Causal Hidden-State Filtering and Independent-Sequence Learning](#11f-hmm-foundations-causal-hidden-state-filtering-and-independent-sequence-learning)
 12. [Algorithm Selection Guide](#12-algorithm-selection-guide)
 13. [Professional Best Practices](#13-professional-best-practices)
 14. [Where To Go Next](#14-where-to-go-next)
@@ -81,6 +82,7 @@ The library covers:
 * `ols` immutable full-rank regression models trained by pivoted Householder QR, with exact zero-origin policy and physical-unit coefficients;
 * `ridge` explicit positive-Lambda Tikhonov regression for correlated and wide designs, unpenalized intercept, protected augmented QR and physical-unit predictions;
 * `pca` immutable train-only principal component projection, certified covariance eigenspectrum, and original-unit reconstruction;
+* `hmm` typed categorical/diagonal-Gaussian hidden-state models, causal filtering, noncausal smoothing, Viterbi, and independent-sequence MAP-EM;
 * `paa` exact fractional time-series compression, rational segment boundaries and value-only feature projection;
 * `sax` symbolic words from fractional PAA and compatible Euclidean MINDIST (not a DTW lower bound);
 * `tsp` matrix-backed tour optimization with exact, approximate, matching, and local-search regimes;
@@ -103,14 +105,17 @@ dense operator             *matrix.Dense               row-major numeric artifac
 warping alignment          *dtw.Result                 distance, reachability, path
 causal sample transform    *series.TransformResult     detached Values + Valid mask
 timestamp-grid inspection  *series.ValidationResult    exact cadence / missing slots
-streaming statistics      *stats.Summary               exact-binary-input mean / scaled variance
-train-only scaling        *stats.ScaleFitResult        detached fit metadata / immutable model
-full-rank regression      *ols.FitResult               physical beta / intercept / rank / SSE / QR condition
-L2 regularized regression *ridge.FitResult             physical beta / SSE / penalty / objective
-fitted PCA subspace       *pca.FitResult               verified covariance rank / loadings / reconstruction
-fractional PAA             *paa.Result                 detached means / exact rational segments
-SAX symbolic word         *sax.Result                 detached symbols / policy identity / optional PAA
-closed tour                *tsp.Result                 cost, exactness, timeout, ratio
+streaming statistics       *stats.Summary              exact-binary-input mean / scaled variance
+train-only scaling         *stats.ScaleFitResult       detached fit metadata / immutable model
+full-rank regression       *ols.FitResult              physical beta / intercept / rank / SSE / QR condition
+L2 regularized regression  *ridge.FitResult            physical beta / SSE / penalty / objective
+fitted PCA subspace        *pca.FitResult              verified covariance rank / loadings / reconstruction
+causal regime              *hmm.FilterResult           current log posterior / optional causal history
+retrospective regime       *hmm.SmoothResult           future-conditioned posterior
+joint regime trajectory    *hmm.DecodeResult           optimal path / joint log probability
+fractional PAA              *paa.Result                detached means / exact rational segments
+SAX symbolic word           *sax.Result                detached symbols / policy identity / optional PAA
+closed tour                 *tsp.Result                cost, exactness, timeout, ratio
 ```
 
 ### Why lvlath?
@@ -134,6 +139,8 @@ A shortest-path formula is easy. A reliable Go package must also answer:
 * Are timestamp gaps merely recorded, or has the application really resampled its data?
 * Can a variance be computed without cancellation or premature overflow?
 * Are inference features normalized with fixed training parameters, or was the model accidentally refitted?
+* Did a live hidden-state decision accidentally use future-conditioned smoothing instead of filtering?
+* Were independent HMM training sequences illegally concatenated into fabricated transitions?
 
 `lvlath` treats those questions as the API, not as afterthoughts.
 
@@ -184,6 +191,7 @@ Read these files as a learning path. `doc.go` files define implemented package c
 | 8d   | [`OLS.md`](OLS.md)                         | Pivoted-QR full-rank regression, scale-only origin policy, frozen coefficients, SSE and error contracts.                    |
 | 8e   | [`RIDGE.md`](RIDGE.md)                     | Positive-Lambda augmented Householder QR, unpenalized intercept, stable strongly regularized slopes, immutable models.      |
 | 8f   | [`PCA.md`](PCA.md)                         | Strict covariance eigenanalysis, train-only latent factors, reconstruction residuals and solver limitations.                |
+| 8g   | [`HMM.md`](HMM.md)                         | Typed hidden-state models, strict online causal filtering, retrospective smoothing, Viterbi, independent-sequence EM.       |
 | 9    | [`DTW.md`](DTW.md)                         | `Align`, `AlignCostMatrix`, `AlignMatrix`, `AlignBounded`, exact `Search`, numeric and path artifacts.                      |
 | 9a   | [`DTW_SEARCH.md`](DTW_SEARCH.md)           | Fixed-length exact top-K, certified LB_Keogh, workers, budgets, and partial-result law.                                     |
 | 10   | [`TSP.md`](TSP.md)                         | Matrix-backed tours, exact regimes, Christofides, Blossom matching, local search, timeouts.                                 |
@@ -208,6 +216,8 @@ Working on numeric/time-series workflows:
   MATRICES -> STATS -> OLS -> chronological holdout prediction
   MATRICES -> STATS -> RIDGE -> wide/collinear factor predictions with shrinkage
   MATRICES -> STATS -> PCA -> independent holdout reconstruction and residual review
+  SERIES -> STATS -> HMM.FilterStep -> online regime monitoring (no future data)
+  MATRICES -> HMM.Smooth / Decode -> offline incident reconstruction
   SAX (Euclidean screening) != DTW (nonlinear alignment)
   MATRICES -> TSP
 
@@ -876,6 +886,7 @@ The full derivation, dimension rules, numerical limits, and the separate LU/QR/C
 * `ols` uses the same QR and stats kernels for full-rank linear-factor modeling, preserves physical coefficients and never refits on heldout data.
 * `ridge` builds a positive-Lambda augmented system, equilibrates its QR coordinates and accepts collinear/wide designs without hidden OLS fallback; it also predicts from frozen physical parameters.
 * `pca` delegates sample covariance and symmetric Jacobi to `matrix`, freezes train-only means/scales and eigenvectors, and reconstructs new observations without recalibrating their coordinate origin.
+* `hmm` consumes typed categorical symbols or finite feature matrices, keeps online filtering causal, and trains without crossing independent sequence boundaries.
 
 ---
 
@@ -1989,6 +2000,171 @@ The complete executable stories in [`pca/example_test.go`](../pca/example_test.g
 
 ---
 
+## 11f. HMM Foundations: Causal Hidden-State Filtering and Independent-Sequence Learning
+
+A Hidden Markov Model models an unobservable regime (`state`) through observable, time-ordered signals. It does **not** infer the state label from a single classification threshold: the posterior combines a **prior**, a **transition law**, and the likelihood or density of what was actually observed.
+
+### 11f.1. Hidden state vs observed data
+
+```text
+Hidden regime:    idle ----warmup----active----active----active
+                    |        |         |         |         |
+Observed signal:   low     medium     high      high      high
+                    ^        ^         ^         ^         ^
+                  x[0]     x[1]      x[2]      x[3]      x[4]
+```
+
+A factory may record motor power and vibration without observing “warm-up” directly. A web analytics system may record browsing/comparison/checkout events without knowing the user's intent. A market monitor may observe returns and a volatility proxy without having an observable “stress regime” flag. These are **model hypotheses** about latent states, not ground-truth labels.
+
+The typed HMM package offers two distinct emission families:
+
+| Family             | Input                                        | Model parameters                   | Domain                                                               |
+|:-------------------|:---------------------------------------------|:-----------------------------------|:---------------------------------------------------------------------|
+| `CategoricalModel` | `[]uint32` symbol IDs                        | `K×A` row-stochastic `Emission`    | Fixed alphabet `0..A-1`; an event category is not a sensor magnitude |
+| `GaussianModel`    | `matrix.Matrix`, rows=time, columns=features | `K×D` means and diagonal variances | Finite feature values; positive variances in squared units           |
+
+Both share `Common{Prior:[]float64, Transition:matrix.Matrix}`, where `Transition[i,j]` means **current state `i` → next state `j`**, not the reverse. `NewCategorical`/`NewGaussian` copy parameters and freeze their `ModelID`. No HMM constructor randomly initializes probabilities.
+
+### 11f.2. Four different questions, not four names for the same output
+
+```mermaid
+flowchart LR
+    x[Time-ordered observations] --> a[Filter / FilterStep]
+    a --> live[Current regime probability; causal]
+    x --> s[Smooth]
+    s --> audit[Retrospective posterior; future allowed]
+    x --> v[Decode]
+    v --> path[Most likely joint state path]
+    train[Independent sequences] --> em[FitCategorical / FitGaussian]
+    em --> fixed[New immutable model and diagnostics]
+```
+
+**Causality law:** `FilterStep` only consumes the previous `FilterState` and the current observation. Appending future observations cannot change the already computed filtered prefix. `Smooth` reads future evidence and **may change** the first-step posterior. Viterbi maximizes the probability of one entire path; taking the highest smoothed state separately at each time is not equivalent and may choose impossible transitions.
+
+The kernels use `LogSumExp`, rather than multiplying thousands of small probabilities. A zero emission/transition has internal log mass `-Inf`; if *all* current categorical paths are impossible, `ErrImpossibleSequence` is returned. A diagonal-Gaussian emission is a **density**, so its log score can be positive; variance is in feature², and arithmetic range failures are `ErrOverflow`.
+
+### 11f.3. Causality example: the incident is understood differently after more evidence
+
+The following deterministic synthetic two-regime equipment model has **absorbing states**. Symbol `0` indicates a normal measurement and symbol `1` an alarm. After the first normal measurement, the causal probability of a normal regime is 0.9. Three later alarms make the **retrospective** first-step probability of normal operation much lower; the historical live decision is unchanged.
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/lvlath/go/hmm"
+	"github.com/lvlath/go/matrix"
+)
+
+func makeRowMatrix(rows [][]float64) (matrix.Matrix, error) {
+	m, err := matrix.NewZeros(len(rows), len(rows[0]))
+	if err != nil {
+		return nil, err
+	}
+	for i, row := range rows {
+		for j, value := range row {
+			if err := m.Set(i, j, value); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return m, nil
+}
+
+func main() {
+	a, err := makeRowMatrix([][]float64{{1, 0}, {0, 1}})
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	b, err := makeRowMatrix([][]float64{{0.9, 0.1}, {0.1, 0.9}})
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	model, err := hmm.NewCategorical(hmm.CategoricalSpec{
+		Common:   hmm.Common{Prior: []float64{0.5, 0.5}, Transition: a},
+		Emission: b,
+	})
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	record := []uint32{0, 1, 1, 1}
+	live, err := model.FilterWithHistory(context.Background(), record)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	reviewed, err := model.Smooth(context.Background(), record)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	liveNormal, err := live.Posterior.At(0, 0)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	reviewedNormal, err := reviewed.Posterior.At(0, 0)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Printf("initial live normal=%.1f; after review normal<0.02=%t\n",
+		liveNormal, reviewedNormal < 0.02)
+	// Output: initial live normal=0.9; after review normal<0.02=true
+}
+```
+
+This example demonstrates **why a smoother must not be backfilled into a real-time risk dashboard as if it were available at the old timestamp**. The retrospective result is useful for incident reconstruction, not for proving what an operator knew at the time.
+
+### 11f.4. Training separate machines or user sessions
+
+For an application training on independent runs, use `hmm.FitCategorical(ctx, sessions, initial, opts)` or `hmm.FitGaussian(ctx, batches, initial, opts)`. Every inner sequence draws its first state from `Prior`; there is **no** transition from the end of one record into the next. The E-step accumulates `gamma` at the first observation of each record, and `xi` only inside that record. The regularization parameter `Pseudocount=lambda` means symmetric Dirichlet `alpha=1+lambda`; convergence is measured by **penalized** log likelihood, not raw likelihood.
+
+```text
+Session A: view → compare → checkout  |END|
+Session B: view → compare             |END|
+          ^                            ^
+        Prior draw                   Prior draw
+
+Forbidden fabricated transition: checkout(A) → view(B)
+```
+
+`FitOptions{}` uses 100 EM steps, relative objective tolerance `1e-6`, no Dirichlet pseudocount and Gaussian `VarianceFloor=1e-8` feature². `FitGaussian` requires the supplied *initial* variance to be at least the floor. Failure due to iteration exhaustion (`ErrNotConverged`) or an objective decrease (`ErrNumerical`) can include the **last accepted model** for diagnostics; neither is convergence. Other invalid-input/cancellation failures return nil results.
+
+### 11f.5. A safe operational pipeline
+
+```text
+    series.Validate timestamps ----> gap policy, no invented observations
+               |
+    series transforms + Valid mask --> choose usable causal features
+               |
+    stats fitted on TRAINING only --> frozen means/scales where needed
+               |
+    categorically encode OR create a finite T×D matrix
+               |
+    hmm.NewCategorical / hmm.NewGaussian  ----> immutable ModelID
+               |
+      +--------+----------------------+-------------------+
+      |                               |                   |
+      v                               v                   v
+FilterStep for live                 Smooth for          Decode for joint
+alerts (no future)                 incident review     historical path
+      |
+ archive snapshot together with model ID; do not edit its shared slice
+```
+
+PCA may supply **frozen** train-only features before Gaussian HMM if the application's dimensionality model warrants it; do not fit a fresh PCA basis on each observation. SAX symbols can be categorical observations only with a **stable encoder** and a clear window-end timestamp, and cannot retroactively justify earlier decisions. Full-covariance Gaussian modeling, semantically fixed state labels, threshold calibration and state serialization belong outside the current HMM API.
+
+For the complete log-domain derivation, memory and error tables, MAP-EM objective, and runnable scenarios see [`HMM.md`](HMM.md), [`hmm/doc.go`](../hmm/doc.go), and [`hmm/example_test.go`](../hmm/example_test.go).
+
+---
+
 ## 12. Algorithm Selection Guide
 
 ### If the input is a graph
@@ -2037,6 +2213,9 @@ The complete executable stories in [`pca/example_test.go`](../pca/example_test.g
 | Fixed-alphabet symbolic window encoding            | `sax.Encode` / `sax.Encoder.Encode`           | Detached symbol word, policy identity and optional transformed PAA.                        |
 | Compatible Euclidean symbolic lower bound          | `sax.Encoder.Mindist` / `sax.MindistValues`   | Lower-bound dissimilarity in the selected transformed space, never a general DTW bound.    |
 | Complete fixed index windows                       | `series.WindowRanges`                         | ordered half-open sample-index intervals.                                                  |
+| Hidden-state streaming causal filtering            | `hmm.FilterStep` / `FilterDefault`            | P(z_t given observations through t), no future-sample leakage.                             |
+| Retrospective hidden-state attribution             | `hmm.Smooth` / `hmm.Decode`                   | Full-sequence state marginals vs one optimal joint path; different contracts.              |
+| Independent categorical/Gaussian sequence training | `hmm.FitCategorical` / `hmm.FitGaussian`      | MAP Baum-Welch with no cross-sequence transitions and explicit convergence diagnostics.    |
 | Scalar sequence alignment                          | `dtw.Align`                                   | DTW `Result` with distance/reachability.                                                   |
 | Inclusive-limit scalar alignment                   | `dtw.AlignBounded`                            | Exact/above-limit/unreachable status.                                                      |
 | Globally exact window top-K                        | `dtw.Search`                                  | Sorted fixed-length squared-DTW matches.                                                   |

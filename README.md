@@ -48,7 +48,7 @@
 
 # lvlath
 
-**lvlath** is a pure-Go algorithm engineering library for graphs, flows, dense graph algebra, routing, exact timestamp grids, causal series transforms, fractional PAA, symbolic SAX time-series signatures, stable statistical moments, fitted feature scaling, covariance PCA, time-series alignment, and reproducible test fixtures.
+**lvlath** is a pure-Go algorithm engineering library for graphs, flows, dense graph algebra, routing, exact timestamp grids, causal series transforms, fractional PAA, symbolic SAX time-series signatures, stable statistical moments, fitted feature scaling, covariance PCA, causal Hidden Markov Models, time-series alignment, and reproducible test fixtures.
 
 It is built for people who need algorithmic tools they can explain in a code review, trust in CI, compose across packages, and debug from deterministic artifacts instead of guessing why an answer changed.
 
@@ -69,6 +69,7 @@ It is built for people who need algorithmic tools they can explain in a code rev
 * `ols` fits full-rank original-unit linear models through pivoted QR, with an explicit zero-origin policy and frozen predictions;
 * `ridge` fits strongly correlated or wide linear models with a caller-chosen positive L2 penalty, unpenalized intercept and stable augmented QR coordinates;
 * `pca` fits validated covariance principal components and retains immutable training means/scales for leakage-free latent projection and reconstruction;
+* `hmm` provides typed categorical and diagonal-Gaussian hidden states with strictly causal filtering, retrospective smoothing, global Viterbi paths, and multi-sequence MAP-EM;
 * flow, MST, TSP, DTW, grid, and builder packages extend the same discipline into optimization, alignment, fixtures, and examples.
 
 ---
@@ -92,7 +93,8 @@ The common failures are familiar:
 * SAX labels are mistaken for compatible thresholds, or Euclidean MINDIST is misused as an exact-DTW pruning bound;
 * examples panic, print unstable maps, or silently rely on fictional APIs;
 * documentation explains textbook theory but not the actual package contract;
-* high-offset variance disappears through raw-moment cancellation, or inference refits on holdout data.
+* high-offset variance disappears through raw-moment cancellation, or inference refits on holdout data;
+* hidden-state filters are accidentally replaced with future-conditioned smoothing, or independent EM training sequences are concatenated.
 
 `lvlath` is built against those failure modes. It is an algorithm engineering library: each package publishes a narrow mathematical contract, validates its input domain, returns meaningful result artifacts, and keeps deterministic behavior observable.
 
@@ -170,6 +172,7 @@ lvlath/
 ├── ols/                   # QR regression, full-rank gate, frozen physical coefficients
 ├── ridge/                 # positive-Lambda Tikhonov, balanced augmented QR, immutable fit
 ├── pca/                   # certified covariance PCA, frozen projection and reconstruction
+├── hmm/                   # categorical/Gaussian HMM, causal filter, smoother, Viterbi, MAP EM
 ├── gridgraph/             # 2D lattice graph generation
 ├── matrix/                # dense graph algebra, stable statistics, pivoted factors and solves
 ├── tsp/                   # tour construction, local search, exact small-instance routing
@@ -190,6 +193,7 @@ lvlath/
 │   ├── OLS.md
 │   ├── RIDGE.md
 │   ├── PCA.md
+│   ├── HMM.md
 │   ├── PAA.md
 │   ├── SAX.md
 │   ├── GRID_GRAPH.md
@@ -318,6 +322,8 @@ Composition rule:
   ridge owns positive-Lambda regression artifacts, unpenalized intercept, and QR equilibration.
   pca owns covariance-based orthogonal factors, strict spectrum admission,
   and immutable train-only reconstruction coordinates.
+  hmm owns immutable hidden-state probability models, causal filtering,
+  retrospective smoothing, joint-path decoding, and multi-sequence EM.
   mst / flow / tsp own optimization artifacts.
   builder and gridgraph produce reproducible input worlds.
 ```
@@ -340,6 +346,7 @@ Composition rule:
 | `sax`       | Fixed-length symbolic words, pinned Gaussian/custom thresholds, immutable encoders and Euclidean MINDIST.                                      | Right-bin equality, SHA-256 policy identity, detached results; no false DTW pruning claim.                               | Telemetry signatures, approximate candidate ranking, shape-change screening.                   |
 | `ols`       | Full-column-rank least-squares regression, immutable original-unit coefficients and QR diagnostics.                                            | Explicit intercept/scale-only origin policies, rank refusal, training SSE, no heldout refit.                             | CAPM factors, sensor calibration, energy-load forecasting.                                     |
 | `ridge`     | Tikhonov L2 regression with mandatory Lambda>0 and immutable physical-unit inference.                                                          | Stable balanced augmented Householder QR, p>n, duplicated predictors, unpenalized intercept and checked objective.       | Correlated multi-factor hedges, wide optical sensors, seasonal AR(12).                         |
+| `hmm`       | Typed finite-state categorical and diagonal-Gaussian probability models; causal filtering, smoothing, Viterbi, multi-sequence Baum-Welch.      | Explicit log-domain evidence, immutable model IDs, no future leakage in filtering, no cross-session transition counts.   | Live stress monitoring, machine regimes, independent clickstream sessions.                     |
 | `pca`       | Immutable covariance-based principal components, train-only projection and original-unit reconstruction.                                       | Bounded Jacobi, independent PSD/eigenpair checks, detached loadings and no holdout recentering.                          | Yield-curve factors, turbine residual screening, multichannel telemetry compression.           |
 | `stats`     | Stable scalar mean/variance, mergeable Welford/Chan states, train-only fitted feature standardization.                                         | Exact binary-input mean and scaled second moments, detached fitted metadata, immutable inference without refit.          | Telemetry aggregation, distributed metrics, ML feature preparation, anomaly-score calibration. |
 | `gridgraph` | 2D lattice graph generation with neighborhood and obstacle-style workflows.                                                                    | Avoids manual wiring for pathfinding maps and teaching graphs.                                                           | Grid routing, maps, demos, benchmark fixtures.                                                 |
@@ -858,6 +865,53 @@ Target methods require **exactly representable binary64 stored costs and heurist
 
 ---
 
+### HMM: causal regime filtering, retrospective smoothing and reproducible EM
+
+`github.com/lvlath/go/hmm` models **hidden operating regimes** behind categorical events or finite multichannel telemetry. Its two immutable model families share the same transition mathematics but have distinct, typed observation contracts:
+
+| Need                                     | API                                           | Contract / safe interpretation                                             |
+|:-----------------------------------------|:----------------------------------------------|:---------------------------------------------------------------------------|
+| Categorical hidden regimes               | `hmm.NewCategorical(CategoricalSpec)`         | `K×A` emission probabilities, `uint32` symbols in `[0,A)`                  |
+| Independent Gaussian feature coordinates | `hmm.NewGaussian(GaussianSpec)`               | `K×D` means and **positive** variances in feature²                         |
+| Single live observation                  | `Model.FilterStep(ctx, prev, symbolOrVector)` | New detached causal checkpoint; `prev` is never modified                   |
+| Batch last state only                    | `Model.FilterDefault(ctx, observations)`      | `FilterResult.Last` plus cumulative log evidence; **no** historical matrix |
+| Causal trajectory                        | `Model.FilterWithHistory(ctx, observations)`  | T×K `P(z_t \| x_0:t)`, invariant under future append                       |
+| Retrospective regime attribution         | `Model.Smooth(ctx, observations)`             | T×K `P(z_t \| x_0:T-1)`, **uses future evidence**                          |
+| One globally consistent path             | `Model.Decode(ctx, observations)`             | Maximum-joint path, not per-row posterior maxima                           |
+| Learn from independent sessions/cycles   | `hmm.FitCategorical` / `hmm.FitGaussian`      | Explicit initial parameters, no hidden RNG, no cross-session transitions   |
+
+**The critical causal boundary:** a smoothed posterior is valid for *postmortem analysis*, but it must not be shown as the risk probability known to an online controller at the earlier timestamp. The causal filter combines the current emission with **only** the previous filtered state. Viterbi optimizes one entire state path and therefore answers a third question, not a different formatting of the same probabilities.
+
+```text
+           previous FilterState + current observation
+                         |
+                  FilterStep (causal) ------------------> live decisions
+                         |
+                 log posterior / ModelID
+
+           complete recorded observation sequence
+                         |
+                 +-------+---------+
+                 |                 |
+              Smooth             Decode
+          retrospective       most likely joint
+           per-time belief     state trajectory
+
+   independent training sequences -> Fit* -> diagnostics + immutable model
+                         |
+              NO transition across sequence boundaries
+```
+
+The stochastic kernel evaluates the log-domain Forward/Backward and Viterbi recurrences through `LogSumExp`, including an explicit all-`-Inf` case. It never fixes impossible categorical events by inventing epsilon probability. Gaussian observations can have positive log-density; arithmetic overflow is distinguished from impossible categorical support. The `FilterState.ModelID` binds checkpoints to the exact parameter revision, and all five result types implement `core.Nilable.IsNil()`.
+
+**Training is explicit and auditable:** `Pseudocount=lambda` corresponds to symmetric Dirichlet MAP regularization (`alpha=1+lambda`) on stochastic rows, and EM monitors the **penalized** objective, not naive data likelihood. `VarianceFloor` constrains Gaussian **variance in squared units** via `max(estimate,floor)`, not by adding jitter. `ErrNotConverged` and a rejected objective step can return the last accepted model with diagnostic status; this is **not** implicit successful training. Input/context errors return nil results. Use `errors.Is` for all sentinel classifications.
+
+Operational examples span clickstream conversion intent, live market stress detection, industrial machine phase decoding, retrospective alarm attribution, and independent-session training. They are deterministic synthetic fixtures, not pre-calibrated real-world classifiers. Feature masks and timestamps are handled by `series`; train-only scaling by `stats` or a frozen application transformer; categorical encoders must maintain an explicit stable symbol dictionary. Nothing in the package silently refits preprocessing during inference.
+
+See [`docs/HMM.md`](docs/HMM.md) for formal log-domain equations, EM counts and penalty derivations, memory/error laws and anti-leakage counterexamples. The package constitution is [`hmm/doc.go`](hmm/doc.go); executable examples are [`hmm/example_test.go`](hmm/example_test.go); a standalone scenario is [`examples/hmm/main.go`](examples/hmm/main.go), where installed.
+
+---
+
 ## Current contract documentation
 
 | Layer                   | File                                         | Purpose                                                                                                                         |
@@ -876,6 +930,7 @@ Target methods require **exactly representable binary64 stored costs and heurist
 | Series primitives       | [`docs/SERIES.md`](docs/SERIES.md)           | Exact integer grids, causal transforms, result masks, numeric safeguards, index windows.                                        |
 | Stable statistics       | [`docs/STATS.md`](docs/STATS.md)             | Welford/Chan, exact mean sum, scaled M2, fitted scaling, sentinels, immutable inference.                                        |
 | Stable Ridge regression | [`docs/RIDGE.md`](docs/RIDGE.md)             | Positive-Lambda augmented QR, strict intercept policy, wide/collinear designs, nonzero tiny coefficients and frozen prediction. |
+| Finite-state HMM        | [`docs/HMM.md`](docs/HMM.md)                 | Causal log-domain filtering, retrospective smoothing, Viterbi, multi-sequence MAP-EM, error and identity laws.                  |
 | Fitted covariance PCA   | [`docs/PCA.md`](docs/PCA.md)                 | Train-only orthogonal projection, checked covariance eigenpairs, numerical rank and leakage-safe reconstruction.                |
 | Stable OLS regression   | [`docs/OLS.md`](docs/OLS.md)                 | Pivoted Householder QR, explicit intercept, physical coefficients, SSE, frozen Model and holdout pitfalls.                      |
 | Grid spec               | [`docs/GRID_GRAPH.md`](docs/GRID_GRAPH.md)   | Grid/lattice graph modeling and pathfinding-oriented construction.                                                              |
@@ -1395,45 +1450,48 @@ incidence matrix:       columns are edge identities, not vertex-pair weights
 
 ### By question type
 
-| You ask                                                                       | Use                                                                | Why                                                                                          |
-|:------------------------------------------------------------------------------|:-------------------------------------------------------------------|:---------------------------------------------------------------------------------------------|
-| "Which vertices are within `k` hops?"                                         | `bfs.BFS` with depth policy                                        | Hop layers are unweighted traversal.                                                         |
-| "Which weak islands exist?"                                                   | `bfs.Components`                                                   | Component membership is not a route-cost problem.                                            |
-| "What dependency order is valid?"                                             | `dfs.TopologicalSort`                                              | DAG ordering is finish-order semantics.                                                      |
-| "Where is the cycle?"                                                         | `dfs.DetectCycles`                                                 | You need a deterministic witness, not all simple cycles.                                     |
-| "What is the cheapest route from this source?"                                | `dijkstra.Dijkstra`                                                | Non-negative weighted shortest path.                                                         |
-| "Which targets are outside a runtime budget?"                                 | `dijkstra.WithMaxDistance`                                         | Cutoff policy without deleting topology.                                                     |
-| "Which links form the cheapest connected backbone?"                           | `mst.MinimumSpanningTree`, `mst.Kruskal`, `mst.Prim`               | MST/MSF solves acyclic connectivity, not routing.                                            |
-| "What if the graph is disconnected but I still need per-component backbones?" | `mst.WithForest`                                                   | Forest mode is explicit, not a hidden fallback.                                              |
-| "How do I connect only a required set of vertices?"                           | `mst.SteinerTree`                                                  | KMB approximates a nonnegative graph Steiner tree using original EdgeIDs.                    |
-| "How do I cover all edges of the installed tree from A to B?"                 | `mst.SteinerWalk`                                                  | Iterative optimal covering of the given tree, with repeated passage IDs.                     |
-| "What is the max source-to-sink capacity?"                                    | `flow.Dinic` or `flow.EdmondsKarp`                                 | Flow algorithms reason over residual capacity.                                               |
-| "How do I validate exact sample cadence and missing slots?"                   | `series.Validate`                                                  | Signed-nanosecond grid checks; no interpolation.                                             |
-| "How do I compute causal lag, differences, or returns?"                       | `series.Lag` / `Difference` / `SimpleReturns` / `LogReturns`       | Length-preserving values and validity masks.                                                 |
-| "How do I compress a window without dropping fractional tails?"               | `paa.Transform` / `paa.TransformRange`                             | Exact fractional PAA, checked integer geometry and a detached result.                        |
-| "How do I create comparable symbolic time-series signatures?"                 | `sax.NewEncoder` / `sax.Encode`                                    | Fixed-alphabet symbols, compatible policy hash, detached results.                            |
-| "Can SAX MINDIST prune arbitrary DTW candidates?"                             | No                                                                 | Euclidean-only lower bound; shortlist retrieval must report Recall@K.                        |
-| "How do I enumerate only complete index windows?"                             | `series.WindowRanges`                                              | Ordered half-open ranges without partial tails.                                              |
-| "How do I compare two jittery sensor signatures?"                             | `dtw.Align`                                                        | Scalar DTW aligns timing drift.                                                              |
-| "How do I align model-provided frame costs?"                                  | `dtw.AlignCostMatrix`                                              | Caller owns the local-cost surface.                                                          |
-| "How do I align multivariate sequences?"                                      | `dtw.AlignMatrix`                                                  | Rows are time steps, columns are features.                                                   |
-| "How do I calculate stable population/sample variance?"                       | `stats.Summarize`                                                  | Stable central moments and explicit DDOF denominator.                                        |
-| "How do I combine independent streaming statistics?"                          | `stats.Moments.Update` / `Merge`                                   | Error-atomic, count-checked Welford/Chan partition reductions.                               |
-| "How do I scale test features using only training data?"                      | `stats.FitStandardizer` followed by `Model.Transform`              | Frozen per-column means and scales, no inference refit.                                      |
-| "How do I reduce correlated feature dimensions without a target y?"           | `pca.FitWithComponents` / `pca.FitStandardizedWithComponents`      | Frozen training PCA basis; k cannot exceed detected covariance rank.                         |
-| "How do I check a sensor batch against a learned normal subspace?"            | `pca.Model.Reconstruct` + independently calibrated residual policy | Holdout reconstruction uses no batch refit; alerts are application policy.                   |
-| "How do I fit stable factors when columns are duplicated or p>n?"             | `ridge.FitStandardized` / `ridge.Fit`                              | Explicit positive-Lambda slope penalty, unpenalized intercept, frozen physical coefficients. |
-| "How do I fit reusable linear-factor coefficients with an intercept?"         | `ols.FitDefault` / `ols.FitStandardized`                           | Original-unit beta and b, training SSE, no heldout refit.                                    |
-| "How do I force a physical zero intercept?"                                   | `ols.FitThroughOrigin` / `FitThroughOriginStandardized`            | No feature centering; b exactly +0 even when scaling.                                        |
-| "How do I fit a full-rank tall calibration model?"                            | `matrix.SolveLeastSquares` / `FactorQR`                            | Pivoted Householder QR, rank refusal and residual diagnostics.                               |
-| "How do I solve a reusable SPD coupling system?"                              | `matrix.FactorCholesky`                                            | Symmetry/SPD validation, measured condition and detached solutions.                          |
-| "How do I compute topology features?"                                         | `matrix.NewAdjacencyMatrix`, `NewIncidenceMatrix`, `DegreeVector`  | Matrix artifacts preserve topology policy.                                                   |
-| "How do I compute all-pairs route distances?"                                 | `matrix.BuildMetricClosure`                                        | Floyd-Warshall distance artifact with `+Inf` semantics.                                      |
-| "How do I solve a complete inspection/delivery tour?"                         | `tsp.SolveMatrix`                                                  | TSP kernels consume matrix cost models.                                                      |
-| "How do I solve TSP from graph topology?"                                     | `tsp.SolveGraph`                                                   | Graph is adapted at the facade boundary, then solved as a matrix problem.                    |
-| "How do I get exact TSP for a small instance?"                                | `tsp.ExactHeldKarp` / `tsp.BranchAndBound` policy                  | Exactness is explicit and guarded.                                                           |
-| "How do I get a metric symmetric approximation?"                              | `tsp.Christofides` + `tsp.BlossomMatch`                            | The `1.5` ratio requires exact matching and metric assumptions.                              |
-| "How do I build repeatable graphs?"                                           | `builder` / `gridgraph`                                            | Generated fixtures should be deterministic.                                                  |
+| You ask                                                                             | Use                                                                | Why                                                                                          |
+|:------------------------------------------------------------------------------------|:-------------------------------------------------------------------|:---------------------------------------------------------------------------------------------|
+| "Which vertices are within `k` hops?"                                               | `bfs.BFS` with depth policy                                        | Hop layers are unweighted traversal.                                                         |
+| "Which weak islands exist?"                                                         | `bfs.Components`                                                   | Component membership is not a route-cost problem.                                            |
+| "What dependency order is valid?"                                                   | `dfs.TopologicalSort`                                              | DAG ordering is finish-order semantics.                                                      |
+| "Where is the cycle?"                                                               | `dfs.DetectCycles`                                                 | You need a deterministic witness, not all simple cycles.                                     |
+| "What is the cheapest route from this source?"                                      | `dijkstra.Dijkstra`                                                | Non-negative weighted shortest path.                                                         |
+| "Which targets are outside a runtime budget?"                                       | `dijkstra.WithMaxDistance`                                         | Cutoff policy without deleting topology.                                                     |
+| "Which links form the cheapest connected backbone?"                                 | `mst.MinimumSpanningTree`, `mst.Kruskal`, `mst.Prim`               | MST/MSF solves acyclic connectivity, not routing.                                            |
+| "What if the graph is disconnected but I still need per-component backbones?"       | `mst.WithForest`                                                   | Forest mode is explicit, not a hidden fallback.                                              |
+| "How do I connect only a required set of vertices?"                                 | `mst.SteinerTree`                                                  | KMB approximates a nonnegative graph Steiner tree using original EdgeIDs.                    |
+| "How do I cover all edges of the installed tree from A to B?"                       | `mst.SteinerWalk`                                                  | Iterative optimal covering of the given tree, with repeated passage IDs.                     |
+| "What is the max source-to-sink capacity?"                                          | `flow.Dinic` or `flow.EdmondsKarp`                                 | Flow algorithms reason over residual capacity.                                               |
+| "How do I validate exact sample cadence and missing slots?"                         | `series.Validate`                                                  | Signed-nanosecond grid checks; no interpolation.                                             |
+| "How do I compute causal lag, differences, or returns?"                             | `series.Lag` / `Difference` / `SimpleReturns` / `LogReturns`       | Length-preserving values and validity masks.                                                 |
+| "How do I compress a window without dropping fractional tails?"                     | `paa.Transform` / `paa.TransformRange`                             | Exact fractional PAA, checked integer geometry and a detached result.                        |
+| "How do I create comparable symbolic time-series signatures?"                       | `sax.NewEncoder` / `sax.Encode`                                    | Fixed-alphabet symbols, compatible policy hash, detached results.                            |
+| "Can SAX MINDIST prune arbitrary DTW candidates?"                                   | No                                                                 | Euclidean-only lower bound; shortlist retrieval must report Recall@K.                        |
+| "How do I enumerate only complete index windows?"                                   | `series.WindowRanges`                                              | Ordered half-open ranges without partial tails.                                              |
+| "How do I compare two jittery sensor signatures?"                                   | `dtw.Align`                                                        | Scalar DTW aligns timing drift.                                                              |
+| "How do I align model-provided frame costs?"                                        | `dtw.AlignCostMatrix`                                              | Caller owns the local-cost surface.                                                          |
+| "How do I align multivariate sequences?"                                            | `dtw.AlignMatrix`                                                  | Rows are time steps, columns are features.                                                   |
+| "How do I calculate stable population/sample variance?"                             | `stats.Summarize`                                                  | Stable central moments and explicit DDOF denominator.                                        |
+| "How do I combine independent streaming statistics?"                                | `stats.Moments.Update` / `Merge`                                   | Error-atomic, count-checked Welford/Chan partition reductions.                               |
+| "How do I scale test features using only training data?"                            | `stats.FitStandardizer` followed by `Model.Transform`              | Frozen per-column means and scales, no inference refit.                                      |
+| "How do I filter a hidden operating regime from live sequential evidence?"          | `hmm.CategoricalModel.FilterStep` / `hmm.GaussianModel.FilterStep` | Causal posterior, no look-ahead; explicit model identity and prior.                          |
+| "How do I retrospectively explain state changes across an incident?"                | `hmm.Smooth` / `hmm.Decode`                                        | Noncausal per-step posterior or one maximum-joint path, respectively.                        |
+| "How do I train independent hidden-regime sessions without fabricated transitions?" | `hmm.FitCategorical` / `hmm.FitGaussian`                           | Per-sequence prior reset and within-sequence xi only; MAP objective diagnostics.             |
+| "How do I reduce correlated feature dimensions without a target y?"                 | `pca.FitWithComponents` / `pca.FitStandardizedWithComponents`      | Frozen training PCA basis; k cannot exceed detected covariance rank.                         |
+| "How do I check a sensor batch against a learned normal subspace?"                  | `pca.Model.Reconstruct` + independently calibrated residual policy | Holdout reconstruction uses no batch refit; alerts are application policy.                   |
+| "How do I fit stable factors when columns are duplicated or p>n?"                   | `ridge.FitStandardized` / `ridge.Fit`                              | Explicit positive-Lambda slope penalty, unpenalized intercept, frozen physical coefficients. |
+| "How do I fit reusable linear-factor coefficients with an intercept?"               | `ols.FitDefault` / `ols.FitStandardized`                           | Original-unit beta and b, training SSE, no heldout refit.                                    |
+| "How do I force a physical zero intercept?"                                         | `ols.FitThroughOrigin` / `FitThroughOriginStandardized`            | No feature centering; b exactly +0 even when scaling.                                        |
+| "How do I fit a full-rank tall calibration model?"                                  | `matrix.SolveLeastSquares` / `FactorQR`                            | Pivoted Householder QR, rank refusal and residual diagnostics.                               |
+| "How do I solve a reusable SPD coupling system?"                                    | `matrix.FactorCholesky`                                            | Symmetry/SPD validation, measured condition and detached solutions.                          |
+| "How do I compute topology features?"                                               | `matrix.NewAdjacencyMatrix`, `NewIncidenceMatrix`, `DegreeVector`  | Matrix artifacts preserve topology policy.                                                   |
+| "How do I compute all-pairs route distances?"                                       | `matrix.BuildMetricClosure`                                        | Floyd-Warshall distance artifact with `+Inf` semantics.                                      |
+| "How do I solve a complete inspection/delivery tour?"                               | `tsp.SolveMatrix`                                                  | TSP kernels consume matrix cost models.                                                      |
+| "How do I solve TSP from graph topology?"                                           | `tsp.SolveGraph`                                                   | Graph is adapted at the facade boundary, then solved as a matrix problem.                    |
+| "How do I get exact TSP for a small instance?"                                      | `tsp.ExactHeldKarp` / `tsp.BranchAndBound` policy                  | Exactness is explicit and guarded.                                                           |
+| "How do I get a metric symmetric approximation?"                                    | `tsp.Christofides` + `tsp.BlossomMatch`                            | The `1.5` ratio requires exact matching and metric assumptions.                              |
+| "How do I build repeatable graphs?"                                                 | `builder` / `gridgraph`                                            | Generated fixtures should be deterministic.                                                  |
 
 ### By failure mode you need to avoid
 
