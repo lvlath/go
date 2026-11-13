@@ -286,7 +286,9 @@ func FitCategorical(ctx context.Context, sequences [][]uint32, initial Categoric
 // AI-Hints:
 //   - Do not take a Gaussian feature value and cast it into x without a defined categorical encoder.
 func (m *CategoricalModel) emissions(x uint32, dst []float64) error {
-	if uint64(x) >= uint64(m.alphabet) {
+	// Both uint32 symbols and positive int alphabet sizes fit in int64 on all Go targets.
+	// A signed comparison avoids wrapping an invalid negative alphabet into uint64.
+	if int64(x) >= int64(m.alphabet) {
 		return ErrShape
 	}
 	for k := 0; k < m.chain.k; k++ {

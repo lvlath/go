@@ -52,8 +52,10 @@ const modelIdentityDomain = "lvlath/hmm/v1/"
 func hashParameters(kind string, k, dim int, parts ...[]float64) string {
 	h := sha256.New()
 	_, _ = h.Write([]byte(modelIdentityDomain + kind))
-	writeNumber(h, uint64(k))
-	writeNumber(h, uint64(dim))
+	// Positive Go int dimensions can be widened to int64 without any loss.
+	// Their eight-byte big-endian encoding is identical to the previous uint64 layout.
+	writeDimension(h, k)
+	writeDimension(h, dim)
 	for _, p := range parts {
 		writeNumber(h, uint64(len(p)))
 		for _, v := range p {
@@ -64,6 +66,47 @@ func hashParameters(kind string, k, dim int, parts ...[]float64) string {
 		}
 	}
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// writeDimension appends a Go int dimension in a platform-independent eight-byte form.
+// It preserves the canonical byte encoding of integer dimensions used by ModelID.
+//
+// Implementation:
+//   - Stage 1: Widen dimension from int to int64 without losing any representable int value.
+//   - Stage 2: Encode exactly eight big-endian bytes into a fixed-size local buffer.
+//   - Stage 3: Feed those bytes into the same ordered SHA-256 accumulator.
+//
+// Behavior highlights:
+//   - Unlike conversion to uint64, conversion to int64 cannot overflow on Go's 32- or 64-bit targets.
+//   - Positive dimensions have exactly the same bytes as the former unsigned encoding.
+//
+// Inputs:
+//   - h: non-nil private SHA-256 digest; dimension: validated positive state or emission dimension.
+//
+// Returns:
+//   - No result; exactly eight canonical bytes are appended to h.
+//
+// Errors:
+//   - None: binary.Encode accepts int64 in an eight-byte buffer; SHA-256 writes cannot fail.
+//
+// Determinism:
+//   - Exactly eight big-endian bytes, independent of native int size and CPU byte order.
+//
+// Complexity:
+//   - Time O(1), Space O(1), with a fixed eight-byte staging buffer.
+//
+// Notes:
+//   - Existing FilterState values retain their ModelID; hmm provides no binary state serialization API.
+//   - This helper is not a general-purpose encoder for externally supplied unvalidated data.
+//
+// AI-Hints:
+//   - Do not hash native-width int bytes: a 32-bit process must agree with a 64-bit process.
+//   - Do not change this representation without advancing modelIdentityDomain and state compatibility policy.
+func writeDimension(h hash.Hash, dimension int) {
+	var encoded [8]byte
+	// The primitive int64 follows the non-reflective, fixed-width encoding path.
+	_, _ = binary.Encode(encoded[:], binary.BigEndian, int64(dimension))
+	_, _ = h.Write(encoded[:])
 }
 
 // writeNumber appends a single unsigned 64-bit value to a canonical model digest.

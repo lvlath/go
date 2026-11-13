@@ -375,7 +375,9 @@ func validateSymbols(x []uint32, alphabet int) error {
 		return ErrEmptyInput
 	}
 	for _, v := range x {
-		if uint64(v) >= uint64(alphabet) {
+		// The common signed width preserves both operands on 32- and 64-bit Go.
+		// No conversion of the observation to int occurs until it is known in-range.
+		if int64(v) >= int64(alphabet) {
 			return ErrShape
 		}
 	}

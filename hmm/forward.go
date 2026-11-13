@@ -126,7 +126,9 @@ func (m *CategoricalModel) FilterStep(ctx context.Context, prev *FilterState, x 
 	if m == nil {
 		return nil, ErrNilInput
 	}
-	if uint64(x) >= uint64(m.alphabet) {
+	// int64 represents every uint32 symbol and every Go int alphabet size exactly.
+	// Reject out-of-range symbols before any emission access or state validation.
+	if int64(x) >= int64(m.alphabet) {
 		return nil, ErrShape
 	}
 	if err := validState(&m.chain, prev); err != nil {
