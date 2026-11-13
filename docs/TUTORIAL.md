@@ -3,14 +3,14 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/TUTORIAL.md
-  Package reference: matrix, stats, ols, ridge and the wider lvlath package family
+  Package reference: matrix, stats, ols, ridge, acf and the wider lvlath package family
   Contract status: learning guide; package doc.go and source define the public API.
   Scope: graph, matrix, factorization, statistical and temporal workflows.
   lvlath - Repository Tutorial
 
   Purpose:
     This tutorial is the first educational entry point for lvlath. It introduces
-    fundamental graph, matrix, stable-statistics, causal time-series, and symbolic SAX ideas; explains how lvlath
+    fundamental graph, matrix, stable-statistics, causal time-series, fixed-window ACF estimators, and symbolic SAX ideas; explains how lvlath
     maps mathematical algorithms into deterministic Go packages, and helps readers move from basic
     graph and series concepts to package-specific documentation. It does not duplicate every
     package specification; instead it teaches the mental model, core entities,
@@ -25,7 +25,7 @@
 
 > **hard math on an easy level**
 
-Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fitted feature scaling, covariance PCA, and time-series alignment.
+Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fixed-window autocorrelation, fitted feature scaling, covariance PCA, and time-series alignment.
 
 This tutorial is the beginning of the learning path. It introduces the objects and ideas that most packages share: graphs, matrices, options, result artifacts, error contracts, and deterministic algorithm execution.
 
@@ -51,6 +51,7 @@ This tutorial is the beginning of the learning path. It introduces the objects a
     11d. [Ridge Foundations: Correlated Factors, Wide Matrices and Numerical Preconditioning](#11d-ridge-foundations-correlated-factors-wide-matrices-and-numerical-preconditioning)
     11e. [PCA Foundations: Certified Covariance Factors and Frozen Inference](#11e-pca-foundations-certified-covariance-factors-and-frozen-inference)
     11f. [HMM Foundations: Causal Hidden-State Filtering and Independent-Sequence Learning](#11f-hmm-foundations-causal-hidden-state-filtering-and-independent-sequence-learning)
+    11g. [ACF Foundations: Fixed-Window Serial Dependence and Estimator Conventions](#11g-acf-foundations-fixed-window-serial-dependence-and-estimator-conventions)
 12. [Algorithm Selection Guide](#12-algorithm-selection-guide)
 13. [Professional Best Practices](#13-professional-best-practices)
 14. [Where To Go Next](#14-where-to-go-next)
@@ -83,6 +84,7 @@ The library covers:
 * `ridge` explicit positive-Lambda Tikhonov regression for correlated and wide designs, unpenalized intercept, protected augmented QR and physical-unit predictions;
 * `pca` immutable train-only principal component projection, certified covariance eigenspectrum, and original-unit reconstruction;
 * `hmm` typed categorical/diagonal-Gaussian hidden-state models, causal filtering, noncausal smoothing, Viterbi, and independent-sequence MAP-EM;
+* `acf` scaled direct sample autocorrelation, explicit common versus pair-adjusted denominators, and detached per-lag pair counts;
 * `paa` exact fractional time-series compression, rational segment boundaries and value-only feature projection;
 * `sax` symbolic words from fractional PAA and compatible Euclidean MINDIST (not a DTW lower bound);
 * `tsp` matrix-backed tour optimization with exact, approximate, matching, and local-search regimes;
@@ -105,6 +107,7 @@ dense operator             *matrix.Dense               row-major numeric artifac
 warping alignment          *dtw.Result                 distance, reachability, path
 causal sample transform    *series.TransformResult     detached Values + Valid mask
 timestamp-grid inspection  *series.ValidationResult    exact cadence / missing slots
+sample autocorrelation     *acf.Result                fixed-window lag coefficients / pair counts
 streaming statistics       *stats.Summary              exact-binary-input mean / scaled variance
 train-only scaling         *stats.ScaleFitResult       detached fit metadata / immutable model
 full-rank regression       *ols.FitResult              physical beta / intercept / rank / SSE / QR condition
@@ -192,6 +195,7 @@ Read these files as a learning path. `doc.go` files define implemented package c
 | 8e   | [`RIDGE.md`](RIDGE.md)                     | Positive-Lambda augmented Householder QR, unpenalized intercept, stable strongly regularized slopes, immutable models.      |
 | 8f   | [`PCA.md`](PCA.md)                         | Strict covariance eigenanalysis, train-only latent factors, reconstruction residuals and solver limitations.                |
 | 8g   | [`HMM.md`](HMM.md)                         | Typed hidden-state models, strict online causal filtering, retrospective smoothing, Viterbi, independent-sequence EM.       |
+| 8h   | [`ACF.md`](ACF.md)                         | Direct sample ACF, common/pair-adjusted estimators, Toeplitz PSD limits, scaled arithmetic and independent oracle.          |
 | 9    | [`DTW.md`](DTW.md)                         | `Align`, `AlignCostMatrix`, `AlignMatrix`, `AlignBounded`, exact `Search`, numeric and path artifacts.                      |
 | 9a   | [`DTW_SEARCH.md`](DTW_SEARCH.md)           | Fixed-length exact top-K, certified LB_Keogh, workers, budgets, and partial-result law.                                     |
 | 10   | [`TSP.md`](TSP.md)                         | Matrix-backed tours, exact regimes, Christofides, Blossom matching, local search, timeouts.                                 |
@@ -217,6 +221,8 @@ Working on numeric/time-series workflows:
   MATRICES -> STATS -> RIDGE -> wide/collinear factor predictions with shrinkage
   MATRICES -> STATS -> PCA -> independent holdout reconstruction and residual review
   SERIES -> STATS -> HMM.FilterStep -> online regime monitoring (no future data)
+  SERIES -> ACF.ComputeDefault -> fixed-window lag diagnostics (NOT causal)
+  OLS/RIDGE residual window -> ACF -> investigate serial dependence (NOT a p-value)
   MATRICES -> HMM.Smooth / Decode -> offline incident reconstruction
   SAX (Euclidean screening) != DTW (nonlinear alignment)
   MATRICES -> TSP
@@ -282,6 +288,12 @@ Think of `lvlath` as a contract stack.
                          └───────────────────────────────────────────────┘
 
                          ┌───────────────────────────────────────────────┐
+                         │ acf                                           │
+                         │ fixed-window, scaled direct autocorrelation   │
+                         │ common / lag-adjusted; not causal streaming   │
+                         └───────────────────────────────────────────────┘
+
+                         ┌───────────────────────────────────────────────┐
                          │ stats                                         │
                          │ Welford / Chan, immutable fitted scaling      │
                          │ consumes matrix.Matrix; no series import      │
@@ -326,7 +338,7 @@ Think of `lvlath` as a contract stack.
 
 5. **Numeric values need domain context**
 
-   `0`, `+Inf`, `NaN`, negative weights, and missing edges are interpreted differently by different packages. In `series`, an invalid warmup is represented by `Values[i] == 0` **and** `Valid[i] == false`, while timestamp gaps are separate records. Correct code respects these different contracts. A statistical result must also distinguish exact binary-input mean accumulation from approximate scaled second moments, and a fitted model must never adapt to heldout values.
+   `0`, `+Inf`, `NaN`, negative weights, and missing edges are interpreted differently by different packages. In `series`, an invalid warmup is represented by `Values[i] == 0` **and** `Valid[i] == false`, while timestamp gaps are separate records. Correct code respects these different contracts. A statistical result must also distinguish exact binary-input mean accumulation from approximate scaled second moments, and a fitted model must never adapt to heldout values. `acf` uses a whole-window fitted mean (not a causal prefix transform) and must never substitute `LagAdjusted` for `CommonDenominator` in PSD-dependent downstream calculations.
 
 ---
 
@@ -2165,6 +2177,169 @@ For the complete log-domain derivation, memory and error tables, MAP-EM objectiv
 
 ---
 
+## 11g. ACF Foundations: Fixed-Window Serial Dependence and Estimator Conventions
+
+`acf` measures **serial dependence within one fixed, equally indexed sample
+window**. It complements `series` (time-grid validation and causal transforms),
+`stats` (stable moments), and `dtw` (comparison of differently timed sequences).
+It does not forecast, create lagged features, fill missing observations, or
+certify stationarity. A sample lag is an **index offset**, not a clock duration
+unless the application has separately validated cadence.
+
+### 11g.1. One center, two mathematically different conventions
+
+Given the entire observation window `x[0:n]`, fit **one** mean and form
+`c_i=x_i-mean`, or select `NoCenter=true` and use `c_i=x_i`:
+
+![ACF normalization](https://latex.codecogs.com/svg.image?r_k%5E%7BC%7D%3D%5Cfrac%7BS_k%7D%7BS_0%7D%2C%5Cqquad%20r_k%5E%7BL%7D%3D%5Cfrac%7Bn%7D%7Bn-k%7D%5Cfrac%7BS_k%7D%7BS_0%7D)
+
+Here `S_k=sum(c_i*c_(i-k), i=k..n-1)`. `CommonDenominator` divides every
+lag by one full-window energy `S_0`; in exact arithmetic its Toeplitz
+sequence is positive semidefinite. `LagAdjusted` corrects each lag by the
+**number of available pairs** `n-k` and loses the general Toeplitz PSD
+property. It may legitimately return values outside `[-1,1]`.
+
+```text
+Sample [1,2,3], centered once at mean 2
+  c = [-1,0,+1]
+  S0 = 2, S2 = -1, pairs at lag 2 = 1
+
+  CommonDenominator:  r2 = -0.5
+  LagAdjusted:        r2 = -1.5  (VALID; do not clip)
+```
+
+The zero options value selects **centered CommonDenominator**. Convenience
+calls make the mathematical choice readable:
+
+| Caller intention                           | Public function                                    |
+|:-------------------------------------------|:---------------------------------------------------|
+| Ordinary centered sample ACF               | `acf.ComputeDefault(values, maxLag)`               |
+| Centered, available-pairs adjustment       | `acf.ComputeLagAdjusted(values, maxLag)`           |
+| Raw second-moment ACF around physical zero | `acf.ComputeUncentered(values, maxLag)`            |
+| Raw second moment with pair adjustment     | `acf.ComputeUncenteredLagAdjusted(values, maxLag)` |
+| Explicit policy and custom combination     | `acf.Compute(values, maxLag, acf.Options{...})`    |
+
+All delegate to the **same direct kernel**. `Result` publishes `Values`,
+`PairCounts`, `Mean`, and `Denominator`, with `Values[0]==1` on success and
+`PairCounts[k]==n-k`. Its `IsNil()` is a safe `core.Nilable`-compatible
+pointer-presence method; `Clone()` copies both result slices. Neither method
+modifies the original data. A nonzero constant is valid for an uncentered raw
+second moment, but the same constant is `ErrZeroVariance` after centering.
+
+### 11g.2. Operational example: periodic workload in refrigeration telemetry
+
+A cold-storage plant logs equal hourly power-demand samples. A repeat peak at
+24 samples suggests a **daily** structure *only after confirming the actual
+one-hour grid*. Here the trace is deterministic synthetic data, not measured
+plant telemetry; the result is a model-selection clue, not a fault or
+forecast-accuracy certificate.
+
+```go
+package main
+
+import (
+    "fmt"
+    "math"
+
+    "github.com/lvlath/go/acf"
+)
+
+func main() {
+    const (
+        hoursPerDay = 24
+        days = 21
+        weeklyLag = 7 * hoursPerDay
+    )
+    watts := make([]float64, days*hoursPerDay)
+    for hour := range watts {
+        daily := 20 * math.Cos(2*math.Pi*float64(hour%hoursPerDay)/hoursPerDay)
+        weekly := 6 * math.Cos(2*math.Pi*float64(hour%weeklyLag)/weeklyLag)
+        watts[hour] = 120 + daily + weekly
+    }
+    result, err := acf.ComputeDefault(watts, weeklyLag)
+    if err != nil {
+        fmt.Println("acf:", err)
+        return
+    }
+    fmt.Printf("samples=%d daily pairs=%d weekly pairs=%d\n",
+        len(watts), result.PairCounts[hoursPerDay], result.PairCounts[weeklyLag])
+    fmt.Printf("daily stronger than zero: %t\n", result.Values[hoursPerDay] > 0)
+}
+```
+
+The pair-count metadata helps interpret why late-lag estimates use less
+information, but it is **not** a confidence interval or an effective sample
+size adjusted for dependence. For a more realistic compressor/dock-load model
+and six additional executable scenarios, read
+[`acf/example_test.go`](../acf/example_test.go). For a retry-storm incident
+investigation, run `go run ./examples/acf`.
+
+### 11g.3. The numerical boundary, ownership and errors
+
+Large finite amplitudes can overflow an unscaled sum of squares. The direct
+kernel chooses an overflow-aware midpoint, normalizes observations, subtracts
+**one compensated global mean shift**, rescales, and accumulates signed pair
+products with Neumaier compensation. `math.FMA` protects final reconstruction
+of the reported mean, including certain subnormal rounding cases. The kernel
+never forms an unscaled energy that could overflow before ratio division. It
+does **not** promise universally correctly rounded ACF coefficients, or
+numerically PSD float64 Toeplitz matrices.
+
+Input must be finite, non-nil and nonempty, with `0<=maxLag<n`. Error order is
+invalid enum/negative lag, nil, empty, overlarge lag, nonfinite input, zero
+energy, arithmetic overflow. Use `errors.Is` for `acf.ErrInvalidOption`,
+`ErrNilInput`, `ErrEmptyInput`, `ErrNonFinite`, `ErrZeroVariance`, and
+`ErrOverflow`. **Every error yields a nil Result.** No invalid sample is
+silently omitted or imputed.
+
+Time is `O(n*(maxLag+1))`, space `O(n+maxLag)`; a full-lag query is quadratic.
+The input is read-only and never retained. Returned slices are detached and
+caller-owned. Concurrent calls over unchanged input are safe; concurrent
+caller mutation is not supported. ACF is a **whole-window fit**: appending an
+observation can change every previous coefficient. Never report a historical
+ACF as if a live controller knew the future window.
+
+### 11g.4. Integration decision tree
+
+```text
+Need timestamp cadence or a validity mask?
+  -> series.Validate / Difference / LogReturns (no inferred gaps)
+  -> choose complete valid fixed window
+
+Need one-window dependence by exact sample-index lag?
+  -> acf.ComputeDefault (centered common)
+  -> inspect Values, PairCounts and the fitted window provenance
+
+Need physical-zero raw second moments?
+  -> acf.ComputeUncentered (Mean=0 is mode metadata)
+
+Need pair-adjusted covariance ratios?
+  -> acf.ComputeLagAdjusted (may exceed unit magnitude; not PSD)
+
+Need an online causal feature at time t?
+  -> series, or a separately fitted/updated causal model
+  -> NOT the ACF of a window extending into the future
+
+Need PACF, confidence intervals or a spectrum?
+  -> separate methods with their own assumptions and error contracts
+  -> acf does not claim these outputs
+```
+
+`stats` may independently summarize a fitted mean; `ols`/`ridge` residuals
+may be examined for fixed-window dependence; `pca` scores may be inspected
+without refitting heldout coordinates; `hmm.FilterStep` keeps a different,
+causal inference contract. `dtw` aligns **two** time series, while ACF
+compares a series against its own shifted values at *fixed* lags. A future
+`pacf` solver must require `CommonDenominator` and separately validate
+numerical conditioning; common-normalized float64 output is not a machine
+PSD certificate.
+
+For the mathematical Gram proof, explicit adjusted-estimator counterexample,
+full error table, three executable workflows, independent-oracle strategy and
+benchmark guidance, see [`docs/ACF.md`](ACF.md) and [`acf/doc.go`](../acf/doc.go).
+
+---
+
 ## 12. Algorithm Selection Guide
 
 ### If the input is a graph
@@ -2212,6 +2387,7 @@ For the complete log-domain derivation, memory and error tables, MAP-EM objectiv
 | Fractional equal-duration scalar compression       | `paa.Transform` / `paa.TransformRange`        | Detached PAA means, exact rational intervals, original window length.                      |
 | Fixed-alphabet symbolic window encoding            | `sax.Encode` / `sax.Encoder.Encode`           | Detached symbol word, policy identity and optional transformed PAA.                        |
 | Compatible Euclidean symbolic lower bound          | `sax.Encoder.Mindist` / `sax.MindistValues`   | Lower-bound dissimilarity in the selected transformed space, never a general DTW bound.    |
+| Direct sample ACF by integer lag                   | `acf.ComputeDefault` / `acf.Compute`          | One fitted window, explicit denominator convention and pair counts; not causal streaming.  |
 | Complete fixed index windows                       | `series.WindowRanges`                         | ordered half-open sample-index intervals.                                                  |
 | Hidden-state streaming causal filtering            | `hmm.FilterStep` / `FilterDefault`            | P(z_t given observations through t), no future-sample leakage.                             |
 | Retrospective hidden-state attribution             | `hmm.Smooth` / `hmm.Decode`                   | Full-sequence state marginals vs one optimal joint path; different contracts.              |
@@ -2255,6 +2431,7 @@ train-only standardization           -> stats.FitStandardizer
 frozen orthogonal compression        -> pca.FitWithComponents
 exact timestamp grid / causal arrays -> series
 symbolic Euclidean screening         -> sax
+fixed-window sample autocorrelation  -> acf.ComputeDefault / acf.Compute
 time-warped sequence similarity      -> dtw
 closed tour cost                     -> tsp
 ```

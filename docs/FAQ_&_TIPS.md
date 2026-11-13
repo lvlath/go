@@ -3,7 +3,7 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/FAQ_&_TIPS.md
-  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm and the wider lvlath package family
+  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, acf and the wider lvlath package family
   lvlath - FAQ & Tips
 
   Purpose:
@@ -27,6 +27,7 @@
     - Testing, benchmarking, documentation, and contribution best practices.
     - Certified PCA covariance factors, leakage-safe reconstruction and spectral diagnostics.
     - Causal hidden-state filtering versus future-conditioned smoothing and MAP-EM training.
+    - Fixed-window ACF estimator conventions, numeric safeguards, pair-count diagnostics, and noncausal provenance.
 
   License:
     lvlath is licensed under AGPL-3.0-only. See ../LICENSE.
@@ -62,6 +63,7 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
     13c. [Ridge FAQ](#13c-ridge-faq)
     13d. [PCA FAQ](#13d-pca-faq)
     13e. [HMM FAQ](#13e-hmm-faq--causal-regimes-smoothing-decoding-and-em)
+    13f. [ACF FAQ](#13f-acf-faq--estimators-scaled-numerics-and-fixed-windows)
 14. [Builder and gridgraph tips](#14-builder-and-gridgraph-tips)
 15. [Errors and diagnostics](#15-errors-and-diagnostics)
 16. [Determinism and concurrency](#16-determinism-and-concurrency)
@@ -98,6 +100,7 @@ Start with the question, not the algorithm name.
 | “How do I normalize heldout features without refit?”                         | `stats`               | Immutable fitted model over matrix columns.                                           |
 | “How do I estimate linear factor coefficients and reuse them?”               | `ols`                 | Full-rank QR, original-unit beta/intercept, immutable prediction.                     |
 | “How do I fit correlated or wide linear factors with explicit L2 shrinkage?” | `ridge`               | Augmented QR, positive Lambda, unpenalized intercept and frozen physical predictions. |
+| “What serial dependence or cycle repeats at a fixed sample-index lag?”       | `acf`                 | One full-window mean, explicit denominator, exact pair counts.                        |
 | “How do I infer a hidden operating regime from time-ordered observations?”   | `hmm`                 | Typed causal filtering, smoothing, Viterbi, and independent-sequence EM.              |
 | “How do I reduce multivariate dimensions without a response variable?”       | `pca`                 | Validated covariance spectrum and a frozen loadings model for holdout inference.      |
 | “How do I visit all cities in a route?”                                      | `tsp`                 | Tour construction/improvement/exact-small-instance routing.                           |
@@ -122,6 +125,7 @@ fit full-rank linear factors  -> OLS (pivoted QR, no refit)
 fit correlated/wide factors   -> Ridge (positive Lambda, unpenalized intercept)
 compress latent features      -> PCA (train-only covariance basis; no target)
 infer hidden temporal regime  -> HMM FilterStep (causal; no future observations)
+detect fixed-window serial dependence -> ACF ComputeDefault (not causal)
 retrospective regime audit    -> HMM Smooth / Decode (future-conditioned)
 encode symbolic SAX words     -> SAX
 align time-warped signals     -> DTW
@@ -2035,6 +2039,180 @@ Categorical `FilterDefault` requires O(K) live workspace plus immutable model; `
 
 ---
 
+### 13f. ACF FAQ — estimators, scaled numerics and fixed windows
+
+#### Q13f.1. What exactly does `acf` compute, and which public facade should I select?
+
+`acf` computes the sample autocorrelation of one **fixed, uniformly indexed**
+finite `[]float64` window for every lag `k` from zero through inclusive
+`maxLag`. It does not interpret timestamps or infer missing samples. The
+canonical API is `acf.Compute(values,maxLag,opts)`; use
+`acf.ComputeDefault` for centered `CommonDenominator`,
+`acf.ComputeLagAdjusted` for centered pair-count correction,
+`acf.ComputeUncentered` for raw common-denominator second moments, and
+`acf.ComputeUncenteredLagAdjusted` when both raw origin and pair adjustment
+are explicitly required. All shortcuts delegate to `Compute`.
+
+#### Q13f.2. Why are `CommonDenominator` and `LagAdjusted` not interchangeable?
+
+With `c_i=x_i-mean` centered **once over the full window** (or `c_i=x_i` under
+`NoCenter`), define `S_k=sum(c_i*c_(i-k), i=k..n-1)`. Common gives
+`r_k=S_k/S_0`; adjusted gives `r_k=n/(n-k)*S_k/S_0`. The correction does not
+merely improve precision; it changes the estimator. A downstream method that
+needs Toeplitz PSD in exact arithmetic must select **common**, not infer the
+convention from magnitude or silently substitute adjusted coefficients.
+
+#### Q13f.3. Can a valid sample autocorrelation really be less than -1 or greater than 1?
+
+**Yes for `LagAdjusted`.** Centered `[1,2,3]` has `S_0=2`, `S_2=-1` and one
+lag-two pair, giving `CommonDenominator=-0.5` but `LagAdjusted=-1.5`.
+Clamping to `-1` would publish an answer to a *different* mathematical
+question. For an adjusted Toeplitz matrix with diagonal 1 and lag-two
+entries `-1.5`, the 3-by-3 eigenvalues include `-0.5`; it is not PSD.
+The common estimator has a Gram/sum-of-squares PSD proof in **exact
+arithmetic**, not a universal binary64 PSD certificate.
+
+#### Q13f.4. Why does the kernel fit only one mean, not one mean per lag?
+
+Every `S_k` uses the **same** window-wide centered deviations. Pairwise
+re-fitting changes the input coordinate system at each lag, breaking the
+common Gram structure and producing another estimator. Late lags have fewer
+products (`PairCounts[k]=n-k`), but the fitted mean and zero-lag energy remain
+the **full-window** quantities. Setting `NoCenter=true` is the only public
+switch that intentionally changes the origin.
+
+#### Q13f.5. Is `NoCenter` an option to suppress errors for constant signals?
+
+No. It selects **raw second moments around a meaningful physical zero**.
+For `[2,2,2]`, centered ACF has zero energy and returns `ErrZeroVariance`;
+uncentered common produces `[1,2/3,1/3]`, uncentered adjusted `[1,1,1]`.
+An uncentered `[0,0,0]` still has zero second moment and fails. A
+successful `NoCenter` result always has `Mean=0` **as mode metadata**, even
+if the actual signal offset is nonzero. Raw and centered ACFs should not be
+substituted for one another in a residual diagnostics pipeline.
+
+#### Q13f.6. How do I interpret the lag-zero coefficient and `PairCounts`?
+
+`Values[0]` is **exactly `1.0`** on every successful call, including
+`maxLag=0`. `PairCounts[0]==n`; every later count is `n-k`. These are the
+number of actually multiplied pairs, *not* confidence limits, IID degrees of
+freedom or a guarantee of independent observations. The last permissible
+lag uses one pair, often making adjusted estimates volatile. Select a
+physically defensible maximum lag and inspect counts before drawing an
+operational conclusion.
+
+#### Q13f.7. Why does `acf.ComputeDefault([]float64{1},0)` fail while the uncentered call succeeds?
+
+A singleton has zero **centered** variation by construction; the
+normalized covariance ratio is undefined and produces `ErrZeroVariance`.
+A nonzero singleton `[]float64{1}` with `NoCenter=true` has positive raw
+second moment and returns `Values=[1]`, `PairCounts=[1]`, `Mean=0`. An
+all-zero singleton fails in both modes. `maxLag=0` does not bypass input
+finiteness or zero-energy validation.
+
+#### Q13f.8. What is the exact error precedence, including simultaneously invalid input and options?
+
+Options are checked before data: invalid `Denominator` or negative `maxLag`
+return `ErrInvalidOption`, even with a nil slice. The subsequent order is
+**nil** (`ErrNilInput`) → **non-nil empty** (`ErrEmptyInput`) →
+`maxLag>=n` (`ErrInvalidOption`) → **any nonfinite sample**
+(`ErrNonFinite`) → **zero moment** (`ErrZeroVariance`) →
+**unrepresentable result** (`ErrOverflow`). All failures return a nil result;
+no partial coefficients or missing-value repair are published. Always test
+with `errors.Is(err, acf.ErrXxx)`, not string parsing. See the full table in
+[`ACF.md`](ACF.md#6-validation-sentinel-errors-and-degenerate-inputs).
+
+#### Q13f.9. How do inputs around `1e154` or `1e308` avoid false overflow?
+
+The kernel does **not** first accumulate raw `sum(c_i*c_i)` or `sum(x_i)`.
+It chooses an overflow-aware midpoint, scales deviations, computes one
+compensated global mean shift, rescales, and forms compensated signed lag
+dots. `math.FMA` reconstructs the reported mean with one final rounding,
+including a tested subnormal boundary case. This prevents specific
+avoidable intermediate failures; it is **not** a guarantee that every
+possible binary64 coefficient is correctly rounded. A genuinely
+unrepresentable public output is classified with `ErrOverflow`.
+
+#### Q13f.10. Why does subtracting `Result.Mean` from my huge-offset samples not reproduce ACF's internal deviations?
+
+`Result.Mean` is one rounded binary64 scalar. The direct kernel preserves a
+scaled global mean shift before that final rounding. Computing
+`values[i]-result.Mean` afresh can erase small representable differences or
+change the last bits. The public result is the computed `Values`, not a
+promise that its internal workspace can be reconstructed from metadata.
+Use `stats` separately if your application needs an independent moment
+summary with its own specified numeric guarantees.
+
+#### Q13f.11. Is ACF translation/scale/reversal invariant? Can I append new samples without changing earlier lags?
+
+In **exact arithmetic**, both conventions are invariant to sequence
+reversal and nonzero common scaling; centered ACF is also translation
+invariant. Uncentered ACF is **not** translation invariant because it uses
+raw second moments. Finite `float64` operations only approximate these
+identities when transformed observations remain representable. Appending
+new data changes the entire fitted window, generally its center, its
+`S_0`, and earlier coefficients. Unlike `series.Lag` or `hmm.FilterStep`,
+ACF has **no causal prefix-invariance promise**.
+
+#### Q13f.12. How do I use it after `series.Difference`, `series.LogReturns` or timestamp validation?
+
+First establish a complete and equally spaced grid (for example with
+`series.Validate` under a strict cadence policy). Then handle invalid
+warmups using `TransformResult.Valid`; do not treat placeholder zeros as
+observed values. If gaps exist, reject or segment into intact fixed
+windows—blindly filtering invalid positions can create false adjacency.
+Finally, compute ACF over the selected window. The resulting coefficients
+are retrospective diagnostics and may be useful for **training-window
+model selection**, not as leakage-free historical online features.
+
+#### Q13f.13. May I mutate or share `Result.Values` and `PairCounts` across goroutines?
+
+The slices are detached from input and kernel scratch and belong to the
+caller. `Result.Clone()` creates independent copies of both slices.
+`(*Result).IsNil()` safely checks the receiver pointer, including typed nil
+behind `core.Nilable`; `&acf.Result{}` is **not nil**, but is not thereby a
+valid completed result. Independent `Compute` calls are safe over stable
+read-only input; concurrent caller mutation of any input or unsynchronized
+reads/writes of a shared returned `Result` are unsupported.
+
+#### Q13f.14. Is ACF a substitute for `stats`, `dtw`, HMM filtering, PACF, or spectral density?
+
+No. `stats` computes moments and reusable training scalers; `series` checks
+grids and produces causal masks; `dtw` aligns *two* sequences under time
+warping; `acf` examines one fixed sequence at integer lags. HMM
+`FilterStep` produces a genuinely causal posterior using observations
+through the current time only. PACF, Ljung–Box tests, confidence bands,
+FFT/spectral density and inference about stationarity are **not present**
+in `acf`; they require distinct assumptions, algorithms, validation and
+error contracts. No unseen PACF method should be advertised in docs.
+
+#### Q13f.15. How expensive are late lags, and how do I benchmark the real operation?
+
+With `n` samples and inclusive maximum lag `m`, the direct algorithm costs
+`O(n*(m+1))` time and `O(n+m)` additional memory. It computes
+`n+sum(n-k,k=1..m)` dot-product terms. There is **no FFT fallback**.
+A request for `m=n-1` at `n=100000` implies billions of pair products;
+constrain the horizon to the domain question and measure `ns/op`, `B/op`,
+and `allocs/op` using the shipped benchmarks on the actual Go toolchain.
+Do not publish a universal performance speedup from one host or compare
+benchmarks measured on different CPUs/toolchains.
+
+#### Q13f.16. What is a realistic, testable end-to-end ACF use case?
+
+Compare six hours of one-minute retry-count telemetry from an incident window
+and a fixed healthy reference. Both samples must share an explicit cadence,
+window length and preprocessing policy. `acf.ComputeDefault(window,45)`
+returns lag coefficients and actual pair counts; compare a suspected
+15-minute recurrence, then *investigate* rather than claiming a diagnosed
+root cause. Run [`examples/acf/main.go`](../examples/acf/main.go) with
+`go run ./examples/acf`. The six independent executable examples in
+[`acf/example_test.go`](../acf/example_test.go) also cover refrigerated
+loads, volatility amplitudes, pitch, vibration impacts, calibration, and
+standby current. All fixtures are synthetic and the review thresholds are
+illustrative, not p-values.
+
+---
+
 ## 14. Builder and gridgraph tips
 
 ### Q14.1. When should I use `builder`?
@@ -2436,6 +2614,20 @@ Fit `stats.FitStandardizer` on a stable training `matrix.Matrix` with explicit `
 Fit `pca.FitWithComponents` on the healthy **training** matrix and retain the immutable `Model`. Reconstruct a separate healthy **calibration** matrix and derive a documented threshold from its per-row residuals in consistent units. Score untouched holdout/production rows with the same model; do not refit PCA or recompute feature means for the incoming batch. A threshold exceedance is an **investigation signal**, not a hardware shutdown or clinical decision. For mixed-unit channels, calibrate physical-channel residuals separately or define an independently fitted weighting rule; the PCA Model does not expose its internal scales.
 
 See [`PCA.md`](PCA.md) and [`pca/example_test.go`](../pca/example_test.go) for the actual public API and deterministic examples.
+
+### Recipe L. Investigate fixed-window retry or vibration periodicity
+
+Validate the sampling cadence and choose two **non-overlapping or otherwise
+explicitly defined** analysis windows. After handling any `series` validity
+masks, call `acf.ComputeDefault` for the same scientific lag horizon in each
+window. Compare coefficients **and** `PairCounts`, and persist the estimator
+convention and window boundaries with the incident record. A repeat peak is
+an investigation lead, not a root-cause diagnosis or a p-value. For
+physical-zero raw signals use `acf.ComputeUncentered` deliberately; for
+lag-adjusted covariance ratios use `acf.ComputeLagAdjusted` without clipping.
+Never substitute `LagAdjusted` into a Toeplitz PSD-sensitive solver.
+
+See [`ACF.md`](ACF.md) and the reproducible `go run ./examples/acf` program.
 
 ---
 

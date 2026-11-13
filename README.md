@@ -7,7 +7,7 @@
   Purpose:
     This README is the public face of lvlath. It presents the library as a
     deterministic, contract-driven Go toolkit for graph algorithms, flow networks,
-    dense graph algebra, routing, exact timestamp grids, causal time-series primitives, fractional PAA,
+    dense graph algebra, routing, exact timestamp grids, causal time-series primitives, fixed-window ACF, fractional PAA,
     symbolic SAX encoding, alignment, and reproducible algorithm engineering. It should give a new reader immediate confidence in
     what lvlath can solve, how packages compose, where the formal contracts live,
     and why this repository is engineered beyond ad-hoc algorithm snippets.
@@ -48,7 +48,7 @@
 
 # lvlath
 
-**lvlath** is a pure-Go algorithm engineering library for graphs, flows, dense graph algebra, routing, exact timestamp grids, causal series transforms, fractional PAA, symbolic SAX time-series signatures, stable statistical moments, fitted feature scaling, covariance PCA, causal Hidden Markov Models, time-series alignment, and reproducible test fixtures.
+**lvlath** is a pure-Go algorithm engineering library for graphs, flows, dense graph algebra, routing, exact timestamp grids, causal series transforms, fractional PAA, symbolic SAX time-series signatures, stable statistical moments, fitted feature scaling, sample autocorrelation, covariance PCA, causal Hidden Markov Models, time-series alignment, and reproducible test fixtures.
 
 It is built for people who need algorithmic tools they can explain in a code review, trust in CI, compose across packages, and debug from deterministic artifacts instead of guessing why an answer changed.
 
@@ -70,6 +70,7 @@ It is built for people who need algorithmic tools they can explain in a code rev
 * `ridge` fits strongly correlated or wide linear models with a caller-chosen positive L2 penalty, unpenalized intercept and stable augmented QR coordinates;
 * `pca` fits validated covariance principal components and retains immutable training means/scales for leakage-free latent projection and reconstruction;
 * `hmm` provides typed categorical and diagonal-Gaussian hidden states with strictly causal filtering, retrospective smoothing, global Viterbi paths, and multi-sequence MAP-EM;
+* `acf` computes scaled direct sample autocorrelation with an explicit common versus lag-adjusted estimator convention and exact available-pair counts;
 * flow, MST, TSP, DTW, grid, and builder packages extend the same discipline into optimization, alignment, fixtures, and examples.
 
 ---
@@ -94,7 +95,8 @@ The common failures are familiar:
 * examples panic, print unstable maps, or silently rely on fictional APIs;
 * documentation explains textbook theory but not the actual package contract;
 * high-offset variance disappears through raw-moment cancellation, or inference refits on holdout data;
-* hidden-state filters are accidentally replaced with future-conditioned smoothing, or independent EM training sequences are concatenated.
+* hidden-state filters are accidentally replaced with future-conditioned smoothing, or independent EM training sequences are concatenated;
+* lag-adjusted autocorrelations are clamped to [-1,1], or fed to a PSD-dependent PACF solver without checking their estimator convention.
 
 `lvlath` is built against those failure modes. It is an algorithm engineering library: each package publishes a narrow mathematical contract, validates its input domain, returns meaningful result artifacts, and keeps deterministic behavior observable.
 
@@ -140,6 +142,10 @@ The common failures are familiar:
 
 `{package}/doc.go` is the implemented API contract. `docs/{PACKAGE}.md` teaches the mathematics and operational pitfalls. Examples demonstrate real package behavior. Tests defend the contract. None of them should invent future APIs or convenient lies.
 
+11. **ACF estimators and time-window causality are not interchangeable**
+
+    `acf` fits one mean to its entire fixed window. `CommonDenominator` is Toeplitz-PSD-compatible in exact arithmetic, whereas `LagAdjusted` can exceed unit magnitude and need not be PSD. Neither estimator is a causal streaming feature or a statistical significance test.
+
 ---
 
 ## Installation
@@ -173,6 +179,7 @@ lvlath/
 ├── ridge/                 # positive-Lambda Tikhonov, balanced augmented QR, immutable fit
 ├── pca/                   # certified covariance PCA, frozen projection and reconstruction
 ├── hmm/                   # categorical/Gaussian HMM, causal filter, smoother, Viterbi, MAP EM
+├── acf/                   # direct sample ACF, common/lag-adjusted modes, pair counts
 ├── gridgraph/             # 2D lattice graph generation
 ├── matrix/                # dense graph algebra, stable statistics, pivoted factors and solves
 ├── tsp/                   # tour construction, local search, exact small-instance routing
@@ -194,6 +201,7 @@ lvlath/
 │   ├── RIDGE.md
 │   ├── PCA.md
 │   ├── HMM.md
+│   ├── ACF.md
 │   ├── PAA.md
 │   ├── SAX.md
 │   ├── GRID_GRAPH.md
@@ -283,7 +291,13 @@ lvlath/docs/{PACKAGE}.md
                                    ┌────────────────────────────────────────────┐
                                    │ sax                                        │
                                    │ fractional PAA -> symbolic words           │
-                                   │ Euclidean MINDIST; NOT a DTW lower bound    │
+                                   │ Euclidean MINDIST; NOT a DTW lower bound   │
+                                   └────────────────────────────────────────────┘
+
+                                   ┌────────────────────────────────────────────┐
+                                   │ acf                                        │
+                                   │ fixed-window scaled direct sample ACF      │
+                                   │ common/lag-adjusted; not causal streaming  │
                                    └────────────────────────────────────────────┘
 
                                    ┌────────────────────────────────────────────┐
@@ -294,8 +308,8 @@ lvlath/docs/{PACKAGE}.md
 
                                    ┌────────────────────────────────────────────┐
                                    │ ols                                        │
-                                   │ pivoted QR, full rank, frozen prediction  │
-                                   │ physical beta/intercept; train-only scale │
+                                   │ pivoted QR, full rank, frozen prediction   │
+                                   │ physical beta/intercept; train-only scale  │
                                    └────────────────────────────────────────────┘
 
                                    ┌────────────────────────────────────────────┐
@@ -318,6 +332,8 @@ Composition rule:
   paa owns fractional step-function compression and exact rational boundaries.
   sax owns compatible symbolic encoding and Euclidean lower-bound dissimilarity.
   stats owns stable scalar moments and immutable matrix feature scaling.
+  acf owns fixed-window sample autocorrelation, explicit estimator conventions,
+  and detached coefficients with exact pair counts; it is not a causal transform.
   ols owns full-rank regression artifacts, intercept policy and frozen prediction.
   ridge owns positive-Lambda regression artifacts, unpenalized intercept, and QR equilibration.
   pca owns covariance-based orthogonal factors, strict spectrum admission,
@@ -346,6 +362,7 @@ Composition rule:
 | `sax`       | Fixed-length symbolic words, pinned Gaussian/custom thresholds, immutable encoders and Euclidean MINDIST.                                      | Right-bin equality, SHA-256 policy identity, detached results; no false DTW pruning claim.                               | Telemetry signatures, approximate candidate ranking, shape-change screening.                   |
 | `ols`       | Full-column-rank least-squares regression, immutable original-unit coefficients and QR diagnostics.                                            | Explicit intercept/scale-only origin policies, rank refusal, training SSE, no heldout refit.                             | CAPM factors, sensor calibration, energy-load forecasting.                                     |
 | `ridge`     | Tikhonov L2 regression with mandatory Lambda>0 and immutable physical-unit inference.                                                          | Stable balanced augmented Householder QR, p>n, duplicated predictors, unpenalized intercept and checked objective.       | Correlated multi-factor hedges, wide optical sensors, seasonal AR(12).                         |
+| `acf`       | Direct fixed-window sample autocorrelation with two explicit denominator conventions and raw/centered origins.                                 | Scaled compensated products, no lag-specific recentering or clipping; caller-owned lag counts.                           | Residual audits, compressor cycles, vibration periodicity, signal pitch.                       |
 | `hmm`       | Typed finite-state categorical and diagonal-Gaussian probability models; causal filtering, smoothing, Viterbi, multi-sequence Baum-Welch.      | Explicit log-domain evidence, immutable model IDs, no future leakage in filtering, no cross-session transition counts.   | Live stress monitoring, machine regimes, independent clickstream sessions.                     |
 | `pca`       | Immutable covariance-based principal components, train-only projection and original-unit reconstruction.                                       | Bounded Jacobi, independent PSD/eigenpair checks, detached loadings and no holdout recentering.                          | Yield-curve factors, turbine residual screening, multichannel telemetry compression.           |
 | `stats`     | Stable scalar mean/variance, mergeable Welford/Chan states, train-only fitted feature standardization.                                         | Exact binary-input mean and scaled second moments, detached fitted metadata, immutable inference without refit.          | Telemetry aggregation, distributed metrics, ML feature preparation, anomaly-score calibration. |
@@ -865,6 +882,75 @@ Target methods require **exactly representable binary64 stored costs and heurist
 
 ---
 
+### ACF: explicit sample autocorrelation over a fixed observation window
+
+`github.com/lvlath/go/acf` analyzes serial dependence of a **single fixed,
+complete, equally spaced** scalar window. It computes one globally centered
+sample ACF by default, or an explicitly requested lag-adjusted or uncentered
+second-moment estimator. Unlike the causal transforms in `series`, the ACF is
+a fitted **whole-window** statistic: adding observations can change the fitted
+mean and every previously computed lag.
+
+| Need                            | Public call                                       | Critical interpretation                                           |
+|:--------------------------------|:--------------------------------------------------|:------------------------------------------------------------------|
+| Default centered sample ACF     | `acf.ComputeDefault(values,maxLag)`               | Shared `S0` denominator; exact-arithmetic Toeplitz PSD-compatible |
+| Adjust for actual pair count    | `acf.ComputeLagAdjusted(values,maxLag)`           | Multiplies by `n/(n-k)`; may exceed `[-1,1]`, not generally PSD   |
+| Preserve a physical zero origin | `acf.ComputeUncentered(values,maxLag)`            | Raw second moment; `Result.Mean=0` is a mode marker               |
+| Raw moment and pair correction  | `acf.ComputeUncenteredLagAdjusted(values,maxLag)` | Both policies explicit; no hidden centering                       |
+| Full explicit control           | `acf.Compute(values,maxLag,acf.Options{...})`     | The sole canonical kernel; no FFT fallback                        |
+
+```go
+package main
+
+import (
+    "fmt"
+
+    "github.com/lvlath/go/acf"
+)
+
+func main() {
+    readings := []float64{1, 2, 3}
+    common, err := acf.ComputeDefault(readings, 2)
+    if err != nil {
+        fmt.Println("common:", err)
+        return
+    }
+    adjusted, err := acf.ComputeLagAdjusted(readings, 2)
+    if err != nil {
+        fmt.Println("adjusted:", err)
+        return
+    }
+    fmt.Printf("lag-2 common=%+.1f adjusted=%+.1f pairs=%d\n",
+        common.Values[2], adjusted.Values[2], adjusted.PairCounts[2])
+    // Output: lag-2 common=-0.5 adjusted=-1.5 pairs=1
+}
+```
+
+The example demonstrates why **clamping adjusted values is mathematically
+wrong**. Zero-lag `Values[0]` is exactly `1` for a successful result;
+`PairCounts[k]=n-k`; `Result.Denominator` identifies the convention used.
+Both result slices are detached, `Result.Clone()` deep-copies them, and
+`Result.IsNil()` implements the `core.Nilable` pointer-presence law.
+A centered constant is `ErrZeroVariance`; an uncentered nonzero constant
+has a valid raw second-moment ACF. `errors.Is` distinguishes invalid options,
+nil/empty input, nonfinite observations, zero energy and unrepresentable output.
+
+The direct kernel uses normalized deviations, Neumaier-compensated products
+and `math.FMA` mean reconstruction to avoid avoidable intermediate overflow.
+Its current cost is **O(n*(maxLag+1))** time and **O(n+maxLag)** space: choose a
+scientifically meaningful lag horizon. Exact-arithmetic PSD for the common
+estimator is **not** a binary64 PSD certificate, and the package does not
+supply PACF, FFT, confidence intervals, stationarity tests or p-values.
+
+For six executable operational examples (industrial cycles, finance, pitch,
+bearing impacts, calibration and standby power), see
+[`acf/example_test.go`](acf/example_test.go); for incident retry periodicity,
+run `go run ./examples/acf`. The [ACF reference](docs/ACF.md) contains the
+Gram proof, strict error precedence, numeric implementation details and a
+mask-aware `series` integration example.
+
+---
+
 ### HMM: causal regime filtering, retrospective smoothing and reproducible EM
 
 `github.com/lvlath/go/hmm` models **hidden operating regimes** behind categorical events or finite multichannel telemetry. Its two immutable model families share the same transition mathematics but have distinct, typed observation contracts:
@@ -930,6 +1016,7 @@ See [`docs/HMM.md`](docs/HMM.md) for formal log-domain equations, EM counts and 
 | Series primitives       | [`docs/SERIES.md`](docs/SERIES.md)           | Exact integer grids, causal transforms, result masks, numeric safeguards, index windows.                                        |
 | Stable statistics       | [`docs/STATS.md`](docs/STATS.md)             | Welford/Chan, exact mean sum, scaled M2, fitted scaling, sentinels, immutable inference.                                        |
 | Stable Ridge regression | [`docs/RIDGE.md`](docs/RIDGE.md)             | Positive-Lambda augmented QR, strict intercept policy, wide/collinear designs, nonzero tiny coefficients and frozen prediction. |
+| Sample autocorrelation  | [`docs/ACF.md`](docs/ACF.md)                 | Common/lag-adjusted ACF, full-window centering, Toeplitz PSD proof and numeric limitations.                                     |
 | Finite-state HMM        | [`docs/HMM.md`](docs/HMM.md)                 | Causal log-domain filtering, retrospective smoothing, Viterbi, multi-sequence MAP-EM, error and identity laws.                  |
 | Fitted covariance PCA   | [`docs/PCA.md`](docs/PCA.md)                 | Train-only orthogonal projection, checked covariance eigenpairs, numerical rank and leakage-safe reconstruction.                |
 | Stable OLS regression   | [`docs/OLS.md`](docs/OLS.md)                 | Pivoted Householder QR, explicit intercept, physical coefficients, SSE, frozen Model and holdout pitfalls.                      |
@@ -1468,6 +1555,7 @@ incidence matrix:       columns are edge identities, not vertex-pair weights
 | "How do I compress a window without dropping fractional tails?"                     | `paa.Transform` / `paa.TransformRange`                             | Exact fractional PAA, checked integer geometry and a detached result.                        |
 | "How do I create comparable symbolic time-series signatures?"                       | `sax.NewEncoder` / `sax.Encode`                                    | Fixed-alphabet symbols, compatible policy hash, detached results.                            |
 | "Can SAX MINDIST prune arbitrary DTW candidates?"                                   | No                                                                 | Euclidean-only lower bound; shortlist retrieval must report Recall@K.                        |
+| "How do I measure repeat cycles or fixed-window serial dependence?"                  | `acf.ComputeDefault` / `acf.Compute`                               | Integer-lag ACF with explicit denominator and pair counts; not causal streaming.                         |
 | "How do I enumerate only complete index windows?"                                   | `series.WindowRanges`                                              | Ordered half-open ranges without partial tails.                                              |
 | "How do I compare two jittery sensor signatures?"                                   | `dtw.Align`                                                        | Scalar DTW aligns timing drift.                                                              |
 | "How do I align model-provided frame costs?"                                        | `dtw.AlignCostMatrix`                                              | Caller owns the local-cost surface.                                                          |
@@ -1514,6 +1602,8 @@ incidence matrix:       columns are edge identities, not vertex-pair weights
 | PAA fractional remainder dropped or padded with zeros        | `paa.Transform` uses integer exact-overlap geometry; neither truncation nor padding occurs.             |
 | SAX breakpoint labels mistaken for encoding identity         | `EncodingID` hashes actual threshold content and numeric policy; `BreakpointID` is audit-only.          |
 | Euclidean SAX MINDIST incorrectly used to prune DTW          | Do not prune; the two distance objectives differ and a positive MINDIST may accompany zero DTW.         |
+| LagAdjusted clipped to [-1,1] or treated as Toeplitz PSD     | Preserve the estimator convention; use CommonDenominator for exact-arithmetic PSD compatibility.        |
+| Full-window ACF mistaken for a causal streaming feature      | Fit only a fixed permitted window; appending observations can revise every lag.                         |
 | Warmup zero mistaken for a computed zero                     | `series.TransformResult.Valid` marks computed cells; retain it with `Values`.                           |
 | DTW over-warps a signal                                      | Use window and slope penalty deliberately.                                                              |
 | Feature scale dominates multivariate DTW                     | Normalize before `dtw.AlignMatrix`; it uses squared L2 row cost.                                        |
