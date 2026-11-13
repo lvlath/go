@@ -28,6 +28,7 @@
     - Certified PCA covariance factors, leakage-safe reconstruction and spectral diagnostics.
     - Causal hidden-state filtering versus future-conditioned smoothing and MAP-EM training.
     - Fixed-window ACF estimator conventions, numeric safeguards, pair-count diagnostics, and noncausal provenance.
+    - Reproducible block-bootstrap indices, unbiased random integers, partial row publication, and resource admission.
 
   License:
     lvlath is licensed under AGPL-3.0-only. See ../LICENSE.
@@ -64,6 +65,7 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
     13d. [PCA FAQ](#13d-pca-faq)
     13e. [HMM FAQ](#13e-hmm-faq--causal-regimes-smoothing-decoding-and-em)
     13f. [ACF FAQ](#13f-acf-faq--estimators-scaled-numerics-and-fixed-windows)
+    13g. [Bootstrap FAQ](#13g-bootstrap-faq--dependent-data-blocks-replay-and-safe-partial-results)
 14. [Builder and gridgraph tips](#14-builder-and-gridgraph-tips)
 15. [Errors and diagnostics](#15-errors-and-diagnostics)
 16. [Determinism and concurrency](#16-determinism-and-concurrency)
@@ -80,56 +82,58 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
 
 Start with the question, not the algorithm name.
 
-| Question                                                                     | Use                   | Reason                                                                                |
-|:-----------------------------------------------------------------------------|:----------------------|:--------------------------------------------------------------------------------------|
-| “How many hops away is this vertex?”                                         | `bfs`                 | BFS minimizes edge count.                                                             |
-| “Which vertices are in the same weak island?”                                | `bfs.Components`      | Weak membership ignores direction for component grouping.                             |
-| “What is a deterministic deep traversal?”                                    | `dfs`                 | DFS gives post-order and forest-style structure.                                      |
-| “Does this graph contain a cycle?”                                           | `dfs.DetectCycles`    | Returns deterministic witness cycles.                                                 |
-| “What order can I execute a DAG?”                                            | `dfs.TopologicalSort` | Topological order is a directed acyclic graph contract.                               |
-| “What is the cheapest route by weight?”                                      | `dijkstra`            | Dijkstra minimizes non-negative total cost.                                           |
-| “What is the cheapest connected backbone?”                                   | `mst`                 | MST solves minimum connected spanning structure.                                      |
-| “What is the maximum throughput?”                                            | `flow`                | Flow solves capacity-constrained source-to-sink movement.                             |
-| “How do I turn graph topology into numeric features?”                        | `matrix`              | Adjacency, incidence, degree vector, metric closure, algebra.                         |
-| “How do I model a grid map?”                                                 | `gridgraph`           | Generates lattice topology instead of manual wiring.                                  |
-| “How do I build repeatable fixtures?”                                        | `builder`             | Deterministic graph/data generation.                                                  |
-| “How do I compress a fixed-size scalar time-series window?”                  | `paa`                 | Exact fractional PAA averages with rational boundaries and no dropped tail.           |
-| “How do I encode a fixed-length symbolic signature?”                         | `sax`                 | Fractional PAA + right-bin quantization, compatible Euclidean MINDIST.                |
-| “How do I align two time series?”                                            | `dtw`                 | Dynamic Time Warping handles local timing drift.                                      |
-| “How do I compute robust moments or merge workers?”                          | `stats`               | Welford/Chan moments, exact mean sum, scaled M2.                                      |
-| “How do I normalize heldout features without refit?”                         | `stats`               | Immutable fitted model over matrix columns.                                           |
-| “How do I estimate linear factor coefficients and reuse them?”               | `ols`                 | Full-rank QR, original-unit beta/intercept, immutable prediction.                     |
-| “How do I fit correlated or wide linear factors with explicit L2 shrinkage?” | `ridge`               | Augmented QR, positive Lambda, unpenalized intercept and frozen physical predictions. |
-| “What serial dependence or cycle repeats at a fixed sample-index lag?”       | `acf`                 | One full-window mean, explicit denominator, exact pair counts.                        |
-| “How do I infer a hidden operating regime from time-ordered observations?”   | `hmm`                 | Typed causal filtering, smoothing, Viterbi, and independent-sequence EM.              |
-| “How do I reduce multivariate dimensions without a response variable?”       | `pca`                 | Validated covariance spectrum and a frozen loadings model for holdout inference.      |
-| “How do I visit all cities in a route?”                                      | `tsp`                 | Tour construction/improvement/exact-small-instance routing.                           |
+| Question                                                                     | Use                       | Reason                                                                                |
+|:-----------------------------------------------------------------------------|:--------------------------|:--------------------------------------------------------------------------------------|
+| “How many hops away is this vertex?”                                         | `bfs`                     | BFS minimizes edge count.                                                             |
+| “Which vertices are in the same weak island?”                                | `bfs.Components`          | Weak membership ignores direction for component grouping.                             |
+| “What is a deterministic deep traversal?”                                    | `dfs`                     | DFS gives post-order and forest-style structure.                                      |
+| “Does this graph contain a cycle?”                                           | `dfs.DetectCycles`        | Returns deterministic witness cycles.                                                 |
+| “What order can I execute a DAG?”                                            | `dfs.TopologicalSort`     | Topological order is a directed acyclic graph contract.                               |
+| “What is the cheapest route by weight?”                                      | `dijkstra`                | Dijkstra minimizes non-negative total cost.                                           |
+| “What is the cheapest connected backbone?”                                   | `mst`                     | MST solves minimum connected spanning structure.                                      |
+| “What is the maximum throughput?”                                            | `flow`                    | Flow solves capacity-constrained source-to-sink movement.                             |
+| “How do I turn graph topology into numeric features?”                        | `matrix`                  | Adjacency, incidence, degree vector, metric closure, algebra.                         |
+| “How do I model a grid map?”                                                 | `gridgraph`               | Generates lattice topology instead of manual wiring.                                  |
+| “How do I build repeatable fixtures?”                                        | `builder`                 | Deterministic graph/data generation.                                                  |
+| “How do I compress a fixed-size scalar time-series window?”                  | `paa`                     | Exact fractional PAA averages with rational boundaries and no dropped tail.           |
+| “How do I encode a fixed-length symbolic signature?”                         | `sax`                     | Fractional PAA + right-bin quantization, compatible Euclidean MINDIST.                |
+| “How do I align two time series?”                                            | `dtw`                     | Dynamic Time Warping handles local timing drift.                                      |
+| “How do I compute robust moments or merge workers?”                          | `stats`                   | Welford/Chan moments, exact mean sum, scaled M2.                                      |
+| “How do I normalize heldout features without refit?”                         | `stats`                   | Immutable fitted model over matrix columns.                                           |
+| “How do I estimate linear factor coefficients and reuse them?”               | `ols`                     | Full-rank QR, original-unit beta/intercept, immutable prediction.                     |
+| “How do I fit correlated or wide linear factors with explicit L2 shrinkage?” | `ridge`                   | Augmented QR, positive Lambda, unpenalized intercept and frozen physical predictions. |
+| “What serial dependence or cycle repeats at a fixed sample-index lag?”       | `acf`                     | One full-window mean, explicit denominator, exact pair counts.                        |
+| “How do I build dependent-data bootstrap index ensembles?”                   | `bootstrap.SampleIndices` | Moving/Circular/Stationary blocks, replay ID and only complete rows.                  |
+| “How do I infer a hidden operating regime from time-ordered observations?”   | `hmm`                     | Typed causal filtering, smoothing, Viterbi, and independent-sequence EM.              |
+| “How do I reduce multivariate dimensions without a response variable?”       | `pca`                     | Validated covariance spectrum and a frozen loadings model for holdout inference.      |
+| “How do I visit all cities in a route?”                                      | `tsp`                     | Tour construction/improvement/exact-small-instance routing.                           |
 
 ### Q1.2. How do I avoid using the wrong algorithm?
 
 Keep this mental table:
 
 ```text
-minimize hops                 -> BFS
-inspect depth structure       -> DFS
-prove/locate cycle            -> DFS cycle witness
-order DAG tasks               -> DFS topological sort
-minimize weighted cost        -> Dijkstra
-connect all cheaply           -> MST
-maximize throughput           -> Flow
-compute all-pairs costs       -> Matrix metric closure
-validate grid/causal features -> Series
-stream/merge stable moments   -> Stats
-fit training-only scaling     -> Stats
-fit full-rank linear factors  -> OLS (pivoted QR, no refit)
-fit correlated/wide factors   -> Ridge (positive Lambda, unpenalized intercept)
-compress latent features      -> PCA (train-only covariance basis; no target)
-infer hidden temporal regime  -> HMM FilterStep (causal; no future observations)
+minimize hops                         -> BFS
+inspect depth structure               -> DFS
+prove/locate cycle                    -> DFS cycle witness
+order DAG tasks                       -> DFS topological sort
+minimize weighted cost                -> Dijkstra
+connect all cheaply                   -> MST
+maximize throughput                   -> Flow
+compute all-pairs costs               -> Matrix metric closure
+validate grid/causal features         -> Series
+stream/merge stable moments           -> Stats
+fit training-only scaling             -> Stats
+fit full-rank linear factors          -> OLS (pivoted QR, no refit)
+fit correlated/wide factors           -> Ridge (positive Lambda, unpenalized intercept)
+compress latent features              -> PCA (train-only covariance basis; no target)
+infer hidden temporal regime          -> HMM FilterStep (causal; no future observations)
 detect fixed-window serial dependence -> ACF ComputeDefault (not causal)
-retrospective regime audit    -> HMM Smooth / Decode (future-conditioned)
-encode symbolic SAX words     -> SAX
-align time-warped signals     -> DTW
-build a closed tour           -> TSP
+draw dependent-data index replicates  -> BOOTSTRAP SampleIndices (no statistic or CI)
+retrospective regime audit            -> HMM Smooth / Decode (future-conditioned)
+encode symbolic SAX words             -> SAX
+align time-warped signals             -> DTW
+build a closed tour                   -> TSP
 ```
 
 The most common mistake is using BFS on a weighted routing problem. BFS answers “fewest edges,” not “cheapest total weight.”
@@ -677,7 +681,7 @@ The implementation keeps one upper-triangle accumulator and writes its value int
 
 ### Q6.10. Can `Correlation` succeed when `Covariance` fails?
 
-Yes. Correlation is dimensionless and is computed from **normalized centered moments**, not by dividing a materialized covariance matrix. Two perfectly anticorrelated channels of magnitude `1e200` have Pearson coefficient `-1`, even if the covariance exceeds finite binary64. Their standard deviations may still be representable. For a constant feature, the entire correlation row and column—including the diagonal—is exactly zero; for nonconstant features the diagonal is one.
+Yes. Correlation is dimensionless and is computed from **normalized centered moments**, not by dividing a materialized covariance matrix. Two perfectly anticorrelated channels of magnitude `1e200` have Pearson coefficient `-1`, even if the covariance exceeds finite binary64. Their standard deviations may still be representable. For a constant feature, the entire correlation row and column-including the diagonal-is exactly zero; for nonconstant features the diagonal is one.
 
 ### Q6.11. Does `CenterColumns` always return a detached matrix?
 
@@ -1971,7 +1975,7 @@ Use the exact repository toolchain; check `go test ./pca -count=1`, `go test -ra
 
 ---
 
-### 13e. HMM FAQ — causal regimes, smoothing, decoding and EM
+### 13e. HMM FAQ - causal regimes, smoothing, decoding and EM
 
 #### Q13e.1. When do I use `FilterStep`, `FilterWithHistory`, `Smooth` or `Decode`?
 
@@ -2007,7 +2011,7 @@ With independent sequences, each one gets its **own** initial hidden state drawn
 
 #### Q13e.9. Why does `FitGaussian` reject a positive initial variance below the floor?
 
-`NewGaussian` accepts any strictly positive finite diagonal variance. `FitGaussian` additionally requires **initial variance >= effective `VarianceFloor`**, which defaults to `1e-8` in *feature²* units. The constrained M-step uses `max(empiricalVariance,VarianceFloor)`—it does not add the floor as noise. If the seed is outside the constrained feasible domain, it is `ErrInvalidOption`, not a silently repaired start. Scaling training features changes the physical interpretation of the variance floor; freeze preprocessing units first.
+`NewGaussian` accepts any strictly positive finite diagonal variance. `FitGaussian` additionally requires **initial variance >= effective `VarianceFloor`**, which defaults to `1e-8` in *feature²* units. The constrained M-step uses `max(empiricalVariance,VarianceFloor)`-it does not add the floor as noise. If the seed is outside the constrained feasible domain, it is `ErrInvalidOption`, not a silently repaired start. Scaling training features changes the physical interpretation of the variance floor; freeze preprocessing units first.
 
 #### Q13e.10. What happens to a dead hidden state with zero posterior occupancy?
 
@@ -2039,7 +2043,7 @@ Categorical `FilterDefault` requires O(K) live workspace plus immutable model; `
 
 ---
 
-### 13f. ACF FAQ — estimators, scaled numerics and fixed windows
+### 13f. ACF FAQ - estimators, scaled numerics and fixed windows
 
 #### Q13f.1. What exactly does `acf` compute, and which public facade should I select?
 
@@ -2160,7 +2164,7 @@ First establish a complete and equally spaced grid (for example with
 `series.Validate` under a strict cadence policy). Then handle invalid
 warmups using `TransformResult.Valid`; do not treat placeholder zeros as
 observed values. If gaps exist, reject or segment into intact fixed
-windows—blindly filtering invalid positions can create false adjacency.
+windows-blindly filtering invalid positions can create false adjacency.
 Finally, compute ACF over the selected window. The resulting coefficients
 are retrospective diagnostics and may be useful for **training-window
 model selection**, not as leakage-free historical online features.
@@ -2210,6 +2214,189 @@ root cause. Run [`examples/acf/main.go`](../examples/acf/main.go) with
 loads, volatility amplitudes, pitch, vibration impacts, calibration, and
 standby current. All fixtures are synthetic and the review thresholds are
 illustrative, not p-values.
+
+---
+
+## 13g. Bootstrap FAQ - dependent-data blocks, replay, and safe partial results
+
+### Q13g.1. What does `bootstrap` return, and why only indices?
+
+`bootstrap.SampleIndices(ctx, rows, plan)` returns `*bootstrap.Result` with
+`Indices [][]int`, `Completed int` and `RNG AlgorithmID`. Every index
+points to one observation position in the **same original, caller-owned
+window**. The package does not receive a data slice, matrix or estimator.
+This prevents hidden copying of market data, value normalization or
+model fitting during sampling. Clients gather their chosen aligned rows
+and compute statistics in a separate stage.
+
+### Q13g.2. Which block mode should I choose?
+
+- `MovingBlocks`: one uniform start in `0..rows-B` for each fixed block,
+  then strictly consecutive indices **without wrap**. Choose when the
+  physical end of the original history must not connect to its beginning.
+- `CircularBlocks`: one uniform start in `0..rows-1` for each fixed block;
+  within the block, `rows-1` continues to 0. Choose when a cyclic-boundary
+  approximation is defensible for your data.
+- `StationaryBlocks`: initial uniform index, then for each next index a
+  new uniform start with probability `1/B`, or cyclic continuation with
+  probability `1-1/B`. `B` is the **mean** geometric length, not a maximum.
+
+All modes validate `1<=B<=rows` and use the same 256-MiB result budget.
+Changing `Kind` changes the probability law; there is no implicit fallback.
+
+### Q13g.3. Does `BlockLength=1` always mean IID sampling?
+
+Yes. The three modes sample one uniformly chosen original index for each
+output position when `B=1`. Given the same RNG factory, `Seed`, and logical
+replicate ID, the emitted rows are identical because the stationary kernel
+skips its otherwise redundant Bernoulli trial. For `B>1`, do not replace
+blocks with IID draws: the time-dependence objective would be lost.
+
+### Q13g.4. Can the output row be longer than the available history?
+
+Yes. `Length` controls the requested number of **output indices**, while
+`rows` controls the allowable source index domain. Multiple independently
+selected blocks can repeat original observations. Every returned position
+still satisfies `0<=index<rows`. Huge lengths must pass checked output-size
+and budget validation before allocation.
+
+### Q13g.5. Why is raw `uint64 % bound` forbidden?
+
+For a uniform 8-bit source with 256 possible words and bound=3, naive
+modulo counts the residues 86/85/85 times. Rejection discards exactly
+`256 % 3 = 1` word, yielding equal 85/85/85 accepted counts.
+For 64-bit words the adapter computes `threshold=(-b)%b` in unsigned
+arithmetic, rejects `word<threshold`, and only then evaluates `word%b`.
+The accepted count is an exact multiple of `b`; no floating-point
+probability is involved. A `word%b` *after* rejection is correct.
+
+### Q13g.6. Can a `uint64` accepted remainder overflow native `int`?
+
+Under the validated public contract, no: `1<=bound<=MaxInt`, so
+`0<=word%uint64(bound)<bound<=MaxInt`. The adapter nevertheless performs an
+**explicit native-range guard** before narrowing. This protects the
+conversion boundary and makes its safety condition auditable independently
+of the unsigned-mapping proof. `ErrOverflow` normally classifies the
+separate output-byte arithmetic before sampling.
+
+### Q13g.7. Is `Seed=0` allowed? How do I replay a particular ensemble?
+
+Zero is an ordinary reproducible seed. Each replicate `r` obtains the
+separate logical stream `Factory.Stream(Seed,uint64(r))`, not a stream
+assigned by goroutine or execution order. Persist `rows`, the entire
+`Plan`, `Result.RNG`, the original dataset revision and split provenance.
+A replay requires the same RNG factory version and bootstrap mapping
+revision; a seed alone is not enough.
+
+### Q13g.8. If I increase `Replicates`, do earlier rows change?
+
+No. With the same `rows`, `Length`, `BlockLength`, `Kind`, `Seed`, and accepted
+RNG revision, increasing `Replicates` from 2 to 5 must preserve the **exact
+first two rows**. This is stronger than merely preserving distributional
+properties: it is byte-for-byte integer equality. Separate invocations
+can run concurrently because each facade owns its result and streams.
+
+### Q13g.9. Can I split a large ensemble into independent calls?
+
+Not with the current API while claiming exactly the same path IDs.
+Every call begins at replicate `r=0`. Two calls with identical `Seed`
+repeat the same streams; changing the seed creates a *different* ensemble,
+not logical replicates `r=N..2N-1` from the original Plan. A true chunking
+contract would require an explicit replicate offset; none exists here.
+
+### Q13g.10. Why does `SampleIndices` sometimes return both Result and error?
+
+Only **completed** replicate rows are published. If context cancellation
+interrupts replicate `r`, its partially written row is discarded; the result
+retains exactly `r` complete rows and `Completed==len(Indices)`, together
+with `context.Canceled` or `context.DeadlineExceeded`. Cancellation after
+all rows have committed can still return the full Result **and an error**
+if observed at the final context gate. Never report a non-nil Result as
+full success without checking `err`.
+
+### Q13g.11. What if cancellation occurs before the first result row?
+
+Two distinct cases are intentional. An already-canceled context at API
+admission returns `(nil,ctx.Err())`, as does any invalid plan (with its
+corresponding error). Once computation has begun, cancellation before a
+complete first row returns a **non-nil `Result`** with `Completed=0` and
+`Indices` a **non-nil empty slice**, plus the native context error.
+Tests trigger these transitions by deterministic context polling, never
+by fragile sleeps or timing assumptions.
+
+### Q13g.12. What is checked by the 256-MiB resource ceiling?
+
+`MaxResultBytes` is the logical sum of `Replicates * Length * sizeof(int)`
+and `Replicates * sizeof([]int)` (row headers on the native architecture).
+Integer arithmetic is checked for overflow **before** the budget comparison.
+`ErrOverflow` means an unrepresentable size; `ErrBudget` means a
+representable size exceeds 256 MiB. The ceiling does not include all Go
+heap metadata or guarantee that an admitted allocation survives system OOM.
+No panic/recover-based OOM recovery is provided.
+
+### Q13g.13. Why are some block transitions discontinuous?
+
+Every new Moving/Circular block starts independently. A large jump at a
+boundary is legal; within one fixed block, Moving is strictly consecutive,
+while Circular advances through the ring. A stationary restart may appear
+to be a smooth continuation, so detecting boundaries by examining indices
+alone is unsound. Tests must use the known fixed block boundaries or
+independent transition-law oracles, not visual guesses.
+
+### Q13g.14. Does `StationaryBlocks` make my original data stationary?
+
+No. The **resampling index chain** has a uniform invariant distribution
+when started uniformly, and its transition kernel is time-homogeneous.
+The original observations may still contain trends, structural breaks,
+calendar effects and long memory. Index-process stationarity neither
+proves those assumptions away nor guarantees a valid confidence interval
+for an arbitrary source process or estimator.
+
+### Q13g.15. Can I use the result directly with OLS or Ridge?
+
+Use each returned index to gather the **same source row** from the feature
+matrix X and response y. Then fit a new model per replicate outside
+`bootstrap` if a pairs-bootstrap analysis is appropriate. Independent
+resampling of X and y destroys their joint relationship. Block bootstrap
+is not Newey-West HAC covariance; residual bootstrap and pairs bootstrap
+are also distinct inferential procedures requiring explicit assumptions.
+
+### Q13g.16. Can I bootstrap a `series` with timestamp gaps?
+
+Only after **explicitly** deciding what adjacency means. `series.Validate`
+reports missing time-grid slots but does not interpolate them. The bootstrap
+kernel sees contiguous *supplied indices*, not elapsed time. If adjacent
+indices are separated by missing timestamps, bootstrap blocks may not be
+contiguous in clock time. Reject, segment or repair the grid in application
+code under a justified policy before resampling.
+
+### Q13g.17. Can I obtain Ljung-Box null p-values by simply bootstrapping ACF?
+
+No. Block resampling an autocorrelated window tends to preserve some of its
+serial dependence; it does not enforce the null hypothesis of zero
+autocorrelation. `acf.ComputeDefault` evaluates fixed-window coefficients
+and is not a hypothesis-test engine. An empirical null generator must be
+separately specified and validated for that hypothesis and data model.
+
+### Q13g.18. What should I do after a sampling error?
+
+Use `errors.Is(err, bootstrap.ErrInvalidOption)`, `ErrOverflow`, `ErrBudget`,
+`context.Canceled` or `context.DeadlineExceeded`, as appropriate. An invalid
+request is always a nil result; cancellation after computation starts can
+carry complete prefix rows. Decide explicitly whether your application can
+use a partial ensemble. Do **not** silently retry with shorter blocks,
+truncate input data or change the RNG seed, since each alters the experiment.
+
+### Q13g.19. What are the useful executables and documentation sources?
+
+`bootstrap/example_test.go` provides five real-world synthetic pipelines:
+portfolio 99% VaR / fractional-tail ES, paired dependent regression, turbine
+vibration threshold calibration, deterministic regulatory replay and budget
+admission. `go run ./examples/bootstrap` performs a standalone portfolio
+review with source-risk estimates and replay metadata.
+For the exact laws and all limitations, read [`BOOTSTRAP.md`](BOOTSTRAP.md)
+and [`../bootstrap/doc.go`](../bootstrap/doc.go). These examples do not claim
+to be live financial or certified industrial measurements.
 
 ---
 
@@ -2628,6 +2815,33 @@ lag-adjusted covariance ratios use `acf.ComputeLagAdjusted` without clipping.
 Never substitute `LagAdjusted` into a Toeplitz PSD-sensitive solver.
 
 See [`ACF.md`](ACF.md) and the reproducible `go run ./examples/acf` program.
+
+---
+
+### Recipe M. Replay an index-only block-bootstrap audit
+
+```go
+plan := bootstrap.Plan{
+    Kind: bootstrap.StationaryBlocks,
+    Length: trainingRows,
+    BlockLength: 8,
+    Replicates: 200,
+    Seed: 0,
+}
+result, err := bootstrap.SampleIndices(ctx, trainingRows, plan)
+if err != nil {
+    // A non-nil partial Result can contain completed rows; do not silently
+    // accept those rows as the requested full 200-replicate ensemble.
+    return err
+}
+// Persist plan, trainingRows and result.RNG before gathering domain values.
+_ = result
+```
+
+This snippet belongs inside a function returning `error` with `ctx` and
+`trainingRows` supplied by the caller. `bootstrap` does not read observations,
+select block length or estimate confidence intervals. See
+[`BOOTSTRAP.md`](BOOTSTRAP.md) for exact mathematics and memory limits.
 
 ---
 

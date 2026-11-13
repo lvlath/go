@@ -10,7 +10,7 @@
 
   Purpose:
     This tutorial is the first educational entry point for lvlath. It introduces
-    fundamental graph, matrix, stable-statistics, causal time-series, fixed-window ACF estimators, and symbolic SAX ideas; explains how lvlath
+    fundamental graph, matrix, stable-statistics, causal time-series, fixed-window ACF estimators, dependent-data block-bootstrap indices, and symbolic SAX ideas; explains how lvlath
     maps mathematical algorithms into deterministic Go packages, and helps readers move from basic
     graph and series concepts to package-specific documentation. It does not duplicate every
     package specification; instead it teaches the mental model, core entities,
@@ -25,7 +25,7 @@
 
 > **hard math on an easy level**
 
-Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fixed-window autocorrelation, fitted feature scaling, covariance PCA, and time-series alignment.
+Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fixed-window autocorrelation, reproducible block-bootstrap indices, fitted feature scaling, covariance PCA, and time-series alignment.
 
 This tutorial is the beginning of the learning path. It introduces the objects and ideas that most packages share: graphs, matrices, options, result artifacts, error contracts, and deterministic algorithm execution.
 
@@ -52,6 +52,7 @@ This tutorial is the beginning of the learning path. It introduces the objects a
     11e. [PCA Foundations: Certified Covariance Factors and Frozen Inference](#11e-pca-foundations-certified-covariance-factors-and-frozen-inference)
     11f. [HMM Foundations: Causal Hidden-State Filtering and Independent-Sequence Learning](#11f-hmm-foundations-causal-hidden-state-filtering-and-independent-sequence-learning)
     11g. [ACF Foundations: Fixed-Window Serial Dependence and Estimator Conventions](#11g-acf-foundations-fixed-window-serial-dependence-and-estimator-conventions)
+    11h. [Bootstrap Foundations: Reproducible Dependent-Data Index Ensembles](#11h-bootstrap-foundations-reproducible-dependent-data-index-ensembles)
 12. [Algorithm Selection Guide](#12-algorithm-selection-guide)
 13. [Professional Best Practices](#13-professional-best-practices)
 14. [Where To Go Next](#14-where-to-go-next)
@@ -85,6 +86,7 @@ The library covers:
 * `pca` immutable train-only principal component projection, certified covariance eigenspectrum, and original-unit reconstruction;
 * `hmm` typed categorical/diagonal-Gaussian hidden-state models, causal filtering, noncausal smoothing, Viterbi, and independent-sequence MAP-EM;
 * `acf` scaled direct sample autocorrelation, explicit common versus pair-adjusted denominators, and detached per-lag pair counts;
+* `bootstrap` reproducible Moving, Circular and Stationary block-index ensembles with per-replicate RNG streams and atomic row publication;
 * `paa` exact fractional time-series compression, rational segment boundaries and value-only feature projection;
 * `sax` symbolic words from fractional PAA and compatible Euclidean MINDIST (not a DTW lower bound);
 * `tsp` matrix-backed tour optimization with exact, approximate, matching, and local-search regimes;
@@ -107,6 +109,7 @@ dense operator             *matrix.Dense               row-major numeric artifac
 warping alignment          *dtw.Result                 distance, reachability, path
 causal sample transform    *series.TransformResult     detached Values + Valid mask
 timestamp-grid inspection  *series.ValidationResult    exact cadence / missing slots
+dependent index ensembles  *bootstrap.Result          detached complete rows / RNG replay revision
 sample autocorrelation     *acf.Result                fixed-window lag coefficients / pair counts
 streaming statistics       *stats.Summary              exact-binary-input mean / scaled variance
 train-only scaling         *stats.ScaleFitResult       detached fit metadata / immutable model
@@ -196,6 +199,7 @@ Read these files as a learning path. `doc.go` files define implemented package c
 | 8f   | [`PCA.md`](PCA.md)                         | Strict covariance eigenanalysis, train-only latent factors, reconstruction residuals and solver limitations.                |
 | 8g   | [`HMM.md`](HMM.md)                         | Typed hidden-state models, strict online causal filtering, retrospective smoothing, Viterbi, independent-sequence EM.       |
 | 8h   | [`ACF.md`](ACF.md)                         | Direct sample ACF, common/pair-adjusted estimators, Toeplitz PSD limits, scaled arithmetic and independent oracle.          |
+| 8i   | [`BOOTSTRAP.md`](BOOTSTRAP.md)              | Three block-index laws, unbiased integers, replay, resource admission and partial cancellation.                                 |
 | 9    | [`DTW.md`](DTW.md)                         | `Align`, `AlignCostMatrix`, `AlignMatrix`, `AlignBounded`, exact `Search`, numeric and path artifacts.                      |
 | 9a   | [`DTW_SEARCH.md`](DTW_SEARCH.md)           | Fixed-length exact top-K, certified LB_Keogh, workers, budgets, and partial-result law.                                     |
 | 10   | [`TSP.md`](TSP.md)                         | Matrix-backed tours, exact regimes, Christofides, Blossom matching, local search, timeouts.                                 |
@@ -222,6 +226,7 @@ Working on numeric/time-series workflows:
   MATRICES -> STATS -> PCA -> independent holdout reconstruction and residual review
   SERIES -> STATS -> HMM.FilterStep -> online regime monitoring (no future data)
   SERIES -> ACF.ComputeDefault -> fixed-window lag diagnostics (NOT causal)
+  SERIES -> BOOTSTRAP.SampleIndices -> paired matrix/return/sensor resamples -> caller estimators
   OLS/RIDGE residual window -> ACF -> investigate serial dependence (NOT a p-value)
   MATRICES -> HMM.Smooth / Decode -> offline incident reconstruction
   SAX (Euclidean screening) != DTW (nonlinear alignment)
@@ -1782,7 +1787,7 @@ If `NoIntercept=true`, there is **no column of ones**, the physical intercept is
 
 ### 11d.2. Why is a safe penalty weight not enough?
 
-With two observations `X=[1,2]`, `y=[1,2]`, `NoIntercept=true`, and `Lambda=1e100`, the **correct** coefficient is `5/(5+2*Lambda)≈2.5e-100` — exceptionally small but nonzero. Forming `sqrt(n*Lambda)` through the naive floating multiplication can overflow at high Lambda, but even `sqrt(n)*sqrt(Lambda)` alone does not eliminate Householder cancellation: original observation rows placed before a much larger penalty row can lose the tiny `Qᵀ*y` projection and produce `-0`.
+With two observations `X=[1,2]`, `y=[1,2]`, `NoIntercept=true`, and `Lambda=1e100`, the **correct** coefficient is `5/(5+2*Lambda)≈2.5e-100` - exceptionally small but nonzero. Forming `sqrt(n*Lambda)` through the naive floating multiplication can overflow at high Lambda, but even `sqrt(n)*sqrt(Lambda)` alone does not eliminate Householder cancellation: original observation rows placed before a much larger penalty row can lose the tiny `Qᵀ*y` projection and produce `-0`.
 
 The fitted QR input is an *exactly equivalent system* that performs three deterministic operations:
 
@@ -2340,6 +2345,178 @@ benchmark guidance, see [`docs/ACF.md`](ACF.md) and [`acf/doc.go`](../acf/doc.go
 
 ---
 
+## 11h. Bootstrap Foundations: Reproducible Dependent-Data Index Ensembles
+
+`bootstrap` helps estimate how a **downstream statistic** might vary when
+observations are resampled under an explicitly chosen dependence-preserving
+block law. Its own result is strictly an index matrix: it neither gathers
+source values nor performs statistical inference. This distinction is vital in
+risk management, serially dependent regression and industrial telemetry.
+
+### 11h.1. Why IID shuffling is often inappropriate
+
+Suppose a service's latency is high for several adjacent minutes during an
+incident. Independently resampling individual readings discards that temporal
+clustering. A block sampler instead chooses a **start position** and copies a
+run of consecutive original observations, keeping short-range adjacency
+inside each selected block.
+
+```text
+Original incident latency (ms):
+  time:     0  1  2  3  4  5  6  7  8  9 10 11
+  latency: 14 13 16 15 48 52 49 46 17 15 14 16
+                         ^ sustained incident ^
+
+Moving blocks, B=4, one valid index replicate:
+  [4,5,6,7 | 0,1,2,3 | 8,9,10,11]
+   incident  ordinary   recovery
+
+Reconstruct readings outside bootstrap with sampled[i] = source[index[i]].
+```
+
+The precise selection rules differ:
+
+| Mode | Start positions | Within-block motion | What B means |
+|---|---|---|---|
+| `MovingBlocks` | `0 .. rows-B` | Increment without wrap | Fixed block size |
+| `CircularBlocks` | `0 .. rows-1` | Increment with wrap | Fixed block size |
+| `StationaryBlocks` | Initial uniform, then exact restart decisions | Continue cyclically unless restarting | **Mean** geometric run length |
+
+Stationary restarts occur with exact probability `1/B` using
+`UniformInteger(B)==0`, not approximate floating-point thresholds. At `B=1`,
+all three modes are the same IID-index mechanism and consume the same
+replicate-local random words. There is no implicit IID shuffle for `B>1`.
+
+### 11h.2. A complete public API example
+
+This example models an hourly anomaly-screening workflow over already validated
+continuous readings. It gathers candidate traces outside `bootstrap` and
+compares their peak values with an independently fixed engineering limit.
+The code deliberately prints stable structural facts instead of depending
+on an unpinned PRNG's exact numeric samples.
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+
+    "github.com/lvlath/go/bootstrap"
+)
+
+func main() {
+    // Historical vibration in g, with six contiguous elevated observations.
+    historical := []float64{
+        0.29, 0.31, 0.28, 0.33, 0.30, 0.32,
+        0.62, 0.71, 0.76, 0.70, 0.65, 0.61,
+        0.31, 0.29, 0.33, 0.30, 0.32, 0.28,
+    }
+    plan := bootstrap.Plan{
+        Kind: bootstrap.MovingBlocks,
+        Length: len(historical), BlockLength: 6,
+        Replicates: 40, Seed: 0,
+    }
+    result, err := bootstrap.SampleIndices(context.Background(), len(historical), plan)
+    if err != nil {
+        // A non-nil result on cancellation may contain only completed rows.
+        fmt.Println("resampling:", err)
+        return
+    }
+
+    peaks := make([]float64, result.Completed)
+    for replicate, indices := range result.Indices {
+        // This calculation is application-owned, never performed by bootstrap.
+        for _, source := range indices {
+            if historical[source] > peaks[replicate] {
+                peaks[replicate] = historical[source]
+            }
+        }
+    }
+    fmt.Printf("histories=%d, peaks=%d, indexed-only=%t\n",
+        result.Completed, len(peaks), result.RNG != "")
+    // Output: histories=40, peaks=40, indexed-only=true
+}
+```
+
+**Why it matters:** the result is an ordered and detached `[][]int`. The
+same index row can also be used for paired sensor channels, `(X,y)` regression
+rows, or a return-plus-hedge vector **without misaligning observations**.
+The application must decide whether those measurements can legitimately
+be interpreted as equally spaced and jointly sampled.
+
+### 11h.3. Reproducibility and bounded memory
+
+The output row at replicate `r` is generated from
+`rng.Factory.Stream(Seed, uint64(r))`. Its index path does not depend on the
+total requested replicate count or worker scheduling. `Seed=0` is valid.
+A versioned `Result.RNG` identifies the factory and the bootstrap mapping
+revision; store it with the complete `Plan` and source-data provenance.
+An unsuffixed seed alone is insufficient for long-term replay.
+
+Integer selection uses rejection sampling to avoid modulo bias. In particular,
+`word % bound` alone is not a uniformly unbiased map for nonpower-of-two
+bounds; rejecting words below `2^64 % bound` first restores equal counts.
+The rejected-draw loop also checks for context cancellation.
+
+The size of the index matrix is bounded by `MaxResultBytes` (256 MiB),
+including outer slice headers. The facade checks native-`int` multiplication
+for overflow **before** checking this budget. An overflow returns
+`bootstrap.ErrOverflow`; a representable excessive request returns
+`bootstrap.ErrBudget`. Neither branch allocates the requested matrix.
+
+### 11h.4. Interrupted execution is not a smaller successful ensemble
+
+```text
+Requested:  R=4, L=1000
+                    
+replicate 0:  [1000 committed indices] ------ published
+replicate 1:  [1000 committed indices] ------ published
+replicate 2:  [prefix ... cancellation] ----- discarded
+replicate 3:  not started
+
+returned result.Completed = 2
+len(result.Indices)    = 2
+returned error         = context.Canceled (errors.Is)
+```
+
+After computation has started, cancellation returns the **complete prefix
+plus the native context error**. Before computation starts, invalid options
+or a pre-canceled context return a nil result. `Result.IsNil()` is a
+reflect-free pointer-presence check through `core.Nilable`, **not** a
+substitute for `err == nil`.
+
+### 11h.5. Choosing the right downstream analysis
+
+```text
+series.Validate (exact sample cadence / no future data)
+          |
+training-only source window
+          |
+bootstrap.SampleIndices (index paths, no statistics)
+          |
+          +---- gather paired matrix rows + y ----> ols/ridge fit per replicate
+          |
+          +---- gather training returns ---------> caller VaR/ES estimator
+          |
+          +---- gather sensor channels ----------> caller alarm threshold review
+          |
+          +---- gather residual windows ---------> caller ACF investigation
+```
+
+`acf.ComputeDefault` describes the ACF of the resampled window but does not
+make it a valid Ljung-Box *null* simulation. Block resampling preserves some
+dependence; it does not automatically impose zero autocorrelation. Likewise,
+OLS/Ridge pairs-bootstrap distributions are not Newey-West HAC estimates.
+Do not let resampling cross a chronological train/test boundary.
+
+For proofs of stationary index laws, exact integer mapping, resource admission,
+error precedence, replay identity and complete reference implementations,
+read [`BOOTSTRAP.md`](BOOTSTRAP.md), [`../bootstrap/doc.go`](../bootstrap/doc.go)
+and the five executable examples in [`../bootstrap/example_test.go`](../bootstrap/example_test.go).
+
+---
+
 ## 12. Algorithm Selection Guide
 
 ### If the input is a graph
@@ -2383,6 +2560,7 @@ benchmark guidance, see [`docs/ACF.md`](ACF.md) and [`acf/doc.go`](../acf/doc.go
 | Symmetric positive-definite system                 | `matrix.FactorCholesky`                       | accepted symmetric midpoint, SPD check, reusable solves.                                   |
 | Symmetric spectral analysis                        | `matrix`                                      | eigenvalues/eigenvectors.                                                                  |
 | Exact nanosecond cadence checks                    | `series.Validate`                             | sample count + ordered gap metadata.                                                       |
+| Dependent-data resampling index ensembles           | `bootstrap.SampleIndices`                      | Detached Moving/Circular/Stationary `[][]int`, replay ID, partial completion law.                     |
 | Causal lag/difference/returns                      | `series`                                      | length-preserving values + validity mask.                                                  |
 | Fractional equal-duration scalar compression       | `paa.Transform` / `paa.TransformRange`        | Detached PAA means, exact rational intervals, original window length.                      |
 | Fixed-alphabet symbolic window encoding            | `sax.Encode` / `sax.Encoder.Encode`           | Detached symbol word, policy identity and optional transformed PAA.                        |
