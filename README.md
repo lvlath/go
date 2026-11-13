@@ -48,7 +48,7 @@
 
 # lvlath
 
-**lvlath** is a pure-Go algorithm engineering library for graphs, flows, dense graph algebra, routing, exact timestamp grids, causal series transforms, fractional PAA, symbolic SAX time-series signatures, stable statistical moments, fitted feature scaling, sample autocorrelation, covariance PCA, causal Hidden Markov Models, time-series alignment, and reproducible test fixtures.
+**lvlath** is a pure-Go algorithm engineering library for graphs, flows, dense graph algebra, routing, exact timestamp grids, causal series transforms, fractional PAA, symbolic SAX time-series signatures, stable statistical moments, fitted feature scaling, sample autocorrelation, covariance PCA, causal Hidden Markov Models, version-pinned PCG-DXSM stochastic streams, time-series alignment, and reproducible test fixtures.
 
 It is built for people who need algorithmic tools they can explain in a code review, trust in CI, compose across packages, and debug from deterministic artifacts instead of guessing why an answer changed.
 
@@ -72,6 +72,7 @@ It is built for people who need algorithmic tools they can explain in a code rev
 * `hmm` provides typed categorical and diagonal-Gaussian hidden states with strictly causal filtering, retrospective smoothing, global Viterbi paths, and multi-sequence MAP-EM;
 * `acf` computes scaled direct sample autocorrelation with an explicit common versus lag-adjusted estimator convention and exact available-pair counts;
 * `bootstrap` constructs reproducible dependent-data index ensembles with unbiased bounded integers, checked memory budgets and complete-row cancellation;
+* `rng` supplies local pinned PCG-DXSM128 streams, strict 52-bit open uniforms, cached Box-Muller normals and logical-path replay;
 * flow, MST, TSP, DTW, grid, and builder packages extend the same discipline into optimization, alignment, fixtures, and examples.
 
 ---
@@ -182,6 +183,7 @@ lvlath/
 ├── hmm/                   # categorical/Gaussian HMM, causal filter, smoother, Viterbi, MAP EM
 ├── acf/                   # direct sample ACF, common/lag-adjusted modes, pair counts
 ├── bootstrap/             # versioned Moving/Circular/Stationary block-index ensembles
+├── rng/                   # pinned SHA256LE/PCG-DXSM streams, open uniforms and cached normals
 ├── gridgraph/             # 2D lattice graph generation
 ├── matrix/                # dense graph algebra, stable statistics, pivoted factors and solves
 ├── tsp/                   # tour construction, local search, exact small-instance routing
@@ -205,6 +207,7 @@ lvlath/
 │   ├── HMM.md
 │   ├── ACF.md
 │   ├── BOOTSTRAP.md
+│   ├── RNG.md
 │   ├── PAA.md
 │   ├── SAX.md
 │   ├── GRID_GRAPH.md
@@ -358,29 +361,30 @@ Composition rule:
 
 ## Package roles and strengths
 
-| Package     | What it gives you                                                                                                                               | Concrete strength                                                                                                        | Typical scenario                                                                               |
-|:------------|:------------------------------------------------------------------------------------------------------------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------|:-----------------------------------------------------------------------------------------------|
-| `core`      | Thread-safe in-memory graph with deterministic `Vertices`, `Edges`, and `Neighbors`; explicit directed/weighted/loop/multi/mixed capabilities.  | Prevents unstable map order and invalid topology from leaking into algorithms.                                           | Service maps, routing graphs, dependency graphs, test fixtures.                                |
-| `bfs`       | Unweighted shortest-hop traversal, path reconstruction, weak components, hooks, filters, partial results.                                       | Distinguishes discovery (`Visited`) from processing (`Order`) and preserves useful partial state.                        | Blast radius, dependency waves, crawler frontiers, weak island discovery.                      |
-| `dfs`       | DFS forest, post-order, cycle witnesses, topological sorting, hooks, filters, cancellation.                                                     | Makes finish order explicit and returns deterministic cycle witnesses instead of unstable recursion artifacts.           | Release plans, DAG validation, lock/resource cycle auditing.                                   |
-| `dijkstra`  | Full-SSSP Dijkstra plus target Dijkstra, bidirectional Dijkstra, consistent A*, balanced bidirectional A*.                                      | Deterministic original `EdgeIDs`, detached `PathResult`, exact target cutoff/keys and certified stopping.                | Weighted routing, mixed multigraph logistics, grids, network failover.                         |
-| `mst`       | Prim/Kruskal exact MST/MSF; original-edge KMB graph Steiner approximation; closed/fixed-end tree-edge covering walks.                           | Shared deterministic Kruskal/DSU selection, original IDs, independent tree validation and distinct network/travel costs. | Fiber/chiplet routing backbones, terminal-only connections, inspection walks.                  |
-| `flow`      | Ford-Fulkerson, Edmonds-Karp, and Dinic over `core.Graph`, returning max flow and residual graph.                                               | Preserves residual semantics and supports algorithm selection from simple to high-throughput.                            | Capacity planning, traffic engineering, assignment models, min-cut analysis.                   |
-| `dtw`       | General Dynamic Time Warping, bounded classification, certified exact top-K fixed-length squared-scalar window search.                          | Aligns sequences that share a pattern but differ in speed or local timing.                                               | Sensors, gestures, audio contours, time-series similarity.                                     |
-| `series`    | Exact signed-nanosecond grid checks, causal lag/difference/returns, and complete index windows.                                                 | Detached validity masks, checked integer intervals, and explicit whole-slot gaps without interpolation.                  | Telemetry preparation, causal features, window scheduling, signal-quality gates.               |
-| `paa`       | Fractional PAA with exact, unsimplified rational segment geometry and a correctly rounded final binary64 mean.                                  | Never discards remainder samples or fabricates zeros; results are detached.                                              | SAX preparation, telemetry compression, fixed-dimensional sequence features.                   |
-| `sax`       | Fixed-length symbolic words, pinned Gaussian/custom thresholds, immutable encoders and Euclidean MINDIST.                                       | Right-bin equality, SHA-256 policy identity, detached results; no false DTW pruning claim.                               | Telemetry signatures, approximate candidate ranking, shape-change screening.                   |
-| `ols`       | Full-column-rank least-squares regression, immutable original-unit coefficients and QR diagnostics.                                             | Explicit intercept/scale-only origin policies, rank refusal, training SSE, no heldout refit.                             | CAPM factors, sensor calibration, energy-load forecasting.                                     |
-| `ridge`     | Tikhonov L2 regression with mandatory Lambda>0 and immutable physical-unit inference.                                                           | Stable balanced augmented Householder QR, p>n, duplicated predictors, unpenalized intercept and checked objective.       | Correlated multi-factor hedges, wide optical sensors, seasonal AR(12).                         |
-| `bootstrap` | Reproducible Moving/Circular/Stationary index resampling for dependent series with per-replicate streams and exact bounded integers.            | Detached complete-row results, memory admission and cancellation without interrupted-row publication.                    | Portfolio risk sensitivity, paired serial regression, telemetry alarm calibration.             |
-| `acf`       | Direct fixed-window sample autocorrelation with two explicit denominator conventions and raw/centered origins.                                  | Scaled compensated products, no lag-specific recentering or clipping; caller-owned lag counts.                           | Residual audits, compressor cycles, vibration periodicity, signal pitch.                       |
-| `hmm`       | Typed finite-state categorical and diagonal-Gaussian probability models; causal filtering, smoothing, Viterbi, multi-sequence Baum-Welch.       | Explicit log-domain evidence, immutable model IDs, no future leakage in filtering, no cross-session transition counts.   | Live stress monitoring, machine regimes, independent clickstream sessions.                     |
-| `pca`       | Immutable covariance-based principal components, train-only projection and original-unit reconstruction.                                        | Bounded Jacobi, independent PSD/eigenpair checks, detached loadings and no holdout recentering.                          | Yield-curve factors, turbine residual screening, multichannel telemetry compression.           |
-| `stats`     | Stable scalar mean/variance, mergeable Welford/Chan states, train-only fitted feature standardization.                                          | Exact binary-input mean and scaled second moments, detached fitted metadata, immutable inference without refit.          | Telemetry aggregation, distributed metrics, ML feature preparation, anomaly-score calibration. |
-| `gridgraph` | 2D lattice graph generation with neighborhood and obstacle-style workflows.                                                                     | Avoids manual wiring for pathfinding maps and teaching graphs.                                                           | Grid routing, maps, demos, benchmark fixtures.                                                 |
-| `matrix`    | Dense algebra, graph adapters, scaled covariance/Pearson/L2, pivoted LU/QR, Cholesky, and multi-RHS solves.                                     | Deterministic pivots, detached factors, real condition diagnostics and true residual norms.                              | Graph features, calibration, linear systems and numerical preprocessing.                       |
-| `tsp`       | Tour optimization toolkit: practical approximation/local search/exact small-instance strategies.                                                | Bridges exactness and practicality for route planning.                                                                   | Delivery tours, inspection routes, metric routing experiments.                                 |
-| `builder`   | Deterministic graph and data generators.                                                                                                        | Produces reproducible examples, tests, and benchmarks.                                                                   | Golden tests, performance fixtures, tutorials.                                                 |
+| Package     | What it gives you                                                                                                                              | Concrete strength                                                                                                        | Typical scenario                                                                               |
+|:------------|:-----------------------------------------------------------------------------------------------------------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------|:-----------------------------------------------------------------------------------------------|
+| `core`      | Thread-safe in-memory graph with deterministic `Vertices`, `Edges`, and `Neighbors`; explicit directed/weighted/loop/multi/mixed capabilities. | Prevents unstable map order and invalid topology from leaking into algorithms.                                           | Service maps, routing graphs, dependency graphs, test fixtures.                                |
+| `bfs`       | Unweighted shortest-hop traversal, path reconstruction, weak components, hooks, filters, partial results.                                      | Distinguishes discovery (`Visited`) from processing (`Order`) and preserves useful partial state.                        | Blast radius, dependency waves, crawler frontiers, weak island discovery.                      |
+| `dfs`       | DFS forest, post-order, cycle witnesses, topological sorting, hooks, filters, cancellation.                                                    | Makes finish order explicit and returns deterministic cycle witnesses instead of unstable recursion artifacts.           | Release plans, DAG validation, lock/resource cycle auditing.                                   |
+| `dijkstra`  | Full-SSSP Dijkstra plus target Dijkstra, bidirectional Dijkstra, consistent A*, balanced bidirectional A*.                                     | Deterministic original `EdgeIDs`, detached `PathResult`, exact target cutoff/keys and certified stopping.                | Weighted routing, mixed multigraph logistics, grids, network failover.                         |
+| `mst`       | Prim/Kruskal exact MST/MSF; original-edge KMB graph Steiner approximation; closed/fixed-end tree-edge covering walks.                          | Shared deterministic Kruskal/DSU selection, original IDs, independent tree validation and distinct network/travel costs. | Fiber/chiplet routing backbones, terminal-only connections, inspection walks.                  |
+| `flow`      | Ford-Fulkerson, Edmonds-Karp, and Dinic over `core.Graph`, returning max flow and residual graph.                                              | Preserves residual semantics and supports algorithm selection from simple to high-throughput.                            | Capacity planning, traffic engineering, assignment models, min-cut analysis.                   |
+| `dtw`       | General Dynamic Time Warping, bounded classification, certified exact top-K fixed-length squared-scalar window search.                         | Aligns sequences that share a pattern but differ in speed or local timing.                                               | Sensors, gestures, audio contours, time-series similarity.                                     |
+| `series`    | Exact signed-nanosecond grid checks, causal lag/difference/returns, and complete index windows.                                                | Detached validity masks, checked integer intervals, and explicit whole-slot gaps without interpolation.                  | Telemetry preparation, causal features, window scheduling, signal-quality gates.               |
+| `paa`       | Fractional PAA with exact, unsimplified rational segment geometry and a correctly rounded final binary64 mean.                                 | Never discards remainder samples or fabricates zeros; results are detached.                                              | SAX preparation, telemetry compression, fixed-dimensional sequence features.                   |
+| `sax`       | Fixed-length symbolic words, pinned Gaussian/custom thresholds, immutable encoders and Euclidean MINDIST.                                      | Right-bin equality, SHA-256 policy identity, detached results; no false DTW pruning claim.                               | Telemetry signatures, approximate candidate ranking, shape-change screening.                   |
+| `ols`       | Full-column-rank least-squares regression, immutable original-unit coefficients and QR diagnostics.                                            | Explicit intercept/scale-only origin policies, rank refusal, training SSE, no heldout refit.                             | CAPM factors, sensor calibration, energy-load forecasting.                                     |
+| `ridge`     | Tikhonov L2 regression with mandatory Lambda>0 and immutable physical-unit inference.                                                          | Stable balanced augmented Householder QR, p>n, duplicated predictors, unpenalized intercept and checked objective.       | Correlated multi-factor hedges, wide optical sensors, seasonal AR(12).                         |
+| `rng`       | Version-pinned SHA-256/PCG-DXSM128/64 streams, strict uniform midpoints, cached Box-Muller normals and batch facades.                          | Immutable factory, logical path isolation, no hot-loop allocation and exact raw consumption.                             | Monte Carlo paths, risk simulation, sensor fault injection, repeatable stress experiments.     |
+| `bootstrap` | Reproducible Moving/Circular/Stationary index resampling for dependent series with per-replicate streams and exact bounded integers.           | Detached complete-row results, memory admission and cancellation without interrupted-row publication.                    | Portfolio risk sensitivity, paired serial regression, telemetry alarm calibration.             |
+| `acf`       | Direct fixed-window sample autocorrelation with two explicit denominator conventions and raw/centered origins.                                 | Scaled compensated products, no lag-specific recentering or clipping; caller-owned lag counts.                           | Residual audits, compressor cycles, vibration periodicity, signal pitch.                       |
+| `hmm`       | Typed finite-state categorical and diagonal-Gaussian probability models; causal filtering, smoothing, Viterbi, multi-sequence Baum-Welch.      | Explicit log-domain evidence, immutable model IDs, no future leakage in filtering, no cross-session transition counts.   | Live stress monitoring, machine regimes, independent clickstream sessions.                     |
+| `pca`       | Immutable covariance-based principal components, train-only projection and original-unit reconstruction.                                       | Bounded Jacobi, independent PSD/eigenpair checks, detached loadings and no holdout recentering.                          | Yield-curve factors, turbine residual screening, multichannel telemetry compression.           |
+| `stats`     | Stable scalar mean/variance, mergeable Welford/Chan states, train-only fitted feature standardization.                                         | Exact binary-input mean and scaled second moments, detached fitted metadata, immutable inference without refit.          | Telemetry aggregation, distributed metrics, ML feature preparation, anomaly-score calibration. |
+| `gridgraph` | 2D lattice graph generation with neighborhood and obstacle-style workflows.                                                                    | Avoids manual wiring for pathfinding maps and teaching graphs.                                                           | Grid routing, maps, demos, benchmark fixtures.                                                 |
+| `matrix`    | Dense algebra, graph adapters, scaled covariance/Pearson/L2, pivoted LU/QR, Cholesky, and multi-RHS solves.                                    | Deterministic pivots, detached factors, real condition diagnostics and true residual norms.                              | Graph features, calibration, linear systems and numerical preprocessing.                       |
+| `tsp`       | Tour optimization toolkit: practical approximation/local search/exact small-instance strategies.                                               | Bridges exactness and practicality for route planning.                                                                   | Delivery tours, inspection routes, metric routing experiments.                                 |
+| `builder`   | Deterministic graph and data generators.                                                                                                       | Produces reproducible examples, tests, and benchmarks.                                                                   | Golden tests, performance fixtures, tutorials.                                                 |
 
 
 ### Series: grid validation before causal features
@@ -1059,6 +1063,66 @@ synthetic and deterministic, not certified live market or plant measurements.
 
 ---
 
+### RNG: pinned stochastic streams, not process-global randomness
+
+`github.com/lvlath/go/rng` is the shared **numeric stream protocol** for
+reproducible Monte Carlo and fault-injection experiments. It uses an immutable
+`Factory`, a fresh single-owner `RNG` per logical trajectory and pinned
+`pcg-dxsm128-sha256le-u52-boxmuller-v1` seed/draw semantics. It is **not** a
+cryptographic PRNG, independence proof, stochastic model or replacement for
+`bootstrap.SampleIndices` without a separately accepted migration.
+
+| Need                           | Public API                                                             | Contract                                                     |
+|--------------------------------|------------------------------------------------------------------------|--------------------------------------------------------------|
+| Persistent stream for one path | `rng.NewFactory().Stream(seed,pathID)` or `rng.NewStream(seed,pathID)` | One fresh mutable object, one goroutine owner                |
+| Strict open uniform            | `stream.UniformOpen()`                                                 | One raw word, `2^-53 ≤ U ≤ 1−2^-53`                          |
+| Standard-normal shock          | `stream.Normal()`                                                      | Box-Muller cosine first; sine spare cached                   |
+| Caller-owned random vectors    | `factory.FillUint64`, `FillUniformOpen`, `FillNormal`                  | New stream per batch call; writes ascending indices          |
+| Exact conversion test          | `rng.UniformOpenFromUint64(raw)`                                       | Pure raw-word mapping, including forced endpoints            |
+| Replay identity                | `factory.Version()`                                                    | Pin with seed, logical pathID, input revision and math model |
+
+```go
+package main
+
+import (
+    "fmt"
+    "math"
+
+    "github.com/lvlath/go/rng"
+)
+
+func main() {
+    factory := rng.NewFactory()
+    path := factory.Stream(0, 42) // Seed zero and logical path 42 are valid.
+    shock := path.Normal()
+    eventCode := path.Uint64()     // Raw draw preserves a pending Gaussian spare.
+    secondShock := path.Normal()   // Returns cached sine with no additional raw draw.
+
+    fmt.Println("finite shocks:", !math.IsNaN(shock) && !math.IsNaN(secondShock))
+    fmt.Printf("maintenance-event-code: %02x\n", byte(eventCode))
+    fmt.Println("version:", factory.Version())
+    // Output:
+    // finite shocks: true
+    // maintenance-event-code: ea
+    // version: pcg-dxsm128-sha256le-u52-boxmuller-v1
+}
+```
+
+One nontrivial simulation should use `pathID` as the **logical sample number**.
+Do not seed by worker ID, share a mutable stream between workers, or reduce
+concurrent worker-local floats in completion order. Store one result per logical
+path and reduce in ascending index order. Factory is concurrent-safe; RNG is not.
+
+For six executable operational examples (fulfillment-load stress, GBM option
+pricing, circular-latency blocks, industrial temperature sensor faults, Gaussian
+cache interleaving and six-channel batch telemetry), see
+[`rng/example_test.go`](../../../Downloads/lvlath_rng_phase20_v2/rng/example_test.go). Run the standalone 100,000-path
+Monte Carlo scenario with `go run ./examples/rng`. The complete proof,
+consumption table and integration restrictions are in [`docs/RNG.md`](docs/RNG.md)
+and [`rng/doc.go`](../../../Downloads/lvlath_rng_phase20_v2/rng/doc.go).
+
+---
+
 ### HMM: causal regime filtering, retrospective smoothing and reproducible EM
 
 `github.com/lvlath/go/hmm` models **hidden operating regimes** behind categorical events or finite multichannel telemetry. Its two immutable model families share the same transition mathematics but have distinct, typed observation contracts:
@@ -1122,6 +1186,7 @@ See [`docs/HMM.md`](docs/HMM.md) for formal log-domain equations, EM counts and 
 | Fractional PAA            | [`docs/PAA.md`](docs/PAA.md)                 | Exact step-function geometry, output ownership, nearest-even arithmetic, wrappers and integration.                              |
 | Symbolic SAX              | [`docs/SAX.md`](docs/SAX.md)                 | Canonical words, Euclidean MINDIST proof, versioned identity, errors and false-DTW-pruning counterexample.                      |
 | Series primitives         | [`docs/SERIES.md`](docs/SERIES.md)           | Exact integer grids, causal transforms, result masks, numeric safeguards, index windows.                                        |
+| Deterministic RNG streams | [`docs/RNG.md`](docs/RNG.md)                 | Pinned PCG-DXSM128/64, SHA-256 state mapping, strict uniform, Gaussian spare and replay.                                        |
 | Stable statistics         | [`docs/STATS.md`](docs/STATS.md)             | Welford/Chan, exact mean sum, scaled M2, fitted scaling, sentinels, immutable inference.                                        |
 | Stable Ridge regression   | [`docs/RIDGE.md`](docs/RIDGE.md)             | Positive-Lambda augmented QR, strict intercept policy, wide/collinear designs, nonzero tiny coefficients and frozen prediction. |
 | Dependent index bootstrap | [`docs/BOOTSTRAP.md`](docs/BOOTSTRAP.md)     | Moving/Circular/Stationary laws, exact integer mapping, replay, budget and partial rows.                                        |
@@ -1688,6 +1753,7 @@ incidence matrix:       columns are edge identities, not vertex-pair weights
 | "How do I solve TSP from graph topology?"                                           | `tsp.SolveGraph`                                                   | Graph is adapted at the facade boundary, then solved as a matrix problem.                    |
 | "How do I get exact TSP for a small instance?"                                      | `tsp.ExactHeldKarp` / `tsp.BranchAndBound` policy                  | Exactness is explicit and guarded.                                                           |
 | "How do I get a metric symmetric approximation?"                                    | `tsp.Christofides` + `tsp.BlossomMatch`                            | The `1.5` ratio requires exact matching and metric assumptions.                              |
+| "How do I create reproducible stochastic simulation paths?"                         | `rng.NewFactory().Stream(seed, pathID)`                            | PCG-DXSM pinned streams; logical path IDs, never worker IDs.                                 |
 | "How do I build repeatable graphs?"                                                 | `builder` / `gridgraph`                                            | Generated fixtures should be deterministic.                                                  |
 
 ### By failure mode you need to avoid
@@ -1713,6 +1779,7 @@ incidence matrix:       columns are edge identities, not vertex-pair weights
 | Euclidean SAX MINDIST incorrectly used to prune DTW                   | Do not prune; the two distance objectives differ and a positive MINDIST may accompany zero DTW.          |
 | LagAdjusted clipped to [-1,1] or treated as Toeplitz PSD              | Preserve the estimator convention; use CommonDenominator for exact-arithmetic PSD compatibility.         |
 | Block-bootstrap path silently replaced by IID modulo-biased shuffling | `bootstrap` uses exact rejection, explicit block topology, per-replicate streams and versioned metadata. |
+| Worker-tied seeds or shared mutable pseudo-random streams             | Use `rng.Factory.Stream(seed,uint64(logicalPath))` and reduce path results by stable index.              |
 | Full-window ACF mistaken for a causal streaming feature               | Fit only a fixed permitted window; appending observations can revise every lag.                          |
 | Warmup zero mistaken for a computed zero                              | `series.TransformResult.Valid` marks computed cells; retain it with `Values`.                            |
 | DTW over-warps a signal                                               | Use window and slope penalty deliberately.                                                               |

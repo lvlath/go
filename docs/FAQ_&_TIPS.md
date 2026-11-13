@@ -66,6 +66,7 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
     13e. [HMM FAQ](#13e-hmm-faq--causal-regimes-smoothing-decoding-and-em)
     13f. [ACF FAQ](#13f-acf-faq--estimators-scaled-numerics-and-fixed-windows)
     13g. [Bootstrap FAQ](#13g-bootstrap-faq--dependent-data-blocks-replay-and-safe-partial-results)
+    13h. [RNG FAQ](#13h-rng-faq-replay-ownership-and-numeric-safety)
 14. [Builder and gridgraph tips](#14-builder-and-gridgraph-tips)
 15. [Errors and diagnostics](#15-errors-and-diagnostics)
 16. [Determinism and concurrency](#16-determinism-and-concurrency)
@@ -103,6 +104,7 @@ Start with the question, not the algorithm name.
 | “How do I estimate linear factor coefficients and reuse them?”               | `ols`                     | Full-rank QR, original-unit beta/intercept, immutable prediction.                     |
 | “How do I fit correlated or wide linear factors with explicit L2 shrinkage?” | `ridge`                   | Augmented QR, positive Lambda, unpenalized intercept and frozen physical predictions. |
 | “What serial dependence or cycle repeats at a fixed sample-index lag?”       | `acf`                     | One full-window mean, explicit denominator, exact pair counts.                        |
+| “How do I build deterministic Monte Carlo, GBM or sensor-noise paths?”       | `rng.Factory.Stream`      | Pinned PCG-DXSM, logical path IDs and cached normals; not a cryptographic PRNG.       |
 | “How do I build dependent-data bootstrap index ensembles?”                   | `bootstrap.SampleIndices` | Moving/Circular/Stationary blocks, replay ID and only complete rows.                  |
 | “How do I infer a hidden operating regime from time-ordered observations?”   | `hmm`                     | Typed causal filtering, smoothing, Viterbi, and independent-sequence EM.              |
 | “How do I reduce multivariate dimensions without a response variable?”       | `pca`                     | Validated covariance spectrum and a frozen loadings model for holdout inference.      |
@@ -2397,6 +2399,141 @@ review with source-risk estimates and replay metadata.
 For the exact laws and all limitations, read [`BOOTSTRAP.md`](BOOTSTRAP.md)
 and [`../bootstrap/doc.go`](../bootstrap/doc.go). These examples do not claim
 to be live financial or certified industrial measurements.
+
+---
+
+## 13h. RNG FAQ: replay, ownership and numeric safety
+
+### Q13h.1. Why does lvlath need a dedicated `rng` package?
+
+A simulation using an unpinned standard-library or process-global PRNG may
+change when a toolchain changes, or when a different number of worker goroutines
+consumes values in a different order. `rng` fixes the integer recurrence,
+SHA-derived initial state and transformation/consumption rules behind an immutable
+factory. The goal is reproducible **numerical experiments**, not random secrets.
+
+### Q13h.2. What do `seed` and `pathID` mean, and can I use zero?
+
+Both are unrestricted `uint64`. `seed=0` is a fully valid, reproducible seed.
+`pathID` is the logical trajectory, bootstrap replication, sensor session or
+Monte Carlo sample number. It must **not** be a goroutine ID, physical worker
+slot or CPU number; those are scheduler details, not experiment identity.
+
+```go
+factory := rng.NewFactory()
+first := factory.Stream(0, 42)
+replay := factory.Stream(0, 42)
+fmt.Println(first.Uint64() == replay.Uint64()) // true
+```
+
+### Q13h.3. Is `Factory` thread-safe? Is `RNG` thread-safe?
+
+`Factory` is stateless and safe for simultaneous calls, including a nil or
+zero-value receiver. Each returned stream is an independent **mutable**
+object; concurrent calls on the same stream are unsupported. Use one stream
+per logical trial and write each trial's result to a disjoint output index.
+
+### Q13h.4. What does `Version()` actually protect?
+
+It returns `pcg-dxsm128-sha256le-u52-boxmuller-v1` and identifies the
+pinned raw state recurrence, seed encoding, 52-bit uniform conversion and
+cosine-first cached Box-Muller protocol. Persist this alongside the seed,
+logical path mapping, input dataset revision, model parameters and reduction
+order. A bare seed is insufficient for a long-term reproducibility record.
+
+### Q13h.5. Does SHA-256 guarantee independent or disjoint streams?
+
+No. SHA-256 derives reproducible starting states from a fixed 38-byte
+preimage, but independent/disjoint PCG subsequences are not mathematically
+certified by hashing. Statistical acceptance and model assumptions belong to
+the consuming experiment.
+
+### Q13h.6. Why exactly 52 bits for `UniformOpen`?
+
+The 52-bit midpoint conversion has the **exact** interval
+`[2^-53,1-2^-53]` in binary64. It therefore never returns `0` or `1`.
+Using the analogous 53-bit midpoint conversion can round the maximum code to
+**exactly `1.0`**. `UniformOpenFromUint64(0)` and
+`UniformOpenFromUint64(^uint64(0))` expose the two endpoint cases to black-box
+tests without inventing test-only production hooks.
+
+### Q13h.7. Can I call `Uint64()` between two `Normal()` calls?
+
+Yes, and its effect is defined. On the first `Normal`, two uniforms are
+consumed and the sine half is cached. An intervening `Uint64()` consumes one
+raw word but **does not** invalidate the spare. The next `Normal` returns the
+cached sine, consuming zero raw words. Thus `Normal -> Uint64 -> Normal`
+consumes precisely **three** raw draws. `UniformOpen` interleaving has the
+same cache-preservation rule.
+
+### Q13h.8. Why does `FillNormal` not continue the previous batch?
+
+Every `FillNormal(seed,pathID,dst)` creates a **new** stream, fills its caller-
+owned buffer, and then discards that temporary state. For an odd length, the
+unused second normal from the final pair disappears with the stream. To
+continue across chunks, retain one `RNG` and call `Normal()` repeatedly.
+`FillUint64` and `FillUniformOpen` follow the same fresh-stream-per-call rule.
+
+### Q13h.9. What does `Factory.IsNil()` mean? Where is `rng.Result`?
+
+`Factory.IsNil()` reports whether the pointer is nil. A nil factory is still
+fully functional because Stream/Version do not dereference it. The private
+stream supports optional `IsNil()` without adding it to the three-method
+`RNG` interface, keeping custom stream implementations compatible. The
+package produces mutable streams, **not** a successful/partial `Result`
+artifact; inventing `Result` or Options would violate the narrow ABI.
+
+### Q13h.10. Are the RNG outputs cryptographically secure?
+
+No. PCG-DXSM is for fast deterministic numerical draws; SHA-256 for state
+derivation does not make the resulting PCG bitstream secure. Use
+`crypto/rand` directly for keys, salts, tokens and security-sensitive
+randomness in an appropriate application layer.
+
+### Q13h.11. Does an unchanged path guarantee a bit-identical final Monte Carlo price?
+
+Not by itself. If workers add partial float64 totals in completion order,
+non-associativity can change the last bits. Publish `payoffs[path]` into a
+disjoint slot, join workers, then reduce by ascending path index. Also keep
+model parameters, draw-call order and the platform's math implementation in
+scope: normal transcendental last bits are not universally portable.
+
+### Q13h.12. Can I sample arbitrary block starts using `Uint64()%n`?
+
+Not if unbiased integer sampling is required. Modulo is biased when `n` does
+not divide `2^64`. The RNG examples use a **32-element** population, where
+masking the low five bits is exactly unbiased. For arbitrary lengths, use a
+correctly tested rejection sampler; the existing `bootstrap` package already
+owns its own index and replay contract. `rng` does not introduce a separate
+bounded-integer API in this revision.
+
+### Q13h.13. Does this package already change `bootstrap.SampleIndices`?
+
+No consumer migration is implied by delivering `rng`. The existing bootstrap
+contract has index laws, cancellation semantics and a published `Result.RNG`
+replay identifier. Changing its stream provider requires a **separate**
+source-level compatibility audit and golden-vector decision; silently changing
+its historical replicated indices would be a breaking change.
+
+### Q13h.14. How do I validate the package efficiently?
+
+Use fixed goldens for SHA/state/raw words; independent `math/big.Int` unsigned
+128-bit arithmetic; direct forced endpoint values; exact Box-Muller
+consumption/cache tests; fixed indexed path-order permutations; the race
+detector on simultaneous **factory** usage; and allocation tests on a single
+stream's draw loop. A million-value fixed-seed moment smoke is useful but
+cannot certify the distribution or cryptographic strength.
+
+```bash
+go test ./rng -count=1
+go test ./rng -race -count=1
+go test ./rng -cover -count=1
+go test -run '^$' -bench . -benchmem ./rng
+```
+
+For full code, six executable operational examples and mathematical proofs,
+see [`RNG.md`](RNG.md), [`rng/doc.go`](../../../../Downloads/lvlath_rng_phase20_v2/rng/doc.go) and
+[`rng/example_test.go`](../../../../Downloads/lvlath_rng_phase20_v2/rng/example_test.go).
 
 ---
 

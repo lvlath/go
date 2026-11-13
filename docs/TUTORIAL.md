@@ -25,7 +25,7 @@
 
 > **hard math on an easy level**
 
-Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fixed-window autocorrelation, reproducible block-bootstrap indices, fitted feature scaling, covariance PCA, and time-series alignment.
+Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fixed-window autocorrelation, reproducible block-bootstrap indices, version-pinned RNG streams, fitted feature scaling, covariance PCA, and time-series alignment.
 
 This tutorial is the beginning of the learning path. It introduces the objects and ideas that most packages share: graphs, matrices, options, result artifacts, error contracts, and deterministic algorithm execution.
 
@@ -53,6 +53,7 @@ This tutorial is the beginning of the learning path. It introduces the objects a
     11f. [HMM Foundations: Causal Hidden-State Filtering and Independent-Sequence Learning](#11f-hmm-foundations-causal-hidden-state-filtering-and-independent-sequence-learning)
     11g. [ACF Foundations: Fixed-Window Serial Dependence and Estimator Conventions](#11g-acf-foundations-fixed-window-serial-dependence-and-estimator-conventions)
     11h. [Bootstrap Foundations: Reproducible Dependent-Data Index Ensembles](#11h-bootstrap-foundations-reproducible-dependent-data-index-ensembles)
+    11i. [RNG Foundations: Version-Pinned Stochastic Streams](#11i-rng-foundations-version-pinned-stochastic-streams)
 12. [Algorithm Selection Guide](#12-algorithm-selection-guide)
 13. [Professional Best Practices](#13-professional-best-practices)
 14. [Where To Go Next](#14-where-to-go-next)
@@ -87,6 +88,7 @@ The library covers:
 * `hmm` typed categorical/diagonal-Gaussian hidden-state models, causal filtering, noncausal smoothing, Viterbi, and independent-sequence MAP-EM;
 * `acf` scaled direct sample autocorrelation, explicit common versus pair-adjusted denominators, and detached per-lag pair counts;
 * `bootstrap` reproducible Moving, Circular and Stationary block-index ensembles with per-replicate RNG streams and atomic row publication;
+* `rng` local pinned PCG-DXSM streams with SHA-256 seed derivation, strictly open uniforms and cached Box-Muller normals;
 * `paa` exact fractional time-series compression, rational segment boundaries and value-only feature projection;
 * `sax` symbolic words from fractional PAA and compatible Euclidean MINDIST (not a DTW lower bound);
 * `tsp` matrix-backed tour optimization with exact, approximate, matching, and local-search regimes;
@@ -109,8 +111,9 @@ dense operator             *matrix.Dense               row-major numeric artifac
 warping alignment          *dtw.Result                 distance, reachability, path
 causal sample transform    *series.TransformResult     detached Values + Valid mask
 timestamp-grid inspection  *series.ValidationResult    exact cadence / missing slots
-dependent index ensembles  *bootstrap.Result          detached complete rows / RNG replay revision
-sample autocorrelation     *acf.Result                fixed-window lag coefficients / pair counts
+dependent index ensembles  *bootstrap.Result           detached complete rows / RNG replay revision
+versioned stochastic path   rng.RNG                    mutable PCG-DXSM draw stream, owned by one goroutine
+sample autocorrelation     *acf.Result                 fixed-window lag coefficients / pair counts
 streaming statistics       *stats.Summary              exact-binary-input mean / scaled variance
 train-only scaling         *stats.ScaleFitResult       detached fit metadata / immutable model
 full-rank regression       *ols.FitResult              physical beta / intercept / rank / SSE / QR condition
@@ -199,7 +202,8 @@ Read these files as a learning path. `doc.go` files define implemented package c
 | 8f   | [`PCA.md`](PCA.md)                         | Strict covariance eigenanalysis, train-only latent factors, reconstruction residuals and solver limitations.                |
 | 8g   | [`HMM.md`](HMM.md)                         | Typed hidden-state models, strict online causal filtering, retrospective smoothing, Viterbi, independent-sequence EM.       |
 | 8h   | [`ACF.md`](ACF.md)                         | Direct sample ACF, common/pair-adjusted estimators, Toeplitz PSD limits, scaled arithmetic and independent oracle.          |
-| 8i   | [`BOOTSTRAP.md`](BOOTSTRAP.md)              | Three block-index laws, unbiased integers, replay, resource admission and partial cancellation.                                 |
+| 8i   | [`BOOTSTRAP.md`](BOOTSTRAP.md)             | Three block-index laws, unbiased integers, replay, resource admission and partial cancellation.                             |
+| 8j   | [`RNG.md`](RNG.md)                         | PCG-DXSM128/64 streams, open uniforms, Box-Muller spare protocol, logical paths and replay.                                 |
 | 9    | [`DTW.md`](DTW.md)                         | `Align`, `AlignCostMatrix`, `AlignMatrix`, `AlignBounded`, exact `Search`, numeric and path artifacts.                      |
 | 9a   | [`DTW_SEARCH.md`](DTW_SEARCH.md)           | Fixed-length exact top-K, certified LB_Keogh, workers, budgets, and partial-result law.                                     |
 | 10   | [`TSP.md`](TSP.md)                         | Matrix-backed tours, exact regimes, Christofides, Blossom matching, local search, timeouts.                                 |
@@ -227,6 +231,7 @@ Working on numeric/time-series workflows:
   SERIES -> STATS -> HMM.FilterStep -> online regime monitoring (no future data)
   SERIES -> ACF.ComputeDefault -> fixed-window lag diagnostics (NOT causal)
   SERIES -> BOOTSTRAP.SampleIndices -> paired matrix/return/sensor resamples -> caller estimators
+  RNG.Stream(seed, logicalPath) -> Monte Carlo / fault injection -> indexed reduction
   OLS/RIDGE residual window -> ACF -> investigate serial dependence (NOT a p-value)
   MATRICES -> HMM.Smooth / Decode -> offline incident reconstruction
   SAX (Euclidean screening) != DTW (nonlinear alignment)
@@ -2447,11 +2452,13 @@ be interpreted as equally spaced and jointly sampled.
 
 ### 11h.3. Reproducibility and bounded memory
 
-The output row at replicate `r` is generated from
-`rng.Factory.Stream(Seed, uint64(r))`. Its index path does not depend on the
-total requested replicate count or worker scheduling. `Seed=0` is valid.
-A versioned `Result.RNG` identifies the factory and the bootstrap mapping
-revision; store it with the complete `Plan` and source-data provenance.
+The output row at replicate `r` is generated by the bootstrap package's
+versioned replicate-local RNG using `Seed` and the **logical** replicate index.
+Its index path does not depend on worker scheduling. `Seed=0` is valid.
+`Result.RNG` identifies the actual generator and block-index mapping revision;
+store it with the complete `Plan` and source-data provenance. The standalone
+`rng.Factory.Stream` contract described next does not, by itself, establish
+that an existing bootstrap implementation has migrated to that backend.
 An unsuffixed seed alone is insufficient for long-term replay.
 
 Integer selection uses rejection sampling to avoid modulo bias. In particular,
@@ -2517,6 +2524,146 @@ and the five executable examples in [`../bootstrap/example_test.go`](../bootstra
 
 ---
 
+## 11i. RNG Foundations: Version-Pinned Stochastic Streams
+
+`rng` is the small, deterministic **source of numerical draws**, not a simulator
+or cryptographic key generator. It replaces ad hoc local PRNGs when an
+application needs repeatable paths under a stable algorithm revision. The
+public `RNG` interface intentionally has only `Uint64`, `UniformOpen` and
+`Normal`; a `Factory` creates distinct mutable streams for logical trials.
+
+### 11i.1. The identity of a random experiment
+
+The exact replay identity is more than a single seed:
+
+```text
+RNG algorithm version
+       + experiment seed
+       + logical sample/trajectory pathID
+       + ordered draw calls (Uint64 / UniformOpen / Normal)
+       + physical model parameters and input revision
+       + deterministic output reduction order
+       = reproducible numerical experiment (within platform math limits)
+```
+
+The canonical version is
+`pcg-dxsm128-sha256le-u52-boxmuller-v1`. A factory is immutable, including
+its nil receiver, and safe for concurrent use. A returned stream is **mutable
+and single-owner**. Using worker indexes as `pathID` would bind random samples
+to a scheduling decision instead of a logical trial and is therefore wrong.
+
+### 11i.2. What happens to each draw?
+
+```text
+(seed, logical pathID)
+        |
+SHA256("lvlath/rng/pcg-dxsm-v1" || LE64(seed) || LE64(pathID))
+        |
+  128-bit starting state
+        |
+ S'=(S*M+C) mod 2^128       <-- state is advanced BEFORE output
+        |
+     DXSM 64-bit output
+        |
+        +---------------------------+
+        |                           |
+     Uint64()                 UniformOpen()
+     raw word                 top 52 bits, exact midpoint
+        |                           |
+        |                  [2^-53, 1-2^-53] inside (0,1)
+        |                           |
+        |                  Normal() on cache miss:
+        |                       2 open uniforms
+        |                       cosine returned, sine saved
+        |                  Normal() on cache hit:
+        |                       sine returned, 0 raw words
+        +---------------------------+
+```
+
+A 53-bit midpoint conversion is unsafe: the largest code can round to `1.0`.
+The specified 52-bit conversion exactly excludes both endpoints. `Normal`
+retains its spare even if `Uint64()` or `UniformOpen()` runs in between.
+
+### 11i.3. A complete replayable multi-sensor example
+
+A predictive-maintenance service precomputes 256 synthetic measurement errors
+for each of six sensor channels. The output is owned by the caller and can be
+replayed with a different worker schedule without renumbering channels.
+
+```go
+package main
+
+import (
+    "fmt"
+    "math"
+
+    "github.com/lvlath/go/rng"
+)
+
+func main() {
+    const channels, samples = 6, 256
+    factory := rng.NewFactory()
+    histories := make([][]float64, channels)
+    identical := true
+
+    for channel := 0; channel < channels; channel++ {
+        histories[channel] = make([]float64, samples)
+        factory.FillNormal(0, uint64(channel), histories[channel])
+
+        // This replay owns a fresh stream with the identical logical pathID.
+        stream := factory.Stream(0, uint64(channel))
+        for _, value := range histories[channel] {
+            expected := stream.Normal()
+            identical = identical &&
+                math.Float64bits(value) == math.Float64bits(expected)
+        }
+    }
+
+    fmt.Println("channel histories:", len(histories))
+    fmt.Println("bitwise batch/stream replay:", identical)
+    // Output:
+    // channel histories: 6
+    // bitwise batch/stream replay: true
+}
+```
+
+The batch wrapper starts a **fresh stream per call**. For continuing a long
+path across chunks, retain a single `RNG` and call `Normal()` directly; an
+odd-sized `FillNormal` would otherwise discard the pending spare at its end.
+
+### 11i.4. Parallel Monte Carlo without accidental nondeterminism
+
+A GBM/European-call Monte Carlo pipeline should assign `pathID = uint64(path)`
+to each simulation, write `payoff[path]`, join workers, and sum payoffs by
+ascending path index. It must **not** sum worker-local floating-point totals
+in completion order, which is non-associative and can vary at the last bit.
+
+Run the [100,000-path standalone scenario](../examples/rng/main.go):
+
+```bash
+go run ./examples/rng
+```
+
+The application owns GBM parameters, dividends, discretization and option
+valuation; `rng` owns only draw generation. The executable
+[`rng/example_test.go`](../rng/example_test.go) additionally exercises
+fulfillment demand stress, latency-block resampling, industrial sensor
+faults, Gaussian spare interleaving, and caller-owned vector fills.
+
+### 11i.5. What `rng` intentionally does not claim
+
+* No **cryptographic security**: SHA-256 initializes PCG but does not secure its output.
+* No proof that SHA-derived streams are mathematically independent or non-overlapping.
+* No last-bit portability promise for `math.Log`, `math.Sin`, `math.Cos` or derived normals across platforms.
+* No `Result`, `Options`, `Snapshot`, reseed or bounded-integer sampling API in this revision.
+* No assumption that already-released bootstrap index sequences can be replaced without an explicit consumer version and golden-vector migration.
+
+For the complete 128-bit arithmetic derivation, SHA-256 byte layout, exact
+endpoint proof, call-consumption table and benchmarks, read [`RNG.md`](RNG.md)
+and [`rng/doc.go`](../rng/doc.go).
+
+---
+
 ## 12. Algorithm Selection Guide
 
 ### If the input is a graph
@@ -2566,6 +2713,7 @@ and the five executable examples in [`../bootstrap/example_test.go`](../bootstra
 | Fixed-alphabet symbolic window encoding            | `sax.Encode` / `sax.Encoder.Encode`           | Detached symbol word, policy identity and optional transformed PAA.                        |
 | Compatible Euclidean symbolic lower bound          | `sax.Encoder.Mindist` / `sax.MindistValues`   | Lower-bound dissimilarity in the selected transformed space, never a general DTW bound.    |
 | Direct sample ACF by integer lag                   | `acf.ComputeDefault` / `acf.Compute`          | One fitted window, explicit denominator convention and pair counts; not causal streaming.  |
+| Reproducible stochastic simulation paths           | `rng.NewFactory().Stream` / `rng.NewStream`    | Pinned PCG-DXSM, logical path IDs, one goroutine owner per stream.                           |
 | Complete fixed index windows                       | `series.WindowRanges`                         | ordered half-open sample-index intervals.                                                  |
 | Hidden-state streaming causal filtering            | `hmm.FilterStep` / `FilterDefault`            | P(z_t given observations through t), no future-sample leakage.                             |
 | Retrospective hidden-state attribution             | `hmm.Smooth` / `hmm.Decode`                   | Full-sequence state marginals vs one optimal joint path; different contracts.              |
