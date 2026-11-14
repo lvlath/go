@@ -264,3 +264,239 @@ func TestOLS_OverflowSSERejected(t *testing.T) {
 	}
 	mustErrorIs(t, err, ols.ErrOverflow)
 }
+
+// TestOLSPredictLostSmallTerm protects the small term that sequential
+// multiply-add destroys between two large, cancelling terms.
+func TestOLSPredictLostSmallTerm(t *testing.T) {
+	x := mustDense(t, [][]float64{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}})
+	fit, err := ols.FitThroughOrigin(context.Background(), x, []float64{1, 1, 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	beta, intercept := fit.Model.Coefficients()
+	if intercept != 0 || math.Signbit(intercept) || beta[0] != 1 || beta[1] != 1 || beta[2] != 1 {
+		t.Fatalf("identity fit altered exact model: beta=%v intercept=%g", beta, intercept)
+	}
+	row := []float64{1e16, 1, -1e16}
+	out, err := fit.Model.Predict(context.Background(), mustDense(t, [][]float64{row}))
+	if err != nil || len(out) != 1 || out[0] != 1 {
+		t.Fatalf("lost-small-term prediction=%v, err=%v, want [1]", out, err)
+	}
+}
+
+// TestOLSPredictRepresentableCancellation rejects an intermediate
+// overflow as a reason to discard a representable final affine response.
+func TestOLSPredictRepresentableCancellation(t *testing.T) {
+	x := mustDense(t, [][]float64{{1, 0}, {0, 1}})
+	fit, err := ols.FitThroughOrigin(context.Background(), x, []float64{10, -10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	beta, _ := fit.Model.Coefficients()
+	if beta[0] != 10 || beta[1] != -10 {
+		t.Fatalf("identity model did not recover exact slopes: %v", beta)
+	}
+	row := []float64{math.MaxFloat64, math.MaxFloat64}
+	out, err := fit.Model.Predict(context.Background(), mustDense(t, [][]float64{row}))
+	if err != nil || len(out) != 1 || out[0] != 0 {
+		t.Fatalf("false overflow: prediction=%v, err=%v, want [0]", out, err)
+	}
+}
+
+// TestOLSPredictSubnormalProductCarry verifies that individually
+// unrepresentable half-subnormal products are combined before rounding.
+func TestOLSPredictSubnormalProductCarry(t *testing.T) {
+	fit, err := ols.FitThroughOrigin(context.Background(),
+		mustDense(t, [][]float64{{1, 0}, {0, 1}}), []float64{0.5, 0.5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := []float64{math.SmallestNonzeroFloat64, math.SmallestNonzeroFloat64}
+	out, err := fit.Model.Predict(context.Background(), mustDense(t, [][]float64{row}))
+	if err != nil || len(out) != 1 || out[0] != math.SmallestNonzeroFloat64 {
+		t.Fatalf("subnormal terms lost: prediction=%v, err=%v", out, err)
+	}
+}
+
+// TestOLSPredictNonzeroInterceptOracle retains the fitted affine offset
+// in the same exact sum as its numerically hostile feature products.
+func TestOLSPredictNonzeroInterceptOracle(t *testing.T) {
+	train := make([][]float64, 0, 8)
+	y := make([]float64, 0, 8)
+	for a := -1.0; a <= 1; a += 2 {
+		for b := -1.0; b <= 1; b += 2 {
+			for c := -1.0; c <= 1; c += 2 {
+				train = append(train, []float64{a, b, c})
+				y = append(y, 3+a+b+c)
+			}
+		}
+	}
+	fit, err := ols.FitDefault(context.Background(), mustDense(t, train), y)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scenarios := [][]float64{
+		{1e16, 1, -1e16},
+		{-1e16, 1e16, 1},
+		{math.MaxFloat64, -math.MaxFloat64, 2},
+		{0.5, -1.5, 3.25},
+	}
+	out, err := fit.Model.Predict(context.Background(), mustDense(t, scenarios))
+	if err != nil {
+		t.Fatalf("representable oracle predictions rejected: %v", err)
+	}
+	for index, row := range scenarios {
+		want := exactOLSResponse(t, fit.Model, row)
+		if out[index] != want {
+			// The compensated path is an approximation; require a small ULP budget
+			// only when the independent exact oracle is non-exceptional.
+			if !finiteForTest(out[index]) || !finiteForTest(want) ||
+				math.Abs(out[index]-want) > 2*math.Abs(math.Nextafter(want, math.Inf(1))-want) {
+				t.Fatalf("row %d: got %.17g, exact binary64 oracle %.17g", index, out[index], want)
+			}
+		}
+	}
+}
+
+// TestOLSPredictTrueOverflow ensures the exact path does not turn a
+// genuinely unrepresentable finished affine response into a false success.
+func TestOLSPredictTrueOverflow(t *testing.T) {
+	fit, err := ols.FitThroughOrigin(context.Background(),
+		mustDense(t, [][]float64{{1, 0}, {0, 1}}), []float64{1, 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := fit.Model.Predict(context.Background(), mustDense(t,
+		[][]float64{{math.MaxFloat64, math.MaxFloat64}}))
+	if out != nil || !errors.Is(err, ols.ErrOverflow) {
+		t.Fatalf("true overflow must publish nil/ErrOverflow, got %v/%v", out, err)
+	}
+}
+
+// TestOLSPredictFinitePrecedence verifies that full-batch input validation
+// wins over an earlier row that would overflow during arithmetic.
+func TestOLSPredictFinitePrecedence(t *testing.T) {
+	fit, err := ols.FitThroughOrigin(context.Background(),
+		mustDense(t, [][]float64{{1, 0}, {0, 1}}), []float64{1, 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	x := &fixtureMatrix{
+		rows: 2, cols: 2,
+		values: []float64{math.MaxFloat64, math.MaxFloat64, 0, math.NaN()},
+	}
+	out, err := fit.Model.Predict(context.Background(), x)
+	if out != nil || !errors.Is(err, ols.ErrNonFinite) {
+		t.Fatalf("nonfinite validation precedence violated: %v/%v", out, err)
+	}
+}
+
+// TestOLSPredictPermutedCancellation checks that feature order changes
+// neither the fitted physical law nor a correctly rounded hostile prediction.
+func TestOLSPredictPermutedCancellation(t *testing.T) {
+	for _, row := range [][]float64{
+		{1e16, 1, -1e16},
+		{-1e16, 1e16, 1},
+		{-1e16, 1, 1e16},
+	} {
+		fit, err := ols.FitThroughOrigin(context.Background(),
+			mustDense(t, [][]float64{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}),
+			[]float64{1, 1, 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := fit.Model.Predict(context.Background(), mustDense(t, [][]float64{row}))
+		if err != nil || len(out) != 1 || out[0] != 1 {
+			t.Fatalf("order %v: predicted %v, err=%v; want [1]", row, out, err)
+		}
+	}
+}
+
+// TestOLSPredictConcurrentExactFallback verifies that the same frozen
+// model can allocate private exact-arithmetic scratch in 64 goroutines.
+func TestOLSPredictConcurrentExactFallback(t *testing.T) {
+	fit, err := ols.FitThroughOrigin(context.Background(),
+		mustDense(t, [][]float64{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}),
+		[]float64{1, 1, 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hold := mustDense(t, [][]float64{
+		{1e16, 1, -1e16},
+		{math.MaxFloat64, 0, -math.MaxFloat64},
+	})
+	const workers = 64
+	var wg sync.WaitGroup
+	failures := make(chan error, workers)
+	for worker := 0; worker < workers; worker++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			out, err := fit.Model.Predict(context.Background(), hold)
+			if err != nil {
+				failures <- err
+				return
+			}
+			if len(out) != 2 || out[0] != 1 || out[1] != 0 {
+				failures <- errors.New("concurrent exact predictions differ from [1, 0]")
+			}
+		}()
+	}
+	wg.Wait()
+	close(failures)
+	for failure := range failures {
+		t.Error(failure)
+	}
+}
+
+// TestOLSPredictZeroRowsAndDetachedOutput retains the documented
+// dimension-preserving empty-batch behavior after introducing exact fallback.
+func TestOLSPredictZeroRowsAndDetachedOutput(t *testing.T) {
+	fit, err := ols.FitThroughOrigin(context.Background(),
+		mustDense(t, [][]float64{{1}, {2}}), []float64{2, 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	zero, err := matrix.NewDense(0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := fit.Model.Predict(context.Background(), zero)
+	if err != nil || out == nil || len(out) != 0 {
+		t.Fatalf("zero-row inference: %v/%v", out, err)
+	}
+}
+
+// TestOLSFitSSEUsesPublicPrediction checks that training diagnostics and
+// heldout inference share the same compensated/exact row-level response law.
+// It also distinguishes the unnormalized SSE from a QR residual L2 norm.
+func TestOLSFitSSEUsesPublicPrediction(t *testing.T) {
+	features := [][]float64{
+		{-2, -1, 0}, {-1, 2, 1}, {0, 1, -2},
+		{1, -2, 3}, {2, 3, -1}, {3, -1, 2},
+		{4, 2, 0}, {5, -3, 1}, {6, 0, -2},
+	}
+	responses := []float64{-3.2, 1.4, 2.1, 0.7, 3.8, -0.3, 6.5, 3.2, 7.1}
+	training := mustDense(t, features)
+	fit, err := ols.FitStandardized(context.Background(), training, responses)
+	if err != nil {
+		t.Fatal(err)
+	}
+	predicted, err := fit.Model.Predict(context.Background(), training)
+	if err != nil {
+		t.Fatal(err)
+	}
+	independentSSE := 0.0
+	for index, value := range predicted {
+		residual := responses[index] - value
+		independentSSE = math.FMA(residual, residual, independentSSE)
+	}
+	if independentSSE <= 0 {
+		t.Fatal("fixture unexpectedly has no training residuals")
+	}
+	mustNear(t, fit.ResidualSumSquares, independentSSE, 1e-12)
+	for index, row := range features {
+		oracle := exactOLSResponse(t, fit.Model, row)
+		mustNear(t, predicted[index], oracle, 2e-13)
+	}
+}

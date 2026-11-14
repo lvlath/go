@@ -2183,6 +2183,14 @@ alerts (no future)                 incident review     historical path
 
 PCA may supply **frozen** train-only features before Gaussian HMM if the application's dimensionality model warrants it; do not fit a fresh PCA basis on each observation. SAX symbols can be categorical observations only with a **stable encoder** and a clear window-end timestamp, and cannot retroactively justify earlier decisions. Full-covariance Gaussian modeling, semantically fixed state labels, threshold calibration and state serialization belong outside the current HMM API.
 
+### Numerical correctness is not the same as staying in the logarithmic domain
+
+A log-domain algorithm can still lose its posterior if it forms `-5e15 + log(0.7)` and later subtracts a rounded `-5e15` normalizer. `hmm` first removes a common Gaussian emission offset, then applies the small predictive log scores in that local frame. This keeps restored causal checkpoints normalized within `1e-12`. `Smooth` and the EM transition responsibilities use compatible local scaling, but remain **noncausal** by definition.
+
+For Viterbi, an unrepresentable *score* is not a structurally impossible *path*; `ErrOverflow` and `ErrImpossibleSequence` must remain separate. For Gaussian EM, weighted population variance is measured around the **new** mean in a second old-model responsibility pass, not by subtracting raw squared moments. `Pseudocount` rows also use scaled normalization rather than evaluating `total + columns*lambda` in an overflowing register.
+
+To see these choices in a practical scenario, run `go run ./examples/hmm`. It consumes fifteen synthetic, chronological order-book samples and emits only causal stress-incident transitions. For offline retrospective ECG and independently trained sensor-fleet demonstrations, run `go test -run '^Example' ./hmm`.
+
 For the complete log-domain derivation, memory and error tables, MAP-EM objective, and runnable scenarios see [`HMM.md`](HMM.md), [`hmm/doc.go`](../hmm/doc.go), and [`hmm/example_test.go`](../hmm/example_test.go).
 
 ---
@@ -2707,13 +2715,13 @@ and [`rng/doc.go`](../rng/doc.go).
 | Symmetric positive-definite system                 | `matrix.FactorCholesky`                       | accepted symmetric midpoint, SPD check, reusable solves.                                   |
 | Symmetric spectral analysis                        | `matrix`                                      | eigenvalues/eigenvectors.                                                                  |
 | Exact nanosecond cadence checks                    | `series.Validate`                             | sample count + ordered gap metadata.                                                       |
-| Dependent-data resampling index ensembles           | `bootstrap.SampleIndices`                      | Detached Moving/Circular/Stationary `[][]int`, replay ID, partial completion law.                     |
+| Dependent-data resampling index ensembles          | `bootstrap.SampleIndices`                     | Detached Moving/Circular/Stationary `[][]int`, replay ID, partial completion law.          |
 | Causal lag/difference/returns                      | `series`                                      | length-preserving values + validity mask.                                                  |
 | Fractional equal-duration scalar compression       | `paa.Transform` / `paa.TransformRange`        | Detached PAA means, exact rational intervals, original window length.                      |
 | Fixed-alphabet symbolic window encoding            | `sax.Encode` / `sax.Encoder.Encode`           | Detached symbol word, policy identity and optional transformed PAA.                        |
 | Compatible Euclidean symbolic lower bound          | `sax.Encoder.Mindist` / `sax.MindistValues`   | Lower-bound dissimilarity in the selected transformed space, never a general DTW bound.    |
 | Direct sample ACF by integer lag                   | `acf.ComputeDefault` / `acf.Compute`          | One fitted window, explicit denominator convention and pair counts; not causal streaming.  |
-| Reproducible stochastic simulation paths           | `rng.NewFactory().Stream` / `rng.NewStream`    | Pinned PCG-DXSM, logical path IDs, one goroutine owner per stream.                           |
+| Reproducible stochastic simulation paths           | `rng.NewFactory().Stream` / `rng.NewStream`   | Pinned PCG-DXSM, logical path IDs, one goroutine owner per stream.                         |
 | Complete fixed index windows                       | `series.WindowRanges`                         | ordered half-open sample-index intervals.                                                  |
 | Hidden-state streaming causal filtering            | `hmm.FilterStep` / `FilterDefault`            | P(z_t given observations through t), no future-sample leakage.                             |
 | Retrospective hidden-state attribution             | `hmm.Smooth` / `hmm.Decode`                   | Full-sequence state marginals vs one optimal joint path; different contracts.              |

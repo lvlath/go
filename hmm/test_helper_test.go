@@ -23,6 +23,7 @@ func dense(t testing.TB, values [][]float64) matrix.Matrix {
 	}
 	return m
 }
+
 func categorical(t testing.TB) *hmm.CategoricalModel {
 	t.Helper()
 	m, e := hmm.NewCategorical(hmm.CategoricalSpec{Common: hmm.Common{Prior: []float64{.5, .5}, Transition: dense(t, [][]float64{{1, 0}, {0, 1}})}, Emission: dense(t, [][]float64{{.9, .1}, {.1, .9}})})
@@ -31,6 +32,7 @@ func categorical(t testing.TB) *hmm.CategoricalModel {
 	}
 	return m
 }
+
 func approx(t testing.TB, a, b float64) {
 	t.Helper()
 	if math.Abs(a-b) > 1e-10*math.Max(1, math.Abs(b)) {

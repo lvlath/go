@@ -8,9 +8,11 @@ package ols_test
 import (
 	"errors"
 	"math"
+	"math/big"
 	"testing"
 
 	"github.com/lvlath/go/matrix"
+	"github.com/lvlath/go/ols"
 )
 
 // mustDense constructs an owning finite n-by-p fixture through the public API.
@@ -163,4 +165,25 @@ func mustMatrixValues(t *testing.T, got matrix.Matrix, want [][]float64) {
 			}
 		}
 	}
+}
+
+// exactOLSResponse is an independent oracle for the binary64 values actually
+// published by the fitted Model. It avoids assuming that QR must return
+// bit-for-bit textbook coefficients for a nontrivial design.
+func exactOLSResponse(t *testing.T, model *ols.Model, features []float64) float64 {
+	t.Helper()
+	beta, intercept := model.Coefficients()
+	if len(features) != len(beta) {
+		t.Fatalf("oracle feature width %d, want %d", len(features), len(beta))
+	}
+	var total, product, featureRat, slopeRat big.Rat
+	total.SetFloat64(intercept)
+	for index, feature := range features {
+		featureRat.SetFloat64(feature)
+		slopeRat.SetFloat64(beta[index])
+		product.Mul(&featureRat, &slopeRat)
+		total.Add(&total, &product)
+	}
+	value, _ := total.Float64()
+	return value
 }

@@ -14,12 +14,12 @@ import (
 )
 
 // gaussianCounts stores posterior-weighted sufficient statistics for diagonal-Gaussian EM.
-// Its means and variances arrays accumulate centered first and second moments around current means.
+// Its mean and variance arrays hold finalized old-model-weighted central estimates.
 //
 // Implementation:
 //   - Stage 1: Create independent prior, transition, occupancy and K-by-D moment arrays.
-//   - Stage 2: Sum gamma-weighted centered feature contributions and xi within each sequence.
-//   - Stage 3: Use the totals for M-step means and projected diagonal variances.
+//   - Stage 2: Sum gamma-weighted scaled deviations and within-sequence xi.
+//   - Stage 3: Recompute gamma for a second central-variance pass around new means.
 //
 // Behavior highlights:
 //   - A dead state has zero occupancy and leaves its previous Gaussian emission parameters unchanged.
@@ -40,7 +40,8 @@ import (
 //   - Storage O(K*K+K*D), excluding the per-sequence posterior tables.
 //
 // Notes:
-//   - The moment arrays are not normalized until the constrained M-step.
+//   - The expectation stage finalizes physical-unit means and variances before
+//     the M-step applies the caller-selected VarianceFloor.
 //
 // AI-Hints:
 //   - Do not use the public rounded means to infer an unbiased variance estimator.
@@ -48,95 +49,320 @@ type gaussianCounts struct {
 	prior     []float64 // K gamma at sequence starts; a new prior draw for every run.
 	trans     []float64 // K*K xi sums over adjacent steps within each run only.
 	occupancy []float64 // K gamma weights summed over every observation.
-	means     []float64 // K*D gamma-weighted residual sums around current state means.
-	variances []float64 // K*D gamma-weighted squared residual sums around current state means.
+	means     []float64 // K*D newly estimated weighted means in physical feature units.
+	variances []float64 // K*D population variances in squared feature units, before floor projection.
 	ll        float64   // Sum of independent sequence marginal log likelihoods.
 }
 
-// gaussianExpectation performs a diagonal-Gaussian E-step on independently bounded series.
-// It weighs each observed feature by gamma and each within-sequence transition by xi.
+// addCompensated incorporates a finite term into a compensated floating sum.
+// It preserves low-order terms when a long EM batch contains unequal weights.
 //
 // Implementation:
-//   - Stage 1: Allocate per-state transition, occupancy and centered moment accumulators.
-//   - Stage 2: Build one posterior table per series and accumulate residuals relative to current model means.
-//   - Stage 3: Reject nonfinite aggregate evidence/moments before returning the sufficient statistics.
+//   - Stage 1: Form the new high-order sum.
+//   - Stage 2: Recover the low-order rounding residual by Neumaier's rule.
+//   - Stage 3: Store both parts for finalization after deterministic traversal.
 //
 // Behavior highlights:
-//   - Temporal boundaries are respected even when two series happen to have consecutive timestamps.
+//   - Compensation is applied only to locally scaled, representable terms.
 //
 // Inputs:
-//   - ctx: context; m: immutable model; observations: detached flattened T_s*D matrices; lengths: T_s per series.
+//   - sum, correction: distinct accumulators for the same state/feature cell.
+//   - term: finite, scaled observation contribution.
 //
 // Returns:
-//   - gaussianCounts: prior counts, transition counts, occupancies and centered first/second moments.
+//   - The two accumulator pointers are updated in place.
 //
 // Errors:
-//   - ctx.Err(), ErrOverflow, ErrNumerical or sequence-wrapped emission/forward-backward errors.
+//   - None; callers check the final mean and variance for representability.
 //
 // Determinism:
-//   - Fixed sequence/time/state/feature ordering determines floating accumulation.
+//   - Evaluation order is exactly the order of supplied observations and states.
 //
 // Complexity:
-//   - Time O(sum_s T_s*(K^2+K*D)), Space O(max_s T_s*K^2+K*K+K*D).
+//   - Time O(1), Space O(1).
 //
 // Notes:
-//   - Extreme offsets may exceed binary64 centered moment representability; no silent rescaling.
+//   - No global state and no mutation of input observations.
 //
 // AI-Hints:
-//   - Unlike a continuous transition density, xi still represents a discrete K-by-K state pair.
+//   - Compensation does not replace scaling when a raw quadratic sum may overflow.
+func addCompensated(sum, correction *float64, term float64) {
+	updated := *sum + term
+	if math.Abs(*sum) >= math.Abs(term) {
+		*correction += (*sum - updated) + term
+	} else {
+		*correction += (term - updated) + *sum
+	}
+	*sum = updated
+}
+
+// stableScaledDifference computes (x-center)/scale without materializing an overflowing delta.
+// It retains the precise direct subtraction whenever that difference is representable.
+//
+// Implementation:
+//   - Stage 1: Try the physical-unit subtraction for best small-offset resolution.
+//   - Stage 2: Divide first only when opposing finite values overflow subtraction.
+//   - Stage 3: Return the scale-free difference for weighted mean/variance accumulation.
+//
+// Behavior highlights:
+//   - The positive scale bounds x and center, so each scaled component is finite.
+//
+// Inputs:
+//   - x, center: finite feature values; scale: positive max-magnitude feature scale.
+//
+// Returns:
+//   - float64: dimensionless centered difference, preserving its sign.
+//
+// Errors:
+//   - None for the validated input domain.
+//
+// Determinism:
+//   - Branch depends only on IEEE-754 finiteness of the raw difference.
+//
+// Complexity:
+//   - Time O(1), Space O(1).
+//
+// Notes:
+//   - Scale is computed once over every independent training sequence, not per regime.
+//
+// AI-Hints:
+//   - Never square an unscaled 1e154 residual before dividing by occupancy.
+func stableScaledDifference(x, center, scale float64) float64 {
+	delta := x - center
+	if finite(delta) {
+		return delta / scale
+	}
+	return x/scale - center/scale
+}
+
+// gaussianExpectation performs a deterministic two-pass weighted central-moment E-step.
+// The first pass estimates means from old-model responsibilities; the second
+// measures centered population variances around those NEW means without raw moments.
+//
+// Implementation:
+//   - Stage 1: Find per-feature scales and accumulate prior/transition/gamma mass
+//     and compensated anchored differences from the fixed old model.
+//   - Stage 2: Finalize physical weighted means from anchored scaled differences.
+//   - Stage 3: Recompute identical old-model gamma and accumulate normalized squared
+//     deviations, publishing only representable variance estimates.
+//
+// Behavior highlights:
+//   - The second pass never updates the model or its posterior weights.
+//   - State labels, sequence boundaries, and transition counts retain old behavior.
+//
+// Inputs:
+//   - ctx: active context; m: immutable old Gaussian model.
+//   - observations: detached T_s*D matrices; lengths: matching positive lengths.
+//
+// Returns:
+//   - gaussianCounts: prior, transition, occupancy, physical means, variances,
+//     and sum of independent log likelihoods.
+//
+// Errors:
+//   - ctx.Err(), ErrOverflow for unrepresentable means/variances, and inference errors.
+//
+// Determinism:
+//   - Both passes scan sequence, time, state, feature in ascending order.
+//
+// Complexity:
+//   - Time O(2*sum_s T_s*(K^2+K*D)); Space O(max_s(T_s*K^2)+K^2+K*D).
+//
+// Notes:
+//   - Recomputing posteriors trades approximately twice the E-step work for
+//     memory bounded by the longest sequence, avoiding a global gamma cache.
+//
+// AI-Hints:
+//   - Population variance divides by sum(gamma), never by occupancy-1.
+//   - Apply VarianceFloor only after the centered variance has been evaluated.
 func gaussianExpectation(ctx context.Context, m *GaussianModel, observations [][]float64, lengths []int) (gaussianCounts, error) {
 	k, d := m.chain.k, m.dimension
-	out := gaussianCounts{prior: make([]float64, k), trans: make([]float64, k*k), occupancy: make([]float64, k), means: make([]float64, k*d), variances: make([]float64, k*d)}
-	// Weighted centered first and second moments relative to the current means.
-	// Independent machine runs are scored separately. Each new run begins at
-	// Prior; no boundary transition is included in the accumulated xi table.
-	for s, flat := range observations {
-		t := lengths[s]
-		_, gamma, xi, ll, err := posteriorTables(ctx, &m.chain, t, func(i int, e []float64) error { return m.emissions(flat[i*d:(i+1)*d], e) })
+	out := gaussianCounts{
+		prior: make([]float64, k), trans: make([]float64, k*k),
+		occupancy: make([]float64, k), means: make([]float64, k*d),
+		variances: make([]float64, k*d),
+	}
+	// Fixed per-feature scales retain a bounded coordinate system even for
+	// values near MaxFloat64. A zero-only feature uses scale one.
+	scales := make([]float64, d)
+	for _, flat := range observations {
+		for i, value := range flat {
+			feature := i % d
+			if magnitude := math.Abs(value); magnitude > scales[feature] {
+				scales[feature] = magnitude
+			}
+		}
+	}
+	for feature := range scales {
+		if scales[feature] == 0 {
+			scales[feature] = 1
+		}
+	}
+
+	anchors := make([]float64, k*d)
+	anchored := make([]bool, k*d)
+	meanCorrection := make([]float64, k*d)
+	// E-step pass one: every sequence starts at Prior; xi is accumulated only
+	// within that sequence, while gamma supplies weighted feature means.
+	for sequence, flat := range observations {
+		length := lengths[sequence]
+		_, gamma, xi, ll, err := posteriorTables(ctx, &m.chain, length,
+			func(i int, e []float64) error { return m.emissions(flat[i*d:(i+1)*d], e) })
 		if err != nil {
-			return out, fmt.Errorf("sequence %d: %w", s, err)
+			return out, fmt.Errorf("sequence %d: %w", sequence, err)
 		}
 		out.ll += ll
-		for i := 0; i < t; i++ {
-			for j := 0; j < k; j++ {
-				w := gamma[i*k+j]
-				out.occupancy[j] += w
-				if i == 0 {
-					out.prior[j] += w
+		for time := 0; time < length; time++ {
+			for state := 0; state < k; state++ {
+				weight := gamma[time*k+state]
+				out.occupancy[state] += weight
+				if time == 0 {
+					out.prior[state] += weight
 				}
-				// Use differences from the *previous* state mean to reduce raw
-				// second-moment cancellation; the M-step corrects for mean movement.
+				if weight == 0 {
+					continue
+				}
 				for feature := 0; feature < d; feature++ {
-					p := j*d + feature
-					delta := flat[i*d+feature] - m.means[p]
-					if !finite(delta) {
-						return out, ErrOverflow
+					at := state*d + feature
+					value := flat[time*d+feature]
+					if !anchored[at] {
+						anchors[at] = value
+						anchored[at] = true
 					}
-					out.means[p] += w * delta
-					out.variances[p] += w * delta * delta
+					delta := stableScaledDifference(value, anchors[at], scales[feature])
+					addCompensated(&out.means[at], &meanCorrection[at], weight*delta)
 				}
 			}
 		}
-		for i := 0; i < t-1; i++ {
-			for v := 0; v < k*k; v++ {
-				out.trans[v] += xi[i*k*k+v]
+		for time := 0; time < length-1; time++ {
+			for pair := 0; pair < k*k; pair++ {
+				out.trans[pair] += xi[time*k*k+pair]
 			}
 		}
 	}
 	if !finite(out.ll) {
 		return out, ErrOverflow
 	}
-	for _, v := range out.means {
-		if !finite(v) {
-			return out, ErrOverflow
+
+	// Convert the normalized anchored mean into physical feature coordinates.
+	// The normalized fallback prevents an overflowing offset from obscuring a
+	// finite convex weighted mean of finite source observations.
+	for state := 0; state < k; state++ {
+		if out.occupancy[state] == 0 {
+			continue // Dead-state emissions remain unchanged in the M-step.
+		}
+		for feature := 0; feature < d; feature++ {
+			at := state*d + feature
+			scale := scales[feature]
+			shift := (out.means[at] + meanCorrection[at]) / out.occupancy[state]
+			offset := shift * scale
+			mean := anchors[at] + offset
+			if !finite(offset) || !finite(mean) {
+				mean = (anchors[at]/scale + shift) * scale
+			}
+			if !finite(mean) {
+				return out, ErrOverflow
+			}
+			out.means[at] = mean
 		}
 	}
-	for _, v := range out.variances {
-		if !finite(v) {
-			return out, ErrOverflow
-		}
+
+	if err := gaussianCentralVariance(ctx, m, observations, lengths, scales, &out); err != nil {
+		return out, err
 	}
+
 	return out, nil
+}
+
+// gaussianCentralVariance accumulates old-model-weighted central second moments.
+// It evaluates population variances about the newly estimated means rather than
+// subtracting the square of a large raw first moment from a raw second moment.
+//
+// Implementation:
+//   - Stage 1: Reproduce posterior responsibilities under the unchanged old model.
+//   - Stage 2: Accumulate compensated squared deviations in dimensionless coordinates.
+//   - Stage 3: Divide by existing occupancy and restore representable feature-squared units.
+//
+// Behavior highlights:
+//   - A raw sum of squares may be unrepresentable although its averaged variance is finite.
+//   - Every sequence starts independently from the old model's Prior.
+//
+// Inputs:
+//   - ctx: active context; m: unchanged model defining all responsibilities.
+//   - observations, lengths: finite detached per-sequence buffers and positive row counts.
+//   - scales[D]: positive feature scales calculated across all training sequences.
+//   - out: caller-owned first-pass counts containing final means and occupancies;
+//     its variance buffer is populated without modifying its other fields.
+//
+// Returns:
+//   - error: nil only if every populated variance is finite and nonnegative.
+//
+// Errors:
+//   - ctx.Err() and inference errors from replay; ErrOverflow if a required
+//     population variance cannot be represented in feature-squared float64 units.
+//
+// Determinism:
+//   - Sequence, time, state, feature; state occupancy and means are frozen.
+//
+// Complexity:
+//   - Time O(sum_s T_s*(K^2+K*D)); Space O(max_s T_s*K+K*D),
+//     excluding the caller-owned input and first-pass aggregate buffers.
+//
+// Notes:
+//   - The M-step applies VarianceFloor only AFTER this helper finishes.
+//   - No observations, prior state, or model parameters are mutated.
+//
+// AI-Hints:
+//   - For a single state, this is population variance, never the n-1 estimator.
+//   - Do not cache future-model gamma: the second pass must replay the old model.
+func gaussianCentralVariance(ctx context.Context, m *GaussianModel, observations [][]float64, lengths []int, scales []float64, out *gaussianCounts) error {
+	k, d := m.chain.k, m.dimension
+	// E-step pass two: the OLD model deterministically reproduces gamma.
+	// Squared deviations are normalized before summation, avoiding a raw
+	// sum-of-squares overflow even when the final population variance fits.
+	varianceCorrection := make([]float64, k*d)
+	for sequence, flat := range observations {
+		length := lengths[sequence]
+		work, err := buildPosteriorWorkspace(ctx, &m.chain, length,
+			func(i int, e []float64) error { return m.emissions(flat[i*d:(i+1)*d], e) })
+		if err != nil {
+			return fmt.Errorf("variance sequence %d: %w", sequence, err)
+		}
+		for time := 0; time < length; time++ {
+			for state := 0; state < k; state++ {
+				weight := work.gamma[time*k+state]
+				if weight == 0 || out.occupancy[state] == 0 {
+					continue
+				}
+				for feature := 0; feature < d; feature++ {
+					at := state*d + feature
+					delta := stableScaledDifference(flat[time*d+feature], out.means[at], scales[feature])
+					term := (weight / out.occupancy[state]) * delta * delta
+					addCompensated(&out.variances[at], &varianceCorrection[at], term)
+				}
+			}
+		}
+	}
+	for state := 0; state < k; state++ {
+		if out.occupancy[state] == 0 {
+			continue
+		}
+		for feature := 0; feature < d; feature++ {
+			at := state*d + feature
+			normalizedVariance := out.variances[at] + varianceCorrection[at]
+			if normalizedVariance < 0 || !finite(normalizedVariance) {
+				return ErrOverflow
+			}
+			// Compute a standard deviation first to avoid multiplying an
+			// enormous scale by itself before a small variance factor.
+			standardDeviation := scales[feature] * math.Sqrt(normalizedVariance)
+			variance := standardDeviation * standardDeviation
+			if !finite(variance) {
+				return ErrOverflow
+			}
+			out.variances[at] = variance
+		}
+	}
+	return nil
 }
 
 // newGaussianFromFlat reconstructs an immutable diagonal-Gaussian candidate from M-step arrays.
@@ -190,7 +416,7 @@ func newGaussianFromFlat(k, d int, prior, trans, means, variances []float64) (*G
 // Its variance floor is a lower bound in squared feature units, not an added epsilon.
 // Implementation:
 //   - Stage 1: Validate context/options, initial variance domain, and independent matrices.
-//   - Stage 2: Compute responsibilities and centered weighted moments for each state/feature.
+//   - Stage 2: Reproduce old-model responsibilities and compute two-pass scaled central moments.
 //   - Stage 3: Project variance estimates onto the floor and accept monotone objectives.
 //
 // Behavior highlights:
@@ -210,7 +436,7 @@ func newGaussianFromFlat(k, d int, prior, trans, means, variances []float64) (*G
 //   - Fixed sequence/time/state/feature accumulation order.
 //
 // Complexity:
-//   - Time O(iterations*sum(T_s)*(K^2+K*D)); memory O(sum(T_s)*D+max(T_s)*K^2+K*D).
+//   - Time O(iterations*2*sum(T_s)*(K^2+K*D)); memory O(sum(T_s)*D+max(T_s)*K^2+K*D).
 //
 // Notes:
 //   - Gaussian means/variances are unpenalized; Dirichlet penalty covers only Prior/Transition.
@@ -268,11 +494,10 @@ func FitGaussian(ctx context.Context, sequences []matrix.Matrix, initial Gaussia
 			}
 			for feature := 0; feature < d; feature++ {
 				p := j*d + feature
-				shift := counts.means[p] / counts.occupancy[j]
-				means[p] = model.means[p] + shift
-				// E[(x-oldMu)^2] - (newMu-oldMu)^2 is the variance around
-				// the new weighted mean. Project onto the explicit feasible floor.
-				variance := counts.variances[p]/counts.occupancy[j] - shift*shift
+				// The E-step already produced two-pass weighted central moments
+				// in physical units. Never subtract raw second moments here.
+				means[p] = counts.means[p]
+				variance := counts.variances[p]
 				if !finite(means[p]) || !finite(variance) {
 					return out, ErrOverflow
 				}
@@ -288,6 +513,13 @@ func FitGaussian(ctx context.Context, sequences []matrix.Matrix, initial Gaussia
 			return nil, err
 		}
 		score := newCounts.ll + simplexPenalty(opts.Pseudocount, candidate.chain.prior, candidate.chain.transition)
+		// A one-ULP downward candidate is not published. When this is
+		// also within the caller's convergence threshold, retain the last
+		// accepted model as a numerically stationary EM solution.
+		if objectiveRoundoffPlateau(oldScore, score, opts.Tolerance) {
+			out.Diagnostics.Converged = true
+			return out, nil
+		}
 		done, err := monotonic(oldScore, score, opts.Tolerance)
 		if err != nil {
 			return out, err
@@ -316,6 +548,7 @@ func FitGaussian(ctx context.Context, sequences []matrix.Matrix, initial Gaussia
 //   - Stage 3: Check every derived term and total for representable binary64 log density.
 //
 // Behavior highlights:
+//   - A representable raw residual is preferred; an overflowing difference is scaled first.
 //   - The negative quadratic evaluates (0.5*z)*z to avoid avoidable intermediate overflow.
 //
 // Inputs:
@@ -352,12 +585,19 @@ func (m *GaussianModel) emissions(x []float64, dst []float64) error {
 		var value float64
 		for d := 0; d < m.dimension; d++ {
 			v := m.variances[k*m.dimension+d]
-			// Divide before squaring to avoid overflow for moderate standardized residuals.
+			// Favor direct subtraction when it is representable: it retains small
+			// differences between large, nearby numbers in their physical units.
+			// If opposing finite operands overflow the raw subtraction, divide
+			// them separately by sigma before subtracting their scaled values.
+			// The standardized residual may be finite even when x-mean is not.
+			standardDeviation := math.Sqrt(v)
 			delta := x[d] - m.means[k*m.dimension+d]
-			if !finite(delta) {
-				return ErrOverflow
+			z := 0.0
+			if finite(delta) {
+				z = delta / standardDeviation
+			} else {
+				z = x[d]/standardDeviation - m.means[k*m.dimension+d]/standardDeviation
 			}
-			z := delta / math.Sqrt(v)
 			if !finite(z) {
 				return ErrOverflow
 			}

@@ -53,16 +53,23 @@
 // measured induced 1-norm condition number of the *transformed, pivoted R*.
 // It is neither kappa_2(X) nor a bound on coefficient error. No condition limit
 // is imposed by ols; callers must assess high condition estimates explicitly.
-// ResidualSumSquares is recomputed from predictions in original physical units,
-// using a scaled sum-of-squares accumulation and rejecting unrepresentable
-// final SSE. It is not the QR residual norm, a mean square, or R-squared.
+// ResidualSumSquares is recomputed from predictions in original physical units
+// through the same rowPrediction kernel used by public Predict. Each ordinary
+// prediction uses a Neumaier compensated sum plus FMA product-error residuals.
+// Overflowing intermediates, subnormal products, or severe cancellation trigger
+// an exact rational dot product with one final float64 rounding. Intermediate
+// infinity alone does not imply that the final prediction is unrepresentable.
+// A scaled sum-of-squares recurrence then computes SSE and rejects an
+// unrepresentable final result; SSE is not the QR residual norm or R-squared.
 //
-// IEEE-754 arithmetic is approximate. QR recovery and FMA prediction can yield
-// a few ULPs of deviation from an exact mathematical response. Use mixed
-// absolute/relative numerical comparisons for coefficients and predictions;
-// reserve exact equality for dimensions, presence, error identity, explicit
-// zero intercept, and ownership guarantees. No universal correctly-rounded
-// least-squares solution or statistical inference guarantee is claimed.
+// IEEE-754 QR coefficient recovery remains approximate: the correctly rounded
+// dot product of the *fitted* float64 parameters need not equal an exact
+// underlying physical law. On ordinary rows compensated prediction is also a
+// floating-point approximation; the exceptional exact path guarantees a single
+// final rounding only for those rows. Use independent mathematical oracles and
+// justified budgets for coefficient tests. Reserve exact equality for explicit
+// structural invariants, a prescribed zero intercept, and audit fixtures whose
+// recovered coefficients and exact binary64 dot products are known exactly.
 //
 // # Validation and error law
 //
@@ -113,8 +120,10 @@
 // O(n*q*q+q*q*q) floating-point arithmetic (including condition measurement).
 // Fit additionally performs O(n*p) validation/scaling and O(n*p) residual
 // prediction; matrix's exact-binary residual diagnostics may require extra
-// multiprecision work. Predict is O(m*p) time and O(m) output space for m
-// inference rows. No hidden second module or graph dependency is introduced.
+// multiprecision work. Predict ordinarily takes O(m*p) time, O(m) detached
+// output space and O(1) per-row scratch; exceptional rows require higher-cost
+// exact rational arithmetic with independent per-call storage. No graph
+// dependency or package-level mutable prediction workspace is introduced.
 //
 // # Non-goals and usage guidance
 //

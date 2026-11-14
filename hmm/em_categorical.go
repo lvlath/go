@@ -235,6 +235,13 @@ func FitCategorical(ctx context.Context, sequences [][]uint32, initial Categoric
 			return nil, err
 		}
 		score := newCounts.ll + simplexPenalty(opts.Pseudocount, candidate.chain.prior, candidate.chain.transition, candidate.emission)
+		// A one-ULP downward candidate is not published. When this is
+		// also within the caller's convergence threshold, retain the last
+		// accepted model as a numerically stationary EM solution.
+		if objectiveRoundoffPlateau(oldScore, score, opts.Tolerance) {
+			out.Diagnostics.Converged = true
+			return out, nil
+		}
 		done, err := monotonic(oldScore, score, opts.Tolerance)
 		if err != nil {
 			return out, err

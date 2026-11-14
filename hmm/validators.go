@@ -170,11 +170,57 @@ func isNilMatrix(m matrix.Matrix) bool {
 	return false
 }
 
+// checkedAllocation computes the element count and verifies its full byte footprint.
+// It rejects unrepresentable slice dimensions before allocation or Matrix.At reads.
+//
+// Implementation:
+//   - Stage 1: Reject negative shape or an invalid element width.
+//   - Stage 2: Bound the element product by MaxInt/elementBytes before multiplying.
+//   - Stage 3: Return a safe element count for make or the matrix constructor.
+//
+// Behavior highlights:
+//   - Zero dimensions may represent valid empty internal buffers.
+//   - The check guarantees representable slice lengths, not available physical RAM.
+//
+// Inputs:
+//   - rows, columns: shape measured in elements, both nonnegative.
+//   - elementBytes: positive byte width of one stored cell (float64 or int).
+//
+// Returns:
+//   - int: checked number of elements; error: ErrOverflow on illegal byte size.
+//
+// Errors:
+//   - ErrOverflow: negative dimension, byte-width overflow or product overflow.
+//
+// Determinism:
+//   - Pure comparisons using the current Go architecture's int width.
+//
+// Complexity:
+//   - Time O(1), Space O(1).
+//
+// Notes:
+//   - Every user-sized allocation must also be guarded at its earliest boundary.
+//
+// AI-Hints:
+//   - A product fitting into int can still be too large as a []float64 byte slice.
+//   - Do not replace this check with recover: runtime OOM is not recoverable safely.
+func checkedAllocation(rows, columns, elementBytes int) (int, error) {
+	const maxInt = int(^uint(0) >> 1)
+	if rows < 0 || columns < 0 || elementBytes <= 0 {
+		return 0, ErrOverflow
+	}
+	maximumCells := maxInt / elementBytes
+	if columns != 0 && rows > maximumCells/columns {
+		return 0, ErrOverflow
+	}
+	return rows * columns, nil
+}
+
 // readMatrix validates a numerical matrix and flattens it into independent row-major storage.
 // Later HMM kernels operate only on this detached slice rather than interface At calls.
 //
 // Implementation:
-//   - Stage 1: Reject nil/typed-nil and incompatible shape, then check rows*cols arithmetic.
+//   - Stage 1: Reject nil/typed-nil and incompatible shape, then check cell and byte products.
 //   - Stage 2: Read every cell in deterministic row-major order and reject nonfinite inputs.
 //   - Stage 3: Publish only the fully validated copy; discard it on any error.
 //
@@ -208,10 +254,11 @@ func readMatrix(m matrix.Matrix, rows, cols int) ([]float64, error) {
 	if m.Rows() != rows || m.Cols() != cols {
 		return nil, ErrShape
 	}
-	if rows < 0 || cols < 0 || (cols > 0 && rows > int(^uint(0)>>1)/cols) {
-		return nil, ErrOverflow
+	count, err := checkedAllocation(rows, cols, 8)
+	if err != nil {
+		return nil, err
 	}
-	out := make([]float64, rows*cols)
+	out := make([]float64, count)
 	for i := 0; i < rows; i++ {
 		for j := 0; j < cols; j++ {
 			v, err := m.At(i, j)

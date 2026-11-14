@@ -1,39 +1,79 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2025-2026 katalvlaran
 
-// Package ols evaluates frozen fitted regressions on arbitrary inference batches.
-// This file isolates the row-level FMA dot product from batch-level validation.
+// Package ols evaluates immutable fitted regressions in original physical units.
+// This file implements compensated affine prediction, exact exceptional arithmetic,
+// and batch validation without storing mutable numerical state in the model.
 package ols
 
 import (
 	"context"
 	"math"
+	"math/big"
 
 	"github.com/lvlath/go/matrix"
 )
 
-// rowPrediction evaluates one original-unit affine dot product in feature order.
-// It reads model state and caller observations without allocating or mutating
-// any shared workspace, so independent concurrent inference calls are safe.
+// The common path uses half the significant bits as a cancellation warning.
+// Losing more than 26 of 53 binary significand bits justifies the exact path;
+// it is not a rank tolerance, a prediction cutoff, or a way to change the model.
+const affineCancellationThreshold = 0x1p-26
+
+// A subnormal rounded product can lose the rounding error of an individual
+// multiplication, even when that error would contribute to the final sum.
+// Exact arithmetic is therefore used for these exceptionally small products.
+const affineSmallestNormalProduct = 0x1p-1022
+
+// exactRowPrediction evaluates the physical-unit affine response exactly over
+// the finite binary64 inputs, then rounds the complete rational result once.
+// The method rescues finite predictions whose intermediate products or sums
+// cannot be represented in float64, without modifying fitted coefficients.
 //
 // Implementation:
-//   - Stage 1: seed the accumulator with the frozen fitted intercept.
-//   - Stage 2: read each feature and accumulate x_j*beta_j with math.FMA.
-//   - Stage 3: reject unrepresentable partial/final prediction values.
+//   - Stage 1: initialize an exact accumulator from the original-unit intercept.
+//   - Stage 2: reread the stable input row and accumulate exact rational products.
+//   - Stage 3: round the entire sum once, rejecting only nonfinite final output.
 //
 // Behavior highlights:
-//   - math.FMA performs each multiply-add with one final rounding.
-//   - Even standardized models predict using original-unit coefficients.
+//   - Opposing products larger than MaxFloat64 may cancel to a finite result.
+//   - Subnormal product contributions are retained until the final rounding.
 //
-// Inputs: ctx active; x read-only with matching p; row validated by caller; m fitted.
-// Returns: one finite predicted response in y units, or zero/error.
-// Errors: ErrOverflow for nonfinite accumulated values; ctx.Err(), Matrix.At errors.
-// Determinism: feature columns j=0..p-1 in their original order.
-// Complexity: Time O(p), Space O(1), no model-owned mutable buffers.
-// Notes: Upstream Predict prevalidates every cell before starting this computation.
-// AI-Hints: Do not refit feature means or use returned Coefficients without ownership awareness.
-func (m *Model) rowPrediction(ctx context.Context, x matrix.Matrix, row int) (float64, error) {
-	prediction := m.intercept
+// Inputs:
+//   - ctx: active non-nil context, checked periodically and at the end.
+//   - x: stable read-only n-by-p matrix with finite original-unit features.
+//   - row: previously validated observation index; m: immutable fitted model.
+//
+// Returns:
+//   - float64: rounded, finite physical-unit prediction, or zero with an error.
+//
+// Errors:
+//   - ErrOverflow: only when the final rounded prediction is nonfinite.
+//   - ErrNonFinite: a matrix cell became NaN or infinity between input passes.
+//   - ctx.Err() or the original Matrix.At error, unchanged.
+//
+// Determinism:
+//   - Feature columns are visited in their original, ascending order.
+//   - big.Rat represents each finite binary64 operand exactly, with no rounding
+//     until conversion of the completed affine sum to float64.
+//
+// Complexity:
+//   - Time O(p*B^2), Space O(p*B) as conservative big-integer bounds,
+//     where B includes fixed binary64 exponent widths and accumulated bits.
+//
+// Notes:
+//   - This exceptional path allocates local big.Rat scratch registers.
+//   - It rereads x, which the caller must not mutate during Predict or Fit.
+//   - It never stores scratch values in Model or exposes a partial prediction.
+//
+// AI-Hints:
+//   - Never substitute an intermediate float64 infinity for the true sum.
+//   - Keep this fallback independent of QR, ridge penalties, and train scalers.
+func (m *Model) exactRowPrediction(ctx context.Context, x matrix.Matrix, row int) (float64, error) {
+	// Preserve the intercept exactly as the first affine term. A zero-intercept
+	// fit stores positive zero, and no centering is performed during inference.
+	var sum, product, featureRat, slopeRat big.Rat
+	sum.SetFloat64(m.intercept)
+
 	for col, slope := range m.beta {
 		if col%contextCheckRowInterval == 0 {
 			if err := ctx.Err(); err != nil {
@@ -44,12 +84,142 @@ func (m *Model) rowPrediction(ctx context.Context, x matrix.Matrix, row int) (fl
 		if err != nil {
 			return 0, err
 		}
-		// One fused multiply-add avoids separately rounding the product.
-		// The ordering is fixed; the model does not maintain a cached dot buffer.
-		prediction = math.FMA(feature, slope, prediction)
-		if !finite(prediction) {
-			return 0, ErrOverflow
+		if !finite(feature) {
+			return 0, ErrNonFinite
 		}
+
+		// SetFloat64 exactly captures the original finite binary64 values.
+		// Multiply them before adding: no intermediate float64 product exists.
+		featureRat.SetFloat64(feature)
+		slopeRat.SetFloat64(slope)
+		product.Mul(&featureRat, &slopeRat)
+		sum.Add(&sum, &product)
+	}
+
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	prediction, _ := sum.Float64()
+	if !finite(prediction) {
+		return 0, ErrOverflow
+	}
+	return prediction, nil
+}
+
+// rowPrediction evaluates a frozen physical-unit affine response using
+// compensated sums of rounded products and their FMA rounding residuals.
+// Its fast path avoids allocations; exceptional ranges use exactRowPrediction.
+//
+// Implementation:
+//   - Stage 1: seed the Neumaier accumulator with the fitted intercept.
+//   - Stage 2: accumulate products, addition errors, and FMA product errors.
+//   - Stage 3: verify the final value; retry exact arithmetic when overflow,
+//     subnormal product loss, or severe cancellation threatens correctness.
+//
+// Behavior highlights:
+//   - A small term between large canceling terms is not silently discarded.
+//   - Intermediate infinity never by itself determines ErrOverflow.
+//   - Standardization is NOT recomputed; coefficients already use original units.
+//
+// Inputs:
+//   - ctx: non-nil active context; x: stable read-only finite n-by-p matrix.
+//   - row: valid observation index; m: immutable successfully fitted model.
+//
+// Returns:
+//   - float64: one finite response in original y units, or zero/error.
+//
+// Errors:
+//   - ErrNonFinite for an input changed after prevalidation.
+//   - ErrOverflow for a genuinely unrepresentable final exact response.
+//   - ctx.Err() or the original Matrix.At error from either arithmetic path.
+//
+// Determinism:
+//   - Columns ascend; rounding errors and the intercept use fixed order.
+//   - Severe cancellation is checked against the sum of absolute terms.
+//
+// Complexity:
+//   - Time O(p), Space O(1) and zero heap allocations in the ordinary row path;
+//     exactRowPrediction documents the exceptional higher-precision cost.
+//
+// Notes:
+//   - This helper is shared by public Predict and training SSE in fit.go.
+//   - Neither Model nor x is mutated; concurrent stable-input inference is safe.
+//
+// AI-Hints:
+//   - FMA on a running total is NOT compensated summation: retain both the
+//     rounded-addition error and rounded-product error separately.
+//   - Never stop at a nonfinite partial product; later terms can cancel it.
+func (m *Model) rowPrediction(ctx context.Context, x matrix.Matrix, row int) (float64, error) {
+	sum, correction := m.intercept, 0.0
+	absoluteTerms := math.Abs(m.intercept)
+
+	for col, slope := range m.beta {
+		if col%contextCheckRowInterval == 0 {
+			if err := ctx.Err(); err != nil {
+				return 0, err
+			}
+		}
+		feature, err := x.At(row, col)
+		if err != nil {
+			return 0, err
+		}
+		if !finite(feature) {
+			return 0, ErrNonFinite
+		}
+
+		// An unrepresentable or subnormal individual product needs the exact
+		// path: materializing it now would lose information before cancellation.
+		term := feature * slope
+		if !finite(term) || (feature != 0 && slope != 0 && math.Abs(term) < affineSmallestNormalProduct) {
+			return m.exactRowPrediction(ctx, x, row)
+		}
+
+		// Track the conditioning of this particular affine sum, not the QR
+		// factor. Overflow here means cancellation could still save the result.
+		absoluteTerms += math.Abs(term)
+		if !finite(absoluteTerms) {
+			return m.exactRowPrediction(ctx, x, row)
+		}
+
+		// Neumaier's residual captures rounding when adding very different
+		// magnitudes. Keep it separate from the rounded running sum.
+		next := sum + term
+		if !finite(next) {
+			return m.exactRowPrediction(ctx, x, row)
+		}
+		var additionError float64
+		if math.Abs(sum) >= math.Abs(term) {
+			additionError = (sum - next) + term
+		} else {
+			additionError = (term - next) + sum
+		}
+
+		// FMA computes the residual of an individually rounded multiplication.
+		// It is NOT the same error as the addition residual above.
+		correction += additionError
+		if !finite(correction) {
+			return m.exactRowPrediction(ctx, x, row)
+		}
+		correction += math.FMA(feature, slope, -term)
+		if !finite(correction) {
+			return m.exactRowPrediction(ctx, x, row)
+		}
+		sum = next
+	}
+
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	prediction := sum + correction
+	if !finite(prediction) {
+		return m.exactRowPrediction(ctx, x, row)
+	}
+
+	// A heavily canceled response is exceptionally sensitive to cumulative
+	// rounding errors, including errors in the correction itself. Recompute it
+	// exactly instead of relying on an arbitrary near-zero float64 threshold.
+	if absoluteTerms != 0 && math.Abs(prediction) <= affineCancellationThreshold*absoluteTerms {
+		return m.exactRowPrediction(ctx, x, row)
 	}
 	return prediction, nil
 }
@@ -79,9 +249,17 @@ func (m *Model) rowPrediction(ctx context.Context, x matrix.Matrix, row int) (fl
 //	ErrOverflow for unrepresentable predictions; ctx.Err(), Matrix.At errors.
 //
 // Determinism: two ascending row-major passes; each dot product scans columns ascending.
-// Complexity: Time O(n*p), Space O(n) for the detached output.
+// Complexity: Time O(n*p), Space O(n) for ordinary finite rows and detached output;
+//
+//	exceptional rows use exactRowPrediction with its documented big-integer cost.
+//
 // Notes: Concurrent calls are safe if callers do not concurrently mutate input matrices.
+//
+//	Compensated rounding may change last bits relative to historical sequential FMA.
+//
 // AI-Hints: A new inference batch MUST NOT trigger stats.FitStandardizer or scale refitting.
+//
+//	Zero-row batches allocate only the detached empty result; never attempt QR on them.
 func (m *Model) Predict(ctx context.Context, x matrix.Matrix) ([]float64, error) {
 	if err := contextErr(ctx); err != nil {
 		return nil, err
@@ -131,6 +309,9 @@ func (m *Model) Predict(ctx context.Context, x matrix.Matrix) ([]float64, error)
 			return nil, err
 		}
 		out[row] = value
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }

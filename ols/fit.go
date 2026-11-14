@@ -20,7 +20,8 @@ import (
 // Implementation:
 //   - Stage 1: materialize a detached design and one-column response matrix.
 //   - Stage 2: solve by pivoted QR; preserve dependency sentinels and full rank.
-//   - Stage 3: convert parameters, compute the true original-unit SSE, and publish.
+//   - Stage 3: convert parameters, compute SSE with the same compensated/exact
+//     physical-unit prediction kernel used during inference, and publish.
 //
 // Behavior highlights:
 //   - No alternate numerical kernel, Gram matrix, pseudoinverse, or fallback is used.
@@ -41,6 +42,9 @@ import (
 // Complexity: Time O(n*q*q+q*q*q), Space O(n*q+p) including QR workspace.
 // Notes: The internal Model object is not returned unless residual verification succeeds.
 // AI-Hints: QR's reported residual norm is not the public squared SSE diagnostic.
+//
+//	Never replace original-unit rowPrediction with a normalized QR residual:
+//	different arithmetic would make Fit's SSE disagree with Model.Predict.
 func fitKernel(ctx context.Context, x matrix.Matrix, y []float64, n, p, q int, opts Options) (*FitResult, error) {
 	// Stage 1: independent design coordinates keep input ownership intact.
 	designMatrix, means, scales, err := design(ctx, x, n, p, q, opts)
@@ -119,12 +123,14 @@ func fitKernel(ctx context.Context, x matrix.Matrix, y []float64, n, p, q int, o
 // It uses the same rowPrediction law exposed by Model.Predict on training data.
 //
 // Implementation:
-//   - Stage 1: evaluate each training prediction and reject unrepresentable residuals.
+//   - Stage 1: evaluate each training row with Model.Predict's shared compensated
+//     affine kernel; retry exact dot products on exceptional numerical ranges.
 //   - Stage 2: accumulate a scaled sum of squares, renormalizing on larger magnitudes.
 //   - Stage 3: reconstruct squared SSE by binary exponent scaling and check finiteness.
 //
 // Behavior highlights:
 //   - For finite residuals, intermediate residual*residual is never evaluated.
+//   - No independent SSE prediction formula or alternate scaling is used.
 //   - SSE is not divided by n, residual degrees of freedom, or response variance.
 //
 // Inputs: ctx non-nil; x/y validated read-only n-row observations; m fitted and private.
@@ -133,6 +139,10 @@ func fitKernel(ctx context.Context, x matrix.Matrix, y []float64, n, p, q int, o
 // Determinism: input rows ascend, then prediction feature columns ascend.
 // Complexity: Time O(n*p), Space O(1) auxiliary beyond Model.
 // Notes: Float64 rounding can underflow extremely tiny squared errors to zero.
+//
+//	An exact fallback concerns the affine dot product; residuals and squared
+//	summation still use the documented finite float64 result arithmetic.
+//
 // AI-Hints: Do not replace this with naive residual*residual accumulation for huge y.
 func residualSumSquares(ctx context.Context, x matrix.Matrix, y []float64, m *Model) (float64, error) {
 	residualScale, scaledSquares := 0.0, 1.0

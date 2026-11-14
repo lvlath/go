@@ -8,6 +8,7 @@ package ols_test
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/rand"
 	"testing"
 
@@ -82,6 +83,70 @@ func BenchmarkPredict(b *testing.B) {
 			for iteration := 0; iteration < b.N; iteration++ {
 				if _, err = fitted.Model.Predict(ctx, x); err != nil {
 					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkPredict_AffineArithmetic compares fixed-size repeated prediction
+// workloads; its measurements separate ordinary rows from rare exact fallbacks.
+// The caller's floating-point operation distribution, not just n*p, determines
+// how much extra precision is required for the published physical responses.
+func BenchmarkPredict_AffineArithmetic(b *testing.B) {
+	const (
+		features = 16
+		rows     = 64
+	)
+	ctx := context.Background()
+
+	// Identity training has full numerical rank and exactly representable unit
+	// slopes. Fit cost is excluded from both prediction benchmark subcases.
+	training, err := matrix.NewDense(features, features)
+	if err != nil {
+		b.Fatal(err)
+	}
+	for j := 0; j < features; j++ {
+		if err := training.Set(j, j, 1); err != nil {
+			b.Fatal(err)
+		}
+	}
+	responses := make([]float64, features)
+	for j := range responses {
+		responses[j] = 1
+	}
+	fit, err := ols.FitThroughOrigin(ctx, training, responses)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	for _, benchmark := range []struct {
+		name       string
+		firstThree [3]float64
+	}{
+		{"ordinary", [3]float64{1.5, 0.75, 0.25}},
+		{"lost_small_term", [3]float64{1e16, 1, -1e16}},
+		{"overflow_cancellation", [3]float64{math.MaxFloat64, 0, -math.MaxFloat64}},
+	} {
+		b.Run(benchmark.name, func(b *testing.B) {
+			holdout, err := matrix.NewDense(rows, features)
+			if err != nil {
+				b.Fatal(err)
+			}
+			for row := 0; row < rows; row++ {
+				for col, value := range benchmark.firstThree {
+					if err := holdout.Set(row, col, value); err != nil {
+						b.Fatal(err)
+					}
+				}
+			}
+
+			b.ReportAllocs()
+			b.ResetTimer()
+			for trial := 0; trial < b.N; trial++ {
+				predicted, err := fit.Model.Predict(ctx, holdout)
+				if err != nil || len(predicted) != rows {
+					b.Fatalf("prediction failed: length=%d, err=%v", len(predicted), err)
 				}
 			}
 		})

@@ -3,7 +3,7 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/FAQ_&_TIPS.md
-  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, acf and the wider lvlath package family
+  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm and the wider lvlath package family
   lvlath - FAQ & Tips
 
   Purpose:
@@ -683,7 +683,7 @@ The implementation keeps one upper-triangle accumulator and writes its value int
 
 ### Q6.10. Can `Correlation` succeed when `Covariance` fails?
 
-Yes. Correlation is dimensionless and is computed from **normalized centered moments**, not by dividing a materialized covariance matrix. Two perfectly anticorrelated channels of magnitude `1e200` have Pearson coefficient `-1`, even if the covariance exceeds finite binary64. Their standard deviations may still be representable. For a constant feature, the entire correlation row and column-including the diagonal-is exactly zero; for nonconstant features the diagonal is one.
+Yes. Correlation is dimensionless and is computed from **normalized centered moments**, not by dividing a materialized covariance matrix. Two perfectly anticorrelated channels of magnitude `1e200` have Pearson coefficient `-1`, even if the covariance exceeds finite binary64. Their standard deviations may still be representable. For a constant feature, the entire correlation row and column—including the diagonal—is exactly zero; for nonconstant features the diagonal is one.
 
 ### Q6.11. Does `CenterColumns` always return a detached matrix?
 
@@ -1977,7 +1977,7 @@ Use the exact repository toolchain; check `go test ./pca -count=1`, `go test -ra
 
 ---
 
-### 13e. HMM FAQ - causal regimes, smoothing, decoding and EM
+### 13e. HMM FAQ — causal regimes, smoothing, decoding and EM
 
 #### Q13e.1. When do I use `FilterStep`, `FilterWithHistory`, `Smooth` or `Decode`?
 
@@ -2013,7 +2013,7 @@ With independent sequences, each one gets its **own** initial hidden state drawn
 
 #### Q13e.9. Why does `FitGaussian` reject a positive initial variance below the floor?
 
-`NewGaussian` accepts any strictly positive finite diagonal variance. `FitGaussian` additionally requires **initial variance >= effective `VarianceFloor`**, which defaults to `1e-8` in *feature²* units. The constrained M-step uses `max(empiricalVariance,VarianceFloor)`-it does not add the floor as noise. If the seed is outside the constrained feasible domain, it is `ErrInvalidOption`, not a silently repaired start. Scaling training features changes the physical interpretation of the variance floor; freeze preprocessing units first.
+`NewGaussian` accepts any strictly positive finite diagonal variance. `FitGaussian` additionally requires **initial variance >= effective `VarianceFloor`**, which defaults to `1e-8` in *feature²* units. The constrained M-step uses `max(empiricalVariance,VarianceFloor)`—it does not add the floor as noise. If the seed is outside the constrained feasible domain, it is `ErrInvalidOption`, not a silently repaired start. Scaling training features changes the physical interpretation of the variance floor; freeze preprocessing units first.
 
 #### Q13e.10. What happens to a dead hidden state with zero posterior occupancy?
 
@@ -2021,7 +2021,7 @@ No state is deleted or randomly reseeded. With `lambda=0`, a categorical emissio
 
 #### Q13e.11. Does an EM error always mean a nil model?
 
-**No.** Invalid options, invalid input, impossible observations or context cancellation return nil. `ErrNotConverged` means the iteration budget was exhausted and returns the **last accepted immutable model** with `Converged=false`; `ErrNumerical` on objective decline returns the last accepted model for diagnosis. Neither constitutes a successful fit. The current code rejects *any* negative finite penalized-objective change (including tiny roundoff) rather than allowing a tolerance band; callers must not silently reinterpret that as convergence. Use `errors.Is` and inspect `Diagnostics.Objective`, `Iterations`, `Converged`, and `Occupancy`.
+**No.** Invalid options, invalid input, impossible observations or context cancellation return nil. `ErrNotConverged` means the iteration budget was exhausted and returns the **last accepted immutable model** with `Converged=false`; `ErrNumerical` on objective decline returns the last accepted model for diagnosis. Neither constitutes a successful fit. A lower candidate is **never accepted**. An objective decline of at most two binary64 ULPs that also meets the caller's convergence threshold classifies the previously accepted model as numerically stationary; no declining score is appended. Larger declines still produce `ErrNumerical`. Callers must never silently accept a degraded model. Use `errors.Is` and inspect `Diagnostics.Objective`, `Iterations`, `Converged`, and `Occupancy`.
 
 #### Q13e.12. What does `IsNil()` test, and is an empty result valid?
 
@@ -2041,7 +2041,31 @@ Categorical `FilterDefault` requires O(K) live workspace plus immutable model; `
 
 #### Q13e.16. Where can I see practical, executable scenarios and independent proofs?
 
-[`hmm/example_test.go`](../hmm/example_test.go) exercises clickstream intent, live market regime monitoring, retrospective incident interpretation, industrial state decoding, and independent-session EM. [`examples/hmm`](../examples/hmm) (when installed) shows a standalone synthetic streaming regime scenario. The `hmm_test` suite checks exact tiny hidden-path enumeration, prefix invariance, state detachment, long-sequence log evidence, Viterbi ties, MAP objective behavior and concurrent inference. The worked formulas and decision boundaries are in [`HMM.md`](HMM.md). Real deployments must separately validate regime semantics, policy thresholds and out-of-sample calibration.
+[`hmm/example_test.go`](../hmm/example_test.go) exercises clickstream intent, live market regime monitoring, retrospective incident interpretation, industrial state decoding, and independent-session EM. [`examples/hmm`](../../../../Downloads/lvlath_hmm_v7_hardened/examples/hmm) (when installed) shows a standalone synthetic streaming regime scenario. The `hmm_test` suite checks exact tiny hidden-path enumeration, prefix invariance, state detachment, long-sequence log evidence, Viterbi ties, MAP objective behavior and concurrent inference. The worked formulas and decision boundaries are in [`HMM.md`](HMM.md). Real deployments must separately validate regime semantics, policy thresholds and out-of-sample calibration.
+
+#### Q13e.17. Why can a normalized log posterior fail after a very large Gaussian observation?
+
+When all states share an emission score near `-5e15`, calculating `log(p)+emission` in raw coordinates may erase the small `log(p)` distinctions. Subtracting a rounded full likelihood then fails to recover them: even equal states can sum to `0.7357` instead of `1`. The current Forward kernel removes the common emission **before** prediction is added, normalizes locally, and accumulates log evidence separately. `FilterStep` retains the original strict `1e-12` state normalization rule; do not increase that threshold to hide a damaged checkpoint.
+
+#### Q13e.18. How can `x-mean` overflow when the Gaussian log density is finite?
+
+For `x=+1.1e308`, `mean=-1.1e308`, `variance=MaxFloat64`, the physical difference is too large for float64, but the standardized residual is finite. The kernel uses direct subtraction whenever it is finite, otherwise `x/sqrt(variance)-mean/sqrt(variance)`; it then calculates the negative half-square in a safe order. A genuinely unrepresentable complete density still returns `ErrOverflow`.
+
+#### Q13e.19. Why must Viterbi differentiate an impossible path from log-score overflow?
+
+A categorical zero transition makes a path **structurally impossible**. Two finite Gaussian log densities can instead add to less than `-MaxFloat64` while the hidden trajectory remains mathematically supported. Viterbi tracks reachability independently of score, with exceptional wide arithmetic for overflowed candidates. If its winning supported path has an unrepresentable final cost, expect `ErrOverflow`, not `ErrImpossibleSequence`. A losing overflowed branch is not allowed to corrupt a finite winner.
+
+#### Q13e.20. Why is integer-safe `rows*cols` still insufficient for a matrix buffer?
+
+A Go slice also needs addressable **bytes**. For `float64` the checked bound is `rows*cols <= MaxInt/8`; for Viterbi backpointers it is `MaxInt/(IntSize/8)`. Custom virtual matrices with enormous declared shapes are rejected with `ErrOverflow` before their first `At()` read. This prevents the arithmetic `makeslice` panic, but it cannot guarantee available physical memory for every representable buffer.
+
+#### Q13e.21. How does the Gaussian M-step avoid cancellation at `1e8±1`?
+
+The E-step computes responsibilities under the same immutable old model in two deterministic passes. The first pass obtains a weighted new mean using compensated scaled differences; the second evaluates squared deviations **around that new mean**, normalized before summing. Therefore `[1e8-1,1e8+1]` has fitted population variance `1`, and `[-1e154,0,1e154]` can produce the finite population variance about `6.67e307`. A changed scalar feature scale requires a consistent external preprocessing policy and a corresponding squared-unit `VarianceFloor`.
+
+#### Q13e.22. Does `Pseudocount=1e308` necessarily make categorical EM invalid?
+
+No. A 2-symbol row with finite expected counts `[1,1]` and a symmetric Dirichlet pseudocount `1e308` still has exact probabilities `[0.5,0.5]`. The package scales counts and lambda before summation rather than computing the overflowing raw denominator `total+2*lambda`. An *actually* unrepresentable penalized objective is a separate numerical failure; it is not grounds for manufacturing a zero-probability row.
 
 ---
 
@@ -2537,6 +2561,7 @@ see [`RNG.md`](RNG.md), [`rng/doc.go`](../../../../Downloads/lvlath_rng_phase20_
 
 ---
 
+
 ## 14. Builder and gridgraph tips
 
 ### Q14.1. When should I use `builder`?
@@ -2938,47 +2963,6 @@ Fit `stats.FitStandardizer` on a stable training `matrix.Matrix` with explicit `
 Fit `pca.FitWithComponents` on the healthy **training** matrix and retain the immutable `Model`. Reconstruct a separate healthy **calibration** matrix and derive a documented threshold from its per-row residuals in consistent units. Score untouched holdout/production rows with the same model; do not refit PCA or recompute feature means for the incoming batch. A threshold exceedance is an **investigation signal**, not a hardware shutdown or clinical decision. For mixed-unit channels, calibrate physical-channel residuals separately or define an independently fitted weighting rule; the PCA Model does not expose its internal scales.
 
 See [`PCA.md`](PCA.md) and [`pca/example_test.go`](../pca/example_test.go) for the actual public API and deterministic examples.
-
-### Recipe L. Investigate fixed-window retry or vibration periodicity
-
-Validate the sampling cadence and choose two **non-overlapping or otherwise
-explicitly defined** analysis windows. After handling any `series` validity
-masks, call `acf.ComputeDefault` for the same scientific lag horizon in each
-window. Compare coefficients **and** `PairCounts`, and persist the estimator
-convention and window boundaries with the incident record. A repeat peak is
-an investigation lead, not a root-cause diagnosis or a p-value. For
-physical-zero raw signals use `acf.ComputeUncentered` deliberately; for
-lag-adjusted covariance ratios use `acf.ComputeLagAdjusted` without clipping.
-Never substitute `LagAdjusted` into a Toeplitz PSD-sensitive solver.
-
-See [`ACF.md`](ACF.md) and the reproducible `go run ./examples/acf` program.
-
----
-
-### Recipe M. Replay an index-only block-bootstrap audit
-
-```go
-plan := bootstrap.Plan{
-    Kind: bootstrap.StationaryBlocks,
-    Length: trainingRows,
-    BlockLength: 8,
-    Replicates: 200,
-    Seed: 0,
-}
-result, err := bootstrap.SampleIndices(ctx, trainingRows, plan)
-if err != nil {
-    // A non-nil partial Result can contain completed rows; do not silently
-    // accept those rows as the requested full 200-replicate ensemble.
-    return err
-}
-// Persist plan, trainingRows and result.RNG before gathering domain values.
-_ = result
-```
-
-This snippet belongs inside a function returning `error` with `ctx` and
-`trainingRows` supplied by the caller. `bootstrap` does not read observations,
-select block length or estimate confidence intervals. See
-[`BOOTSTRAP.md`](BOOTSTRAP.md) for exact mathematics and memory limits.
 
 ---
 

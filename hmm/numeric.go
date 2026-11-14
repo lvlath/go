@@ -62,8 +62,8 @@ func simplexPenalty(lambda float64, arrays ...[]float64) float64 {
 //
 // Implementation:
 //   - Stage 1: Allocate a detached row-major output buffer.
-//   - Stage 2: For each row compute expected count total and add symmetric lambda to every cell.
-//   - Stage 3: Normalize updated rows or copy unchanged dead rows when lambda is zero.
+//   - Stage 2: Scale each row by the maximum count or lambda before summing masses.
+//   - Stage 3: Normalize in bounded coordinates or preserve dead rows at lambda zero.
 //
 // Behavior highlights:
 //   - No random reset and no epsilon floor are used to revive dead states.
@@ -88,25 +88,80 @@ func simplexPenalty(lambda float64, arrays ...[]float64) float64 {
 //
 // AI-Hints:
 //   - For lambda>0, a zero-count row becomes uniform; for lambda=0 it retains old values.
+//   - Do not compute total+cols*lambda in raw units; both can overflow independently.
 func updateSimplex(counts, old []float64, n, cols int, lambda float64) []float64 {
 	result := make([]float64, len(counts))
 	for i := 0; i < n; i++ {
-		var total float64
+		rowStart := i * cols
+		// Scale all nonnegative terms by their largest magnitude. The raw
+		// denominator sum(counts)+cols*lambda may overflow while every
+		// normalized Dirichlet MAP probability remains representable.
+		scale := lambda
 		for j := 0; j < cols; j++ {
-			total += counts[i*cols+j]
+			if counts[rowStart+j] > scale {
+				scale = counts[rowStart+j]
+			}
 		}
-		// A zero-count row has no evidence-driven replacement when lambda=0;
-		// preserve the previous stochastic row instead of inventing uniformity.
-		if total == 0 && lambda == 0 {
-			copy(result[i*cols:(i+1)*cols], old[i*cols:(i+1)*cols])
+		if scale == 0 {
+			// With lambda=0, dead states have no supported data-driven
+			// update and must retain their existing stochastic parameters.
+			copy(result[rowStart:rowStart+cols], old[rowStart:rowStart+cols])
 			continue
 		}
-		den := total + float64(cols)*lambda
+		regularizer := lambda / scale
+		denominator := float64(cols) * regularizer
 		for j := 0; j < cols; j++ {
-			result[i*cols+j] = (counts[i*cols+j] + lambda) / den
+			denominator += counts[rowStart+j] / scale
+		}
+		for j := 0; j < cols; j++ {
+			result[rowStart+j] = (counts[rowStart+j]/scale + regularizer) / denominator
 		}
 	}
 	return result
+}
+
+// objectiveRoundoffPlateau recognizes a one-ULP objective tie without accepting a decrease.
+// It allows the last already accepted model to be reported converged when a
+// deterministic floating-point M-step can no longer improve the MAP objective.
+//
+// Implementation:
+//   - Stage 1: Require two finite scores and a strictly negative candidate movement.
+//   - Stage 2: Bound the decline by two neighboring representable objective values.
+//   - Stage 3: Require the same user-selected relative convergence threshold.
+//
+// Behavior highlights:
+//   - The declining candidate is NEVER published; objective history stays nondecreasing.
+//
+// Inputs:
+//   - previous, next: consecutive penalized scores; tolerance: nonnegative fit threshold.
+//
+// Returns:
+//   - bool: whether the current accepted model is a numerical fixed point.
+//
+// Errors:
+//   - None; larger declines still flow to monotonic and return ErrNumerical.
+//
+// Determinism:
+//   - Uses IEEE-754 adjacent representable values with no heuristic data dependence.
+//
+// Complexity:
+//   - Time O(1), Space O(1).
+//
+// Notes:
+//   - A fixed-point stop retains the previous model and does not add a candidate objective.
+//
+// AI-Hints:
+//   - Do not enlarge validState posterior tolerance to resolve EM roundoff.
+//   - Do not add a negative score to Diagnostics.Objective even on roundoff ties.
+func objectiveRoundoffPlateau(previous, next, tolerance float64) bool {
+	if !finite(previous) || !finite(next) || next >= previous {
+		return false
+	}
+	const maxRoundingUnits = 2
+	ulp := math.Abs(math.Nextafter(previous, math.Inf(1)) - previous)
+	decline := previous - next
+	return decline <= maxRoundingUnits*ulp &&
+		decline <= tolerance*math.Max(1, math.Abs(previous))
 }
 
 // monotonic checks whether a candidate increases the penalized EM objective and has converged.

@@ -233,7 +233,21 @@ $$
 
 It is neither `sum residuals`, `sqrt(SSE)`, `SSE/n`, nor `SSE/(n-q)`. QR's own `ResidualNorms` answer a different diagnostic question; they are not substituted for this field. The package accumulates squared residuals using a scaled sum-of-squares recurrence so that a finite output is not rejected merely because an intermediate unscaled square overflowed. Final unrepresentable SSE returns `ErrOverflow`; extremely tiny positive SSE can underflow to zero in binary64.
 
-`math.FMA(x,beta,accumulator)` reduces rounding of each multiply-add, but does not make a long dot product exactly associative or eliminate every possible loss of significance. Therefore **never write exact-equality assertions for general fitted floating-point predictions**. Compare against an independent oracle with a tolerance justified by the data and conditioning:
+**Prediction stability is a separate contract from QR coefficient stability.** A sequential `math.FMA(x,beta,accumulator)` does not protect small terms trapped between large canceling terms. OLS instead uses a fixed-order Neumaier compensated accumulation of rounded products, together with `math.FMA(feature,slope,-roundedProduct)` to retain multiplication rounding errors. The physical-unit intercept participates in the same sum. All batch inputs are checked for finiteness before predictions are computed.
+
+Two exactly representable audit examples explain why both layers are necessary:
+
+```text
+features: [1e16, 1, -1e16]     fitted slopes: [1, 1, 1]
+naive sequential FMA: 0         correct complete affine sum: 1
+
+features: [MaxFloat64, MaxFloat64]  fitted slopes: [10, -10]
+naive intermediate product: +Inf  correct complete affine sum: 0
+```
+
+When an individual product, a partial sum, or its correction becomes nonfinite, **the full row is reevaluated as exact rational products of the original finite binary64 inputs**. An exceptionally small product or severe cancellation can also activate this path. The complete affine sum is rounded only once on that path; `ErrOverflow` is returned only if its final float64 representation is nonfinite. This does **not** change the fitted coefficients, regularize the system, recenter observations, or use a second model. The ordinary row path remains allocation-free; the exceptional path allocates local big-number scratch but does not modify `Model`.
+
+As with other compensated algorithms, a finite ordinary-path result is an approximation, not a universal correctly rounded dot-product guarantee. Likewise, the QR-fitted coefficients may differ slightly from mathematically ideal real-valued coefficients. **Never require exact equality for generic fitted floating-point predictions**; compare against an independent oracle using an error budget justified by the data and conditioning:
 
 ```text
 acceptable = abs(got-want) <= absTol + relTol*max(abs(got),abs(want))
@@ -358,7 +372,7 @@ func main() {
 
 ## 12. Five executable operational scenarios
 
-The canonical, compiled `// Output:` fixtures live in [`ols/example_test.go`](../../../../Downloads/lvlath_ols_phase09_v2/ols/example_test.go); they use generated-but-operationally-shaped data, not live feeds. Each example includes its domain premise, model limitation, and useful consumer action:
+The canonical, compiled `// Output:` fixtures live in [`ols/example_test.go`] they use generated-but-operationally-shaped data, not live feeds. Each example includes its domain premise, model limitation, and useful consumer action:
 
 | Executable example              | Data and decision                                                                               | Contract it protects                                                 |
 |---------------------------------|-------------------------------------------------------------------------------------------------|----------------------------------------------------------------------|
@@ -368,7 +382,7 @@ The canonical, compiled `// Output:` fixtures live in [`ols/example_test.go`](..
 | `ExampleFit_redundantTelemetry` | 18 telemetry rows; duplicate feature rejection; explicit reduced-schema refit                   | QR rank gate and no silent fallback/column dropping                  |
 | `ExampleModel_Predict`          | 18 training days followed by six holdout days; MAE and model-copy isolation                     | No look-ahead scaling, reproducible inference, detached coefficients |
 
-A longer standalone factor-model application is available in [`examples/ols/main.go`](../examples/ols/main.go) where that scenario has been installed in the repository. Its output and error classification must be reviewed against the same public API before deploying.
+A longer standalone factor-model application is available in [`examples/ols/main.go`](../../../../Downloads/lvlath_ols_phase09_num02_p1/examples/ols/main.go) where that scenario has been installed in the repository. Its output and error classification must be reviewed against the same public API before deploying.
 
 ## 13. Counterexamples and operational pitfalls
 
@@ -443,18 +457,18 @@ Model.Predict(ctx,future):
 
 Let `n` be training rows, `p` features, `q=p+1` or `p`, and `m` inference rows:
 
-| Phase                                        | Time (nominal floating operations) | Extra memory                                                                   |
-|----------------------------------------------|------------------------------------|--------------------------------------------------------------------------------|
-| Input validation                             | `O(n*p)`                           | `O(1)`                                                                         |
-| Fitted population feature scaling (optional) | `O(n*p)`                           | `O(p)` state (plus external exact-moment work)                                 |
-| Design materialization and RHS               | `O(n*q)`                           | `O(n*q)`                                                                       |
-| Pivoted QR                                   | `O(n*q²)`                          | `O(n*q)` factor storage                                                        |
-| Triangular condition measurement             | `O(q³)`                            | `O(q)` per basis solve                                                         |
-| Original-unit coefficient mapping            | `O(p)`                             | `O(p)`                                                                         |
-| Training SSE                                 | `O(n*p)` arithmetic                | `O(1)` above Model; QR's own exact residual computation may use multiprecision |
-| Predict m rows                               | `O(m*p)`                           | `O(m)` detached output                                                         |
+| Phase                                        | Time (nominal floating operations)            | Extra memory                                                                          |
+|----------------------------------------------|-----------------------------------------------|---------------------------------------------------------------------------------------|
+| Input validation                             | `O(n*p)`                                      | `O(1)`                                                                                |
+| Fitted population feature scaling (optional) | `O(n*p)`                                      | `O(p)` state (plus external exact-moment work)                                        |
+| Design materialization and RHS               | `O(n*q)`                                      | `O(n*q)`                                                                              |
+| Pivoted QR                                   | `O(n*q²)`                                     | `O(n*q)` factor storage                                                               |
+| Triangular condition measurement             | `O(q³)`                                       | `O(q)` per basis solve                                                                |
+| Original-unit coefficient mapping            | `O(p)`                                        | `O(p)`                                                                                |
+| Training SSE                                 | `O(n*p)` ordinary prediction + scaled squares | `O(1)` beyond Model on ordinary rows; exceptional predictions use local exact scratch |
+| Predict m rows                               | `O(m*p)` ordinary arithmetic                  | `O(m)` detached output + `O(1)` ordinary row scratch                                  |
 
-The published asymptotic envelope is `O(n*q²+q³)` for fitting and `O(m*p)` for prediction. **Real runtime** includes `matrix`'s pivot norm recomputation, exact binary residual diagnostics, and `stats`'s numerical routines; operation counts alone do not predict allocation cost. Repeated OLS fits currently refactor the matrix; there is no publicly promised retained incremental QR updater.
+A row requiring exact arithmetic uses `math/big.Rat` with larger arithmetic cost, bounded by the input exponent widths and number of products. The published common-case envelope remains `O(n*q²+q³)` for fitting and `O(m*p)` for prediction; these bounds **exclude exceptional multiprecision rows**. **Real runtime** includes `matrix`'s pivot norm recomputation, exact binary residual diagnostics, and `stats`'s numerical routines; operation counts alone do not predict allocation cost. Repeated OLS fits currently refactor the matrix; there is no publicly promised retained incremental QR updater.
 
 Benchmarks in `ols/bench_test.go` measure representative shapes `(n,p)=(100,2),(1000,16),(10000,64)` without including fixture construction in `b.N`. Record `ns/op`, `B/op`, `allocs/op`, CPU, Go toolchain, and benchmark command before claiming an improvement. Do not infer speed from an isolated mock dependency.
 
@@ -462,17 +476,22 @@ Benchmarks in `ols/bench_test.go` measure representative shapes `(n,p)=(100,2),(
 
 Acceptance tests should defend at least these independent laws:
 
-| Test class                         | Representative fixtures                                            | Expected                                                       |
-|------------------------------------|--------------------------------------------------------------------|----------------------------------------------------------------|
-| Exact linear recovery              | Small full-rank line and multivariate rational oracle              | Parameters near mathematical oracle, training SSE near zero    |
-| No-intercept affine counterexample | `[1,2]` predicting `[1,2]` with standardization                    | `b==+0` exactly and slope near 1                               |
-| Rank loss                          | Identical columns, constant-with-intercept, zero column            | `ErrRankDeficient`, nil FitResult                              |
-| Shape/finite/option precedence     | nil/typed-nil, `n<q`, invalid rank tolerance, NaN/Inf              | Correct `errors.Is` classification and nil result              |
-| Original-unit holdout              | Training centering and scale, heldout shifted far away             | No refit; physical coefficients predict same values repeatedly |
-| Ownership                          | Mutate returned beta, `FitResult.Model`, input after completed fit | Retained Model remains usable and independent                  |
-| Concurrency                        | 50+ Predict workers on same Model with fixed input                 | Race-clean, independent output slices                          |
-| Numeric overflow                   | Finite residuals whose SSE does not fit binary64                   | `ErrOverflow`, no partial publication                          |
-| Independent oracle                 | `math/big.Rat` on small exactly represented inputs                 | Compare values with scale-aware error budgets                  |
+| Test class                         | Representative fixtures                                            | Expected                                                                                 |
+|------------------------------------|--------------------------------------------------------------------|------------------------------------------------------------------------------------------|
+| Exact linear recovery              | Small full-rank line and multivariate rational oracle              | Parameters near mathematical oracle, training SSE near zero                              |
+| No-intercept affine counterexample | `[1,2]` predicting `[1,2]` with standardization                    | `b==+0` exactly and slope near 1                                                         |
+| Rank loss                          | Identical columns, constant-with-intercept, zero column            | `ErrRankDeficient`, nil FitResult                                                        |
+| Shape/finite/option precedence     | nil/typed-nil, `n<q`, invalid rank tolerance, NaN/Inf              | Correct `errors.Is` classification and nil result                                        |
+| Original-unit holdout              | Training centering and scale, heldout shifted far away             | No refit; physical coefficients predict same values repeatedly                           |
+| Ownership                          | Mutate returned beta, `FitResult.Model`, input after completed fit | Retained Model remains usable and independent                                            |
+| Concurrency                        | 50+ Predict workers on same Model with fixed input                 | Race-clean, independent output slices                                                    |
+| Numeric overflow                   | Finite residuals whose SSE does not fit binary64                   | `ErrOverflow`, no partial publication                                                    |
+| Independent oracle                 | `math/big.Rat` on original binary64 operands                       | Compare against the actual fitted beta/intercept, not hypothetical exact QR coefficients |
+| Lost small affine term             | `1e16 + 1 - 1e16`                                                  | Exactly `1` for an identity-trained unit-slope model                                     |
+| Representable cancellation         | `10*MaxFloat64 - 10*MaxFloat64`                                    | Exactly `0`, no false ErrOverflow                                                        |
+| Subnormal contributions            | Two `0.5*SmallestNonzeroFloat64` terms                             | Final result `SmallestNonzeroFloat64`                                                    |
+| True final overflow                | Two positive `MaxFloat64` terms                                    | Nil prediction and ErrOverflow                                                           |
+| Concurrent exact fallback          | 64 goroutines, same trained Model                                  | Race-clean, detached outputs, no shared big-number state                                 |
 
 Recommended repository verification (run with the actual `go.mod` toolchain, not mocks):
 
@@ -489,10 +508,10 @@ The quality gate is at least 80% coverage measured against the **real** package 
 
 ## 17. Related contracts and non-goals
 
-- [`ols/doc.go`](../../../../Downloads/lvlath_ols_phase09_v2/ols/doc.go) — normative domain, nil, concurrency, numeric, and error charter.
-- [`ols/api.go`](../../../../Downloads/lvlath_ols_phase09_v2/ols/api.go) — canonical Fit and four option-transparent wrappers.
-- [`ols/types.go`](../../../../Downloads/lvlath_ols_phase09_v2/ols/types.go) — options, immutable Model, FitResult and `core.Nilable`.
-- [`ols/example_test.go`](../../../../Downloads/lvlath_ols_phase09_v2/ols/example_test.go) — five runnable engineering scenarios with stable `// Output:`.
+- [`ols/doc.go`](/ols/doc.go) — normative domain, nil, concurrency, numeric, and error charter.
+- [`ols/api.go`](/ols/api.go) — canonical Fit and four option-transparent wrappers.
+- [`ols/types.go`](/ols/types.go) — options, immutable Model, FitResult and `core.Nilable`.
+- [`ols/example_test.go`](/ols/example_test.go) — five runnable engineering scenarios with stable `// Output:`.
 - [`MATRICES.md`](MATRICES.md) — pivoted QR internals, condition estimate, row-major matrix ownership.
 - [`STATS.md`](STATS.md) — DDOF=0, population scales, `UnitScaleConstant`, and train-only fitted transforms.
 - [`SERIES.md`](SERIES.md) — exact timestamp grids, validity masks, and explicit preparation before regression.
