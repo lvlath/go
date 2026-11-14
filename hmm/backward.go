@@ -52,11 +52,11 @@ type posteriorWorkspace struct {
 }
 
 // checkedTableSize validates row-major matrix lengths before allocating tables.
-// It catches invalid dimensions and integer multiplication overflow, not OS memory exhaustion.
+// It checks both cell-count and float64 byte-count arithmetic, not OS memory exhaustion.
 //
 // Implementation:
 //   - Stage 1: Reject negative rows and columns below one.
-//   - Stage 2: Check rows <= MaxInt/columns before multiplying.
+//   - Stage 2: Check the products against MaxInt bytes for []float64.
 //   - Stage 3: Return the representable flattened cell count.
 //
 // Behavior highlights:
@@ -83,10 +83,10 @@ type posteriorWorkspace struct {
 // AI-Hints:
 //   - Use this at every T*K and (T-1)*K*K allocation boundary.
 func checkedTableSize(rows, columns int) (int, error) {
-	if rows < 0 || columns < 1 || rows > int(^uint(0)>>1)/columns {
+	if columns < 1 {
 		return 0, ErrOverflow
 	}
-	return rows * columns, nil
+	return checkedAllocation(rows, columns, 8)
 }
 
 // collectEmissions evaluates per-state log emission scores for every observation.
@@ -181,32 +181,18 @@ func forwardMessages(ctx context.Context, c *chain, t int, emissions []float64) 
 			return nil, 0, err
 		}
 		row := alpha[rowIndex*k : (rowIndex+1)*k]
-		for state := 0; state < k; state++ {
-			if rowIndex == 0 {
-				row[state] = logProbability(c.prior[state]) + emissions[state]
-				continue
-			}
-			value := math.Inf(-1)
-			for predecessor := 0; predecessor < k; predecessor++ {
-				value = LogSumExp(value, alpha[(rowIndex-1)*k+predecessor]+logProbability(c.transition[predecessor*k+state]))
-			}
-			row[state] = value + emissions[rowIndex*k+state]
+		var previous []float64
+		if rowIndex > 0 {
+			previous = alpha[(rowIndex-1)*k : rowIndex*k]
 		}
-		// This scalar equals log P(x_t | x_0:t-1), so adding it to the
-		// running total restores full marginal evidence without raw products.
-		normalization := LogSumExpSlice(row)
-		if math.IsInf(normalization, -1) {
-			return nil, 0, ErrImpossibleSequence
+		increment, err := normalizedEmissionStep(c, previous,
+			emissions[rowIndex*k:(rowIndex+1)*k], row)
+		if err != nil {
+			return nil, 0, err
 		}
-		if !finite(normalization) {
-			return nil, 0, ErrOverflow
-		}
-		total += normalization
+		total += increment
 		if !finite(total) {
 			return nil, 0, ErrOverflow
-		}
-		for state := range row {
-			row[state] -= normalization
 		}
 	}
 	return alpha, total, nil
@@ -218,10 +204,10 @@ func forwardMessages(ctx context.Context, c *chain, t int, emissions []float64) 
 // Implementation:
 //   - Stage 1: Initialize terminal beta entries to zero.
 //   - Stage 2: Traverse backward, summing next emissions, transitions, and next beta with LogSumExp.
-//   - Stage 3: Normalize alpha+beta and exponentiate once to produce gamma probabilities.
+//   - Stage 3: Normalize locally shifted alpha+beta and exponentiate to produce gamma probabilities.
 //
 // Behavior highlights:
-//   - A constant shift of all beta[t,*] cancels in both gamma and xi normalization.
+//   - A max-based shift of each beta row cancels in both gamma and xi normalization.
 //
 // Inputs:
 //   - ctx: active context; c: transition chain; t: sequence length; emissions, alpha: T*K read-only messages.
@@ -242,7 +228,7 @@ func forwardMessages(ctx context.Context, c *chain, t int, emissions []float64) 
 //   - Gamma conditions on the whole sequence: it must never be used as online filter output.
 //
 // AI-Hints:
-//   - Backward scaling affects absolute beta values; use only normalized posterior ratios.
+//   - Backward max scaling affects absolute beta values; use only normalized posterior ratios.
 func backwardMessages(ctx context.Context, c *chain, t int, emissions, alpha []float64) ([]float64, []float64, error) {
 	k := c.k
 	beta := make([]float64, len(alpha))
@@ -253,72 +239,71 @@ func backwardMessages(ctx context.Context, c *chain, t int, emissions, alpha []f
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
 		}
+		currentBeta := beta[rowIndex*k : (rowIndex+1)*k]
 		if rowIndex < t-1 {
+			// Remove next-step emission offsets before adding transition scores.
+			// Only relative beta values affect smoothed state probabilities.
+			nextEmission := emissions[(rowIndex+1)*k : (rowIndex+2)*k]
+			nextBeta := beta[(rowIndex+1)*k : (rowIndex+2)*k]
+			offset := math.Inf(-1)
+			for successor := 0; successor < k; successor++ {
+				if !math.IsInf(nextBeta[successor], -1) && nextEmission[successor] > offset {
+					offset = nextEmission[successor]
+				}
+			}
+			if math.IsInf(offset, -1) {
+				return nil, nil, ErrNumerical
+			}
+			maxBeta := math.Inf(-1)
 			for predecessor := 0; predecessor < k; predecessor++ {
 				value := math.Inf(-1)
 				for successor := 0; successor < k; successor++ {
-					value = LogSumExp(value, logProbability(c.transition[predecessor*k+successor])+emissions[(rowIndex+1)*k+successor]+beta[(rowIndex+1)*k+successor])
+					transition := logProbability(c.transition[predecessor*k+successor])
+					if math.IsInf(transition, -1) || math.IsInf(nextBeta[successor], -1) || math.IsInf(nextEmission[successor], -1) {
+						continue
+					}
+					term := (nextEmission[successor] - offset) + (transition + nextBeta[successor])
+					value = LogSumExp(value, term)
 				}
-				beta[rowIndex*k+predecessor] = value
+				currentBeta[predecessor] = value
+				if value > maxBeta {
+					maxBeta = value
+				}
 			}
-			// A state-independent shift prevents backward message growth over a
-			// long record; normalized gamma and xi are invariant under this shift.
-			scale := logPosteriorPairNormalization(alpha[rowIndex*k:(rowIndex+1)*k], beta[rowIndex*k:(rowIndex+1)*k])
-			if !finite(scale) {
+			if math.IsInf(maxBeta, -1) || !finite(maxBeta) {
 				return nil, nil, ErrNumerical
 			}
-			for state := 0; state < k; state++ {
-				beta[rowIndex*k+state] -= scale
+			for state, value := range currentBeta {
+				if !math.IsInf(value, -1) {
+					currentBeta[state] = value - maxBeta
+				}
 			}
 		}
-		scale := logPosteriorPairNormalization(alpha[rowIndex*k:(rowIndex+1)*k], beta[rowIndex*k:(rowIndex+1)*k])
-		if !finite(scale) {
+
+		// Normalize alpha+beta only after making each backward row local.
+		// In particular gamma never subtracts a huge raw Gaussian likelihood.
+		alphaRow := alpha[rowIndex*k : (rowIndex+1)*k]
+		gammaRow := gamma[rowIndex*k : (rowIndex+1)*k]
+		maximum := math.Inf(-1)
+		for state := 0; state < k; state++ {
+			gammaRow[state] = alphaRow[state] + currentBeta[state]
+			if gammaRow[state] > maximum {
+				maximum = gammaRow[state]
+			}
+		}
+		if math.IsInf(maximum, -1) || !finite(maximum) {
 			return nil, nil, ErrNumerical
 		}
-		for state := 0; state < k; state++ {
-			gamma[rowIndex*k+state] = math.Exp(alpha[rowIndex*k+state] + beta[rowIndex*k+state] - scale)
+		total := 0.0
+		for _, value := range gammaRow {
+			total += math.Exp(value - maximum)
+		}
+		logCorrection := math.Log(total)
+		for state, value := range gammaRow {
+			gammaRow[state] = math.Exp((value - maximum) - logCorrection)
 		}
 	}
 	return beta, gamma, nil
-}
-
-// logPosteriorPairNormalization computes log sum_i exp(alpha_i+beta_i) without an extra slice.
-// It supplies the per-row normalization shared by smoothed gamma and beta scaling.
-//
-// Implementation:
-//   - Stage 1: Initialize an impossible aggregate at -Inf.
-//   - Stage 2: Add log-message pairs in ascending state order with LogSumExp.
-//   - Stage 3: Return the common log normalization.
-//
-// Behavior highlights:
-//   - All-impossible pairs return -Inf, leaving error classification to callers.
-//
-// Inputs:
-//   - alpha, beta: equal-length read-only log-message rows; private kernel invariant.
-//
-// Returns:
-//   - float64: log normalizer for the row, possibly -Inf.
-//
-// Errors:
-//   - No direct error; callers return ErrNumerical for nonfinite normalization.
-//
-// Determinism:
-//   - Ascending state index determines the binary64 summation order.
-//
-// Complexity:
-//   - Time O(K), Space O(1).
-//
-// Notes:
-//   - No new allocations or mutation of either input row.
-//
-// AI-Hints:
-//   - Use this instead of summing raw exponentials of potentially tiny unnormalized scores.
-func logPosteriorPairNormalization(alpha, beta []float64) float64 {
-	total := math.Inf(-1)
-	for state := range alpha {
-		total = LogSumExp(total, alpha[state]+beta[state])
-	}
-	return total
 }
 
 // transitionExpectations computes smoothed transition-pair responsibilities xi[t,i,j].
@@ -371,21 +356,46 @@ func transitionExpectations(ctx context.Context, c *chain, t int, work *posterio
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		normalization := math.Inf(-1)
-		for predecessor := 0; predecessor < c.k; predecessor++ {
-			for successor := 0; successor < c.k; successor++ {
-				value := work.alpha[rowIndex*c.k+predecessor] + logProbability(c.transition[predecessor*c.k+successor]) + work.emissions[(rowIndex+1)*c.k+successor] + work.beta[(rowIndex+1)*c.k+successor]
-				xi[rowIndex*square+predecessor*c.k+successor] = value
-				normalization = LogSumExp(normalization, value)
+		// A shared emission offset keeps the pair log scores in a local frame.
+		// A large common Gaussian log density must not erase the differences
+		// between transition probabilities and filtered state masses.
+		nextEmission := work.emissions[(rowIndex+1)*c.k : (rowIndex+2)*c.k]
+		nextBeta := work.beta[(rowIndex+1)*c.k : (rowIndex+2)*c.k]
+		offset := math.Inf(-1)
+		for successor := 0; successor < c.k; successor++ {
+			if !math.IsInf(nextBeta[successor], -1) && nextEmission[successor] > offset {
+				offset = nextEmission[successor]
 			}
 		}
-		// Zero support or an unrepresentable pair normalizer invalidates the
-		// E-step; publishing NaN responsibilities would poison subsequent M-steps.
-		if !finite(normalization) {
+		if math.IsInf(offset, -1) {
 			return nil, ErrNumerical
 		}
+		maximum := math.Inf(-1)
+		for predecessor := 0; predecessor < c.k; predecessor++ {
+			for successor := 0; successor < c.k; successor++ {
+				transition := logProbability(c.transition[predecessor*c.k+successor])
+				value := math.Inf(-1)
+				if !math.IsInf(transition, -1) && !math.IsInf(nextBeta[successor], -1) && !math.IsInf(nextEmission[successor], -1) {
+					value = (work.alpha[rowIndex*c.k+predecessor] + transition) +
+						((nextEmission[successor] - offset) + nextBeta[successor])
+				}
+				xi[rowIndex*square+predecessor*c.k+successor] = value
+				if value > maximum {
+					maximum = value
+				}
+			}
+		}
+		if math.IsInf(maximum, -1) || !finite(maximum) {
+			return nil, ErrNumerical
+		}
+		mass := 0.0
 		for cell := 0; cell < square; cell++ {
-			xi[rowIndex*square+cell] = math.Exp(xi[rowIndex*square+cell] - normalization)
+			mass += math.Exp(xi[rowIndex*square+cell] - maximum)
+		}
+		correction := math.Log(mass)
+		for cell := 0; cell < square; cell++ {
+			value := xi[rowIndex*square+cell]
+			xi[rowIndex*square+cell] = math.Exp((value - maximum) - correction)
 		}
 	}
 	return xi, nil

@@ -132,7 +132,7 @@ func NewGaussian(spec GaussianSpec) (*GaussianModel, error) {
 //   - Stage 3: Return only the fully constructed matrix.
 //
 // Behavior highlights:
-//   - All inputs must already satisfy len(v)=rows*cols and finite-domain requirements.
+//   - The method checks byte-safe dimensions and exact input length before allocation.
 //
 // Inputs:
 //   - rows, cols: validated dimensions; v: immutable read-only private numeric data.
@@ -141,7 +141,8 @@ func NewGaussian(spec GaussianSpec) (*GaussianModel, error) {
 //   - matrix.Matrix, error: detached owning matrix on success.
 //
 // Errors:
-//   - Wrapped matrix constructor or Set errors; callers validate dimensions before entry.
+//   - ErrOverflow for unrepresentable byte counts, ErrShape for wrong flat length,
+//     and wrapped matrix constructor or Set errors.
 //
 // Determinism:
 //   - Rows then columns increase; no map iteration.
@@ -155,6 +156,13 @@ func NewGaussian(spec GaussianSpec) (*GaussianModel, error) {
 // AI-Hints:
 //   - Do not hand this helper unvalidated arbitrary user slices; shape is an internal invariant.
 func denseFromFlat(rows, cols int, v []float64) (matrix.Matrix, error) {
+	count, err := checkedAllocation(rows, cols, 8)
+	if err != nil {
+		return nil, err
+	}
+	if len(v) != count {
+		return nil, ErrShape
+	}
 	m, err := matrix.NewZeros(rows, cols)
 	if err != nil {
 		return nil, err

@@ -54,16 +54,22 @@
 //
 // # Numerical law
 //
-// Forward, backward and Viterbi combine logarithms of probabilities, using
-// LogSumExp instead of direct long products. A zero transition or categorical
+// Forward and backward combine logarithms in emission-local coordinates, so
+// their normalized posteriors retain small predictive differences even when
+// all Gaussian log densities share an enormous common negative offset.
+// Viterbi keeps structural support separate from score representability;
+// exceptional overflows use extended-range arithmetic without hiding a valid
+// path behind the -Inf sentinel. All three avoid direct probability products. A zero transition or categorical
 // emission has log mass -Inf. LogSumExp(all -Inf) is exactly -Inf, and a
 // categorical observation with no remaining possible state returns
 // ErrImpossibleSequence, never an artificial positive probability or NaN.
 //
 // A Gaussian emission is a probability *density* and can exceed 1. Its log
-// density, and thus accumulated LogLikelihood, may be positive. Finite input
-// producing an unrepresentable Gaussian log density is ErrOverflow, not an
-// impossible sequence. Floating-point addition order is fixed and documented;
+// density, and thus accumulated LogLikelihood, may be positive. The emission
+// kernel divides opposing enormous feature and mean values by standard
+// deviation before subtracting if their raw difference would overflow.
+// Finite input producing an unrepresentable final log density is ErrOverflow,
+// not an impossible sequence. Floating-point addition order is fixed and documented;
 // the implementation does not claim correctly rounded arbitrary-precision
 // results or an absence of roundoff at extreme scales.
 //
@@ -80,8 +86,13 @@
 // Lambda=0 disables this penalty, even for exact zero probabilities (no
 // 0*log(0)). Lambda>0 and an initial zero simplex cell may produce initial
 // objective -Inf, which may legitimately improve to a finite candidate.
-// Gaussian variance updates project onto the constrained domain by
-// max(estimatedVariance,VarianceFloor), not by adding epsilon. FitGaussian
+// Gaussian variance updates use two passes with the same old-model gamma:
+// the first finds weighted means from compensated, scaled residuals; the
+// second accumulates centered squared residuals in bounded coordinates.
+// Each variance is then projected onto the feasible domain with
+// max(estimatedVariance,VarianceFloor), not by adding epsilon. Large positive
+// pseudocounts are normalized in a common finite scale, not via an overflowing
+// total+columns*lambda denominator. FitGaussian
 // rejects an initial variance below that floor with ErrInvalidOption.
 //
 // Zero-occupancy states retain their previous Gaussian emission parameters;
@@ -92,8 +103,12 @@
 // Iterations counts accepted steps and Occupancy reports final expected visits.
 //
 // On MaxIterations exhaustion, Fit returns the last accepted model together
-// with ErrNotConverged and Converged=false. On a declining penalized objective,
-// Fit returns its last accepted model together with ErrNumerical. These are
+// with ErrNotConverged and Converged=false. A declining penalized objective
+// rejects its candidate and returns the last accepted model with ErrNumerical,
+// except that a decline of no more than two binary64 ULPs already within the
+// relative convergence threshold classifies the previously accepted model as
+// numerically stationary. The declining candidate is never accepted, and the
+// recorded objective history remains nondecreasing. These are
 // diagnostic partial-result exceptions, not successful fits; applications
 // must inspect errors.Is and Diagnostics.Converged before deployment. Invalid
 // inputs and context cancellation return nil results instead.
@@ -150,7 +165,10 @@
 // feature standardization belongs in stats or an application-fixed transform;
 // symbolization (for example SAX) must use a stable, explicit alphabet map.
 //
-// See docs/HMM.md for derivations, error examples, a causal-versus-smoothed
-// counterexample, operational scenarios, and integration with the wider lvlath
-// ecosystem. Executable usage lives in hmm/example_test.go.
+// All user-dependent buffer dimensions are checked in both elements and
+// addressable bytes before allocation or Matrix.At reads; representable sizes
+// do not constitute a guarantee that the host has enough physical RAM.
+//
+// See docs/HMM.md for derivations, error examples, adversarial numeric oracles,
+// operational scenarios, and integration with the wider lvlath ecosystem. Executable usage lives in hmm/example_test.go.
 package hmm

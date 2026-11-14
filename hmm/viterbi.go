@@ -8,52 +8,200 @@ package hmm
 import (
 	"context"
 	"math"
+	"math/big"
+	"strconv"
 
 	"github.com/lvlath/go/matrix"
 )
 
-// decode finds the single highest joint-probability hidden-state trajectory with Viterbi.
-// It is a max-product dynamic program in logarithms, not a per-time marginal argmax.
+// pathScore preserves structural support separately from the numerical path cost.
+// Its extended representation is allocated only after ordinary float64 addition overflows.
 //
 // Implementation:
-//   - Stage 1: Check the T*K predecessor table size and allocate two score rows.
-//   - Stage 2: For each observed time, maximize predecessor log joint plus log transition and emission.
-//   - Stage 3: Choose the lowest-index optimal terminal state and trace deterministic backpointers.
+//   - Stage 1: Track whether a path exists through the reachable bit.
+//   - Stage 2: Keep representable path scores as ordinary float64 values.
+//   - Stage 3: Retain exceptional finite-input sums in a higher-range big.Float.
 //
 // Behavior highlights:
-//   - Strict greater-than comparisons preserve the first predecessor in exact ties.
+//   - A cost below -MaxFloat64 is not an impossible structural path.
 //
 // Inputs:
-//   - ctx: active context; c: chain; t: positive sequence length; emit: fills K log-emission values.
+//   - score: compact value; wide: exceptional value; reachable: supported path flag.
 //
 // Returns:
-//   - *DecodeResult: caller-owned length-T state path and maximum joint log score.
+//   - One transient Viterbi candidate; never a published model or result.
 //
 // Errors:
-//   - ctx.Err(), ErrOverflow, ErrImpossibleSequence, or emission callback error.
+//   - None; callers classify unrepresentable final values as ErrOverflow.
 //
 // Determinism:
-//   - Time ascending; destination then predecessor ascending; final state ascending.
+//   - Stable tie comparisons follow increasing predecessor index.
 //
 // Complexity:
-//   - Time O(T*K^2) plus emissions, Space O(T*K) backpointers and O(K) score rows.
+//   - O(1) storage normally; exceptional values allocate O(precision) words.
 //
 // Notes:
-//   - Backpointers are private and the returned states do not alias the workspace.
+//   - The exceptional path uses 256-bit precision to preserve scale beyond float64.
 //
 // AI-Hints:
-//   - Avoid choosing argmax of Smooth.Posterior rows: those may violate legal transitions.
+//   - Never encode arithmetic overflow as a structural -Inf sentinel.
+type pathScore struct {
+	score     float64
+	wide      *big.Float
+	reachable bool
+}
+
+const pathScorePrecision = 256 // Fractional precision for exceptional Viterbi sums only.
+
+// extendPathScore adds one finite log probability without losing an existing path.
+// A nonrepresentable intermediate remains comparable and can later reenter float64 range.
+//
+// Implementation:
+//   - Stage 1: Return unreachable input unchanged, and reject no values implicitly.
+//   - Stage 2: Use fast float64 addition for ordinary representable candidates.
+//   - Stage 3: Use 256-bit exponent-extended arithmetic when needed.
+//
+// Behavior highlights:
+//   - The caller must skip log(0) arcs before calling this function.
+//
+// Inputs:
+//   - current: supported score; increment: finite log emission or transition score.
+//
+// Returns:
+//   - pathScore: independently owned accumulated candidate.
+//
+// Errors:
+//   - None; final publication verifies representability.
+//
+// Determinism:
+//   - Fixed nearest-even precision and left-to-right addition order.
+//
+// Complexity:
+//   - O(1) fast path; O(pathScorePrecision) exceptional arithmetic.
+//
+// Notes:
+//   - The original candidate is immutable and remains safe for competing successors.
+//
+// AI-Hints:
+//   - Do not use a single float64 -Inf as both zero transition mass and overflow.
+func extendPathScore(current pathScore, increment float64) pathScore {
+	if !current.reachable {
+		return current
+	}
+	if current.wide == nil {
+		sum := current.score + increment
+		if finite(sum) {
+			return pathScore{score: sum, reachable: true}
+		}
+		current.wide = new(big.Float).SetPrec(pathScorePrecision).SetFloat64(current.score)
+	} else {
+		current.wide = new(big.Float).SetPrec(pathScorePrecision).Set(current.wide)
+	}
+	step := new(big.Float).SetPrec(pathScorePrecision).SetFloat64(increment)
+	current.wide.Add(current.wide, step)
+	return current
+}
+
+// greaterPathScore compares two supported Viterbi candidates without overflowing.
+// The comparison is strict to preserve lowest-index predecessor tie-breaking.
+//
+// Implementation:
+//   - Stage 1: Handle structural presence before comparing score magnitudes.
+//   - Stage 2: Compare two ordinary float64 values directly.
+//   - Stage 3: Promote only mixed exceptional comparisons into high-range arithmetic.
+//
+// Behavior highlights:
+//   - A finite candidate always outranks a negative-overflowed candidate.
+//
+// Inputs:
+//   - candidate, best: read-only scores for two competing paths to the same state.
+//
+// Returns:
+//   - bool: true exactly when candidate has a strictly higher joint log score.
+//
+// Errors:
+//   - None; only supported finite-input candidates reach this helper.
+//
+// Determinism:
+//   - Equal scores never replace an earlier predecessor.
+//
+// Complexity:
+//   - O(1) normally; O(pathScorePrecision) for exceptional comparison.
+//
+// Notes:
+//   - A later positive Gaussian emission can recover a path with an exceptional prefix.
+//
+// AI-Hints:
+//   - Avoid comparing -Inf sentinels: consult reachable first.
+func greaterPathScore(candidate, best pathScore) bool {
+	if !candidate.reachable {
+		return false
+	}
+	if !best.reachable {
+		return true
+	}
+	if candidate.wide == nil && best.wide == nil {
+		return candidate.score > best.score
+	}
+	left := candidate.wide
+	if left == nil {
+		left = new(big.Float).SetPrec(pathScorePrecision).SetFloat64(candidate.score)
+	}
+	right := best.wide
+	if right == nil {
+		right = new(big.Float).SetPrec(pathScorePrecision).SetFloat64(best.score)
+	}
+	return left.Cmp(right) > 0
+}
+
+// decode finds the single globally maximum joint hidden-state trajectory by Viterbi.
+// It distinguishes an absent path from a supported path whose score overflows float64.
+//
+// Implementation:
+//   - Stage 1: Check the byte footprint of backpointers before any emission access.
+//   - Stage 2: Maximize predecessor-supported scores, retaining rare wide sums.
+//   - Stage 3: Reject an unrepresentable optimal score or backtrack the detached path.
+//
+// Behavior highlights:
+//   - Losing overflowed candidates do not fail a finite winning path.
+//   - Strict comparison selects the earliest predecessor, then earliest terminal state.
+//
+// Inputs:
+//   - ctx: active context; c: validated immutable chain; t: positive observation count.
+//   - emit: fills K log emission scores for each chronological observation.
+//
+// Returns:
+//   - *DecodeResult: detached T-state witness and finite maximum log joint score.
+//
+// Errors:
+//   - ErrOverflow on byte limits or an unrepresentable optimal supported score.
+//   - ErrImpossibleSequence only when all paths are structurally unsupported.
+//   - ctx.Err() or errors from the emission callback.
+//
+// Determinism:
+//   - Time, successor, then predecessor order; strict greater-than comparisons.
+//
+// Complexity:
+//   - Time O(T*K^2) normally; Space O(T*K) backpointers and O(K) scores.
+//   - Exceptionally wide-score operations add fixed-precision work on overflowed paths.
+//
+// Notes:
+//   - No model or input mutation; no partial result on overflow or cancellation.
+//
+// AI-Hints:
+//   - A negative-infinite arithmetic score is not proof that all transition probabilities are zero.
+//   - Do not replace this decoder with independent argmax of smoothed marginals.
 func decode(ctx context.Context, c *chain, t int, emit func(int, []float64) error) (*DecodeResult, error) {
 	k := c.k
-	if t > int(^uint(0)>>1)/k {
-		return nil, ErrOverflow
+	count, err := checkedAllocation(t, k, strconv.IntSize/8)
+	if err != nil {
+		return nil, err
 	}
-	pointers := make([]int, t*k)
-	previous := make([]float64, k)
-	current := make([]float64, k)
+	pointers := make([]int, count)
+	previous := make([]pathScore, k)
+	current := make([]pathScore, k)
 	em := make([]float64, k)
-	// Maximum *joint* scores advance forward; retaining only two score rows
-	// keeps scoring memory O(K) while pointers retain the optimal ancestors.
+
 	for i := 0; i < t; i++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -61,41 +209,61 @@ func decode(ctx context.Context, c *chain, t int, emit func(int, []float64) erro
 		if err := emit(i, em); err != nil {
 			return nil, err
 		}
+		anySupported := false
 		for j := 0; j < k; j++ {
-			if i == 0 {
-				current[j] = logProbability(c.prior[j]) + em[j]
+			current[j] = pathScore{}
+			if math.IsInf(em[j], -1) {
 				continue
 			}
-			best := math.Inf(-1)
+			if !finite(em[j]) {
+				return nil, ErrOverflow
+			}
+			if i == 0 {
+				prior := logProbability(c.prior[j])
+				if !math.IsInf(prior, -1) {
+					current[j] = extendPathScore(pathScore{score: prior, reachable: true}, em[j])
+					anySupported = true
+				}
+				continue
+			}
+			best := pathScore{}
 			arg := 0
-			// Strict greater-than preserves the earliest (smallest-index)
-			// predecessor on exact ties; >= would break deterministic witness order.
 			for p := 0; p < k; p++ {
-				v := previous[p] + logProbability(c.transition[p*k+j])
-				if v > best {
-					best = v
+				transition := logProbability(c.transition[p*k+j])
+				if !previous[p].reachable || math.IsInf(transition, -1) {
+					continue
+				}
+				candidate := extendPathScore(previous[p], transition)
+				if greaterPathScore(candidate, best) {
+					best = candidate
 					arg = p
 				}
 			}
-			current[j] = best + em[j]
-			pointers[i*k+j] = arg
+			if best.reachable {
+				current[j] = extendPathScore(best, em[j])
+				pointers[i*k+j] = arg
+				anySupported = true
+			}
 		}
-		previous, current = current, previous
-		if math.IsInf(LogSumExpSlice(previous), -1) {
+		if !anySupported {
 			return nil, ErrImpossibleSequence
 		}
+		previous, current = current, previous
 	}
-	// The terminal state is selected by the same strict-improvement rule,
-	// resolving equal final scores toward the smallest index.
-	best := math.Inf(-1)
+
+	best := pathScore{}
 	last := 0
-	for j, v := range previous {
-		if v > best {
-			best = v
+	for j, candidate := range previous {
+		if greaterPathScore(candidate, best) {
+			best = candidate
 			last = j
 		}
 	}
-	if !finite(best) {
+	score := best.score
+	if best.wide != nil {
+		score, _ = best.wide.Float64()
+	}
+	if !finite(score) {
 		return nil, ErrOverflow
 	}
 	path := make([]int, t)
@@ -103,7 +271,7 @@ func decode(ctx context.Context, c *chain, t int, emit func(int, []float64) erro
 	for i := t - 1; i > 0; i-- {
 		path[i-1] = pointers[i*k+path[i]]
 	}
-	return &DecodeResult{States: path, LogJointProbability: best}, nil
+	return &DecodeResult{States: path, LogJointProbability: score}, nil
 }
 
 // Decode computes the globally most likely categorical hidden-state path with Viterbi.

@@ -12,6 +12,103 @@ import (
 	"github.com/lvlath/go/matrix"
 )
 
+// normalizedEmissionStep performs one forward update in an emission-local coordinate frame.
+// It returns the log evidence separately from an independently normalized log posterior.
+//
+// Implementation:
+//   - Stage 1: Predict log state mass from Prior or the preceding normalized state.
+//   - Stage 2: Remove the largest reachable emission BEFORE combining emission and prediction.
+//   - Stage 3: Normalize locally shifted scores, then restore the evidence offset only in the scalar.
+//
+// Behavior highlights:
+//   - A common Gaussian log density of magnitude 1e16 never erases prior differences.
+//   - Structural zero support remains -Inf; loss of all finite supported scores is ErrOverflow.
+//
+// Inputs:
+//   - c: immutable model chain; previous: nil on the first step or K normalized log probabilities.
+//   - emission: K per-state log masses; dst: distinct writable length-K scratch/result vector.
+//
+// Returns:
+//   - float64: log P(x_t | x_0:t-1); dst contains normalized log probabilities.
+//
+// Errors:
+//   - ErrImpossibleSequence: no state has nonzero transition and emission support.
+//   - ErrOverflow: the evidence increment or every supported intermediate is unrepresentable.
+//
+// Determinism:
+//   - Successors and each predecessor are visited in ascending state order.
+//
+// Complexity:
+//   - Time O(K^2), Space O(1) additional beyond the K supplied dst cells.
+//
+// Notes:
+//   - Does not mutate previous or emission. The caller owns the finalized dst slice.
+//
+// AI-Hints:
+//   - Never subtract a 1e16-scale total likelihood from 1e16-scale unnormalized scores.
+//   - Keeping normalized log states separate from evidence also protects restored checkpoints.
+func normalizedEmissionStep(c *chain, previous, emission, dst []float64) (float64, error) {
+	// First predict without emission: every predictive score is independent of
+	// the potentially enormous state-independent Gaussian observation offset.
+	offset := math.Inf(-1)
+	for j := 0; j < c.k; j++ {
+		predicted := logProbability(c.prior[j])
+		if previous != nil {
+			predicted = math.Inf(-1)
+			for i := 0; i < c.k; i++ {
+				predicted = LogSumExp(predicted, previous[i]+logProbability(c.transition[i*c.k+j]))
+			}
+		}
+		if math.IsNaN(predicted) || math.IsInf(predicted, 1) {
+			return 0, ErrOverflow
+		}
+		dst[j] = predicted
+		if !math.IsInf(predicted, -1) && !math.IsInf(emission[j], -1) && emission[j] > offset {
+			offset = emission[j]
+		}
+	}
+	if math.IsInf(offset, -1) {
+		return 0, ErrImpossibleSequence
+	}
+
+	// Emission subtraction occurs before adding log predictive probabilities.
+	// The former removes the large common coordinate, while the latter preserves
+	// small prior/transition differences needed for posterior normalization.
+	largest := math.Inf(-1)
+	for j, predicted := range dst {
+		if math.IsInf(predicted, -1) || math.IsInf(emission[j], -1) {
+			dst[j] = math.Inf(-1)
+			continue
+		}
+		dst[j] = (emission[j] - offset) + predicted
+		if dst[j] > largest {
+			largest = dst[j]
+		}
+	}
+	if math.IsInf(largest, -1) {
+		return 0, ErrOverflow
+	}
+
+	// The mass correction is small (<= log(K)); it is never subtracted from
+	// the large evidence scalar when constructing posterior probabilities.
+	sum := 0.0
+	for _, score := range dst {
+		sum += math.Exp(score - largest)
+	}
+	logCorrection := math.Log(sum)
+	increment := (offset + largest) + logCorrection
+	if !finite(increment) {
+		return 0, ErrOverflow
+	}
+	for j, score := range dst {
+		if math.IsInf(score, -1) {
+			continue
+		}
+		dst[j] = (score - largest) - logCorrection
+	}
+	return increment, nil
+}
+
 // step performs one causal HMM update using a prepared log-emission vector.
 // Its returned checkpoint is detached; all existing posterior and likelihood state remain unchanged.
 //
@@ -47,44 +144,24 @@ func step(c *chain, prev *FilterState, emission []float64) (*FilterState, error)
 	if err := validState(c, prev); err != nil {
 		return nil, err
 	}
+	// A local emission offset preserves predictive probabilities even when the
+	// common log density is far larger than their distinguishing differences.
 	next := make([]float64, c.k)
-	// Initialization uses the prior exactly once. A later step predicts from
-	// the previous normalized posterior, never from a smoothed distribution.
-	if prev == nil {
-		for j := range next {
-			next[j] = logProbability(c.prior[j]) + emission[j]
-		}
-	} else {
-		for j := range next {
-			value := math.Inf(-1)
-			for i := 0; i < c.k; i++ {
-				value = LogSumExp(value, prev.LogPosterior[i]+logProbability(c.transition[i*c.k+j]))
-			}
-			next[j] = value + emission[j]
-		}
-	}
-	// The normalizer is the evidence contributed by the current observation.
-	// When every state has zero support, subtracting it would produce NaN.
-	norm := LogSumExpSlice(next)
-	if math.IsInf(norm, -1) {
-		return nil, ErrImpossibleSequence
-	}
-	if !finite(norm) {
-		return nil, ErrOverflow
-	}
-	likelihood := norm
+	var previousLog []float64
 	steps := uint64(1)
+	likelihood := 0.0
 	if prev != nil {
-		steps = prev.Steps + 1
-		likelihood += prev.LogLikelihood
+		previousLog = prev.LogPosterior
+		steps = prev.Steps + 1 // validState rejected MaxUint64.
+		likelihood = prev.LogLikelihood
 	}
+	increment, err := normalizedEmissionStep(c, previousLog, emission, next)
+	if err != nil {
+		return nil, err
+	}
+	likelihood += increment
 	if !finite(likelihood) {
 		return nil, ErrOverflow
-	}
-	// Subtract the common evidence increment to obtain a normalized log
-	// posterior; returning a fresh slice prevents mutation of a saved snapshot.
-	for j := range next {
-		next[j] -= norm
 	}
 	return &FilterState{ModelID: c.id, Steps: steps, LogPosterior: next, LogLikelihood: likelihood}, nil
 }
@@ -231,10 +308,11 @@ func filterBatch(ctx context.Context, c *chain, t int, history bool, emit func(i
 	var prev *FilterState
 	var flat []float64
 	if history {
-		if c.k > 0 && t > int(^uint(0)>>1)/c.k {
-			return nil, ErrOverflow
+		count, err := checkedAllocation(t, c.k, 8)
+		if err != nil {
+			return nil, err
 		}
-		flat = make([]float64, t*c.k)
+		flat = make([]float64, count)
 	}
 	em := make([]float64, c.k)
 	// Reuse the exact streaming kernel in chronological order so batch and

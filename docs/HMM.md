@@ -16,7 +16,7 @@
 
 `hmm` answers four distinct questions. Given observations from a process whose internal operating regime cannot be measured directly, it (1) estimates the regime using only evidence currently available, (2) retrospectively attributes regimes using the complete recorded sequence, (3) finds one most likely *joint* regime path, and (4) learns a transition/emission model from **independent** recorded sequences. These operations share model parameters but deliberately do **not** share the same conditioning information or output semantics.
 
-All examples in this chapter are deterministic engineering fixtures—not calibrated investment advice, fault certification, a claim of verified real-world datasets, or a substitute for domain validation. The Go examples use the current public API; the six executable scenarios live in [`hmm/example_test.go`](../hmm/example_test.go).
+All examples in this chapter are deterministic engineering fixtures—not calibrated investment advice, fault certification, a claim of verified real-world datasets, or a substitute for domain validation. The Go examples use the current public API; the nine executable scenarios live in [`hmm/example_test.go`](../hmm/example_test.go).
 
 ## Contents
 
@@ -32,6 +32,7 @@ All examples in this chapter are deterministic engineering fixtures—not calibr
 10. [Memory, performance and concurrency](#10-memory-performance-and-concurrency)
 11. [Production-oriented recipes and lvlath integration](#11-production-oriented-recipes-and-lvlath-integration)
 12. [Verification, counterexamples and limitations](#12-verification-counterexamples-and-limitations)
+13. [Numerical hardening: bounded coordinates and classified failures](#13-numerical-hardening-bounded-coordinates-and-classified-failures)
 
 ---
 
@@ -106,7 +107,9 @@ Important distinctions:
 | Long sequence's evidence would underflow if multiplied directly          | Ordinary log evidence                            | Finite accumulated log-likelihood when representable |
 | Positive Gaussian log density                                            | Small-variance PDF greater than one              | Valid; do not clamp to zero                          |
 
-The Gaussian squared residual is evaluated with its half factor before multiplication, reducing avoidable overflow for representable negative log densities. Extreme cancellation, very distant initialization, or unrepresentable final values still require error checks; there is no universal arbitrary-precision guarantee.
+The Gaussian squared residual is evaluated with its half factor before multiplication, reducing avoidable overflow for representable negative log densities. If a raw `x-mean` subtraction overflows despite finite operands, the kernel instead subtracts independently standardized operands, `x/sqrt(variance) - mean/sqrt(variance)`. A truly unrepresentable final density still produces `ErrOverflow`.
+
+**Important distinction:** an exported `LogSumExpSlice` returns one rounded scalar. If its large maximum is around `1e16`, a sub-ULP correction cannot be encoded in that one `float64`. The causal kernel therefore does **not** subtract that rounded large result from similarly large state scores. It removes the emission offset *before* predictive log scores are combined, normalizes in local coordinates, and accumulates evidence separately. Valid inputs preserve strictly normalized returned posterior states.
 
 ## 4. Causal Forward and stateful replay
 
@@ -203,13 +206,13 @@ For a Gaussian state `k`, feature `d`, write `Wₖ=Σ_s,t γₜ⁽ˢ⁾(k)` and 
 
 ![Gaussian projected variance](https://latex.codecogs.com/svg.image?%5Cmu_%7Bkd%7D%5E%7B%5Cmathrm%7Bnew%7D%7D%3D%5Cfrac%7B%5Csum_%7Bs%2Ct%7D%5Cgamma_t%5E%7B%28s%29%7D%28k%29x_%7Btd%7D%5E%7B%28s%29%7D%7D%7BW_k%7D%2C%5Cquad%20%28%5Csigma_%7Bkd%7D%5E%7B2%7D%29%5E%7B%5Cmathrm%7Bnew%7D%7D%3D%5Cmax%5C%21%5Cleft%28%5Cfrac%7B%5Csum_%7Bs%2Ct%7D%5Cgamma_t%5E%7B%28s%29%7D%28k%29%28x_%7Btd%7D%5E%7B%28s%29%7D-%5Cmu_%7Bkd%7D%5E%7B%5Cmathrm%7Bnew%7D%7D%29%5E2%7D%7BW_k%7D%2C%5Cmathrm%7BVarianceFloor%7D%5Cright%29)
 
-The code uses centered moments relative to the previous mean and applies the equivalent variance correction after shifting the mean. `VarianceFloor` is a lower bound in **feature²**, never `variance+epsilon`. `FitGaussian` validates the **initial** variances against this floor; `NewGaussian` alone only requires `>0`.
+The implementation uses **two-pass, old-model-weighted central moments**, never a difference of raw second moments: the first pass computes a new mean from compensated anchored deviations divided by a per-feature scale; the second deterministically recomputes the same old-model posterior weights and accumulates squared residuals about that **new** mean. Squared residuals are normalized before accumulation, then restored to physical feature² units. This avoids both catastrophic cancellation at offsets such as `1e8±1` and overflow of a raw `2e308` sum whose average is finite. The extra E-step pass trades roughly 2× EM inference work for bounded peak workspace without caching all sequences' responsibilities. `VarianceFloor` is a lower bound in **feature²**, never `variance+epsilon`. `FitGaussian` validates the **initial** variances against this floor; `NewGaussian` alone only requires `>0`.
 
 If a hidden state has zero occupancy, the previous Gaussian means and variances remain unchanged. Categorical emission or transition rows with zero expected counts likewise stay unchanged at `λ=0`; at `λ>0` the Dirichlet row becomes uniform. No state is dropped or randomly reseeded.
 
 ### Objective progress, stopping and error-partial results
 
-The mathematically monotone quantity for MAP-EM is `J(θ)`, **not** raw data likelihood. The current implementation strictly rejects *any* negative finite `J_new-J_old` with `ErrNumerical` and keeps the last accepted model. It does not implement a tolerant one-ULP rollback band; avoid documenting such a band as existing. When the improvement is nonnegative and `<=Tolerance*max(1,|oldObjective|)`, convergence is reported. `FitOptions{}` supplies `MaxIterations=100`, `Tolerance=1e-6`, `Pseudocount=0`, `VarianceFloor=1e-8`. Option fields must be nonnegative and finite (except the integer iteration count is simply nonnegative).
+The mathematically monotone quantity for MAP-EM is `J(θ)`, **not** raw data likelihood. A candidate whose objective is lower is **never accepted**. A decline exceeding two binary64 ULPs, or exceeding the caller's relative convergence threshold, returns `ErrNumerical` with the last accepted model. When a negative difference is at most two ULPs **and** below that convergence threshold, training reports numerical stationarity of the **previously accepted** model without appending the candidate score. This is a stop-with-rollback policy, not permission to publish a deteriorated model. For nonnegative improvement `<=Tolerance*max(1,|oldObjective|)`, ordinary convergence is reported. `FitOptions{}` supplies `MaxIterations=100`, `Tolerance=1e-6`, `Pseudocount=0`, `VarianceFloor=1e-8`. Option fields must be nonnegative and finite (except the integer iteration count is simply nonnegative).
 
 `Diagnostics.Objective[0]` is the initial objective, followed by one entry per accepted iteration. Thus `len(Objective)==Iterations+1` on a valid fit result. `Diagnostics.Occupancy` belongs to the final accepted model. Exhaustion returns that model **with** `ErrNotConverged` and `Converged=false`; a rejected objective decrease returns the last accepted model **with** `ErrNumerical`. These are explicit partial-result exceptions. Context cancellation and input/observation errors return a nil result; callers must never silently deploy a nonconverged partial model.
 
@@ -323,18 +326,18 @@ The package never calls `panic`, `recover`, or `reflect`. Checked integer sizes 
 
 ## 10. Memory, performance and concurrency
 
-| Operation                                  | Time (dense A)                                           | Additional live space (excluding immutable model, caller inputs)                                                              |
-|:-------------------------------------------|:---------------------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------|
-| Construct categorical model                | `O(K²+K*A)`                                              | `O(K²+K*A)` owned copy                                                                                                        |
-| Construct diagonal-Gaussian model          | `O(K²+K*D)`                                              | `O(K²+K*D)` owned copy                                                                                                        |
-| Categorical `FilterStep`                   | `O(K²)`                                                  | `O(K)` next checkpoint                                                                                                        |
-| Gaussian `FilterStep`                      | `O(K²+K*D)`                                              | `O(K)` next checkpoint plus emission vector                                                                                   |
-| Categorical `FilterDefault`                | `O(TK²)`                                                 | `O(K)` live, no history matrix                                                                                                |
-| Gaussian `FilterDefault`                   | `O(T(K²+KD))`                                            | `O(TD+K)` including detached input copy                                                                                       |
-| `FilterWithHistory` categorical / Gaussian | Above + `O(TK)` materialization                          | `O(TK)` + optional `O(TD)` Gaussian input copy                                                                                |
-| `Smooth`                                   | `O(T(K²+KD))` Gaussian / `O(TK²)` categorical            | `O(TK)` + optional `O(TD)` input copy                                                                                         |
-| `Decode`                                   | Same dense time regimes                                  | `O(TK)` backpointers + `O(K)` scores (+ Gaussian input copy)                                                                  |
-| EM iteration across sequences              | `O(Σ_s T_s(K²+KD))` Gaussian, categorical has no KD term | `O(max_s T_s*K² + K² + K*A)` categorical; Gaussian additionally retains `Σ_s T_s*D` detached feature values and `K*D` moments |
+| Operation                                  | Time (dense A)                                                                              | Additional live space (excluding immutable model, caller inputs)                                                              |
+|:-------------------------------------------|:--------------------------------------------------------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------|
+| Construct categorical model                | `O(K²+K*A)`                                                                                 | `O(K²+K*A)` owned copy                                                                                                        |
+| Construct diagonal-Gaussian model          | `O(K²+K*D)`                                                                                 | `O(K²+K*D)` owned copy                                                                                                        |
+| Categorical `FilterStep`                   | `O(K²)`                                                                                     | `O(K)` next checkpoint                                                                                                        |
+| Gaussian `FilterStep`                      | `O(K²+K*D)`                                                                                 | `O(K)` next checkpoint plus emission vector                                                                                   |
+| Categorical `FilterDefault`                | `O(TK²)`                                                                                    | `O(K)` live, no history matrix                                                                                                |
+| Gaussian `FilterDefault`                   | `O(T(K²+KD))`                                                                               | `O(TD+K)` including detached input copy                                                                                       |
+| `FilterWithHistory` categorical / Gaussian | Above + `O(TK)` materialization                                                             | `O(TK)` + optional `O(TD)` Gaussian input copy                                                                                |
+| `Smooth`                                   | `O(T(K²+KD))` Gaussian / `O(TK²)` categorical                                               | `O(TK)` + optional `O(TD)` input copy                                                                                         |
+| `Decode`                                   | Same dense time regimes                                                                     | `O(TK)` backpointers + `O(K)` scores (+ Gaussian input copy)                                                                  |
+| EM iteration across sequences              | `O(2Σ_s T_s(K²+KD))` Gaussian (two old-model posterior passes), categorical `O(Σ_s T_s*K²)` | `O(max_s T_s*K² + K² + K*A)` categorical; Gaussian additionally retains `Σ_s T_s*D` detached feature values and `K*D` moments |
 
 The current batch filter allocates a new `FilterState` on each step even with history disabled; peak **live** state remains `O(K)` but `allocs/op` can be nontrivial. Benchmarks must report `ns/op`, `B/op`, `allocs/op`, Go version, CPU and K/T/D, and must exclude fixture construction from timed loops. A `*matrix.Dense` is useful at the interface copy boundary, but the HMM's heavy transition loops already use private flat arrays; do not promise a direct cross-package Dense backing-slice fast path.
 
@@ -394,7 +397,7 @@ go vet ./...
 golangci-lint run
 ```
 
-The standalone `examples/hmm` program (where present in the repository) streams a small synthetic financial return fixture; the package examples illustrate a wider clickstream, manufacturing and training context. Do not interpret the example output as an operationally validated threshold.
+The standalone `examples/hmm` program streams fifteen synthetic order-book spread/imbalance updates, reporting causal alert and recovery transitions; the package examples illustrate a wider clickstream, manufacturing and training context. Do not interpret the example output as an operationally validated threshold.
 
 ## 12. Verification, counterexamples and limitations
 
@@ -415,6 +418,77 @@ The regression suite uses **only `package hmm_test`**, calling exported HMM meth
 | Concurrent immutable inference                              | `TestModel_ConcurrentInferenceRace`                                      |
 | Returned values do not alias fitted model parameters        | `TestConstructor_DetachedParameters`                                     |
 
-**Limitations worth keeping visible:** (1) EM converges to a stationary/local solution, not necessarily a global maximum; (2) hidden-state labels are exchangeable; (3) diagonal covariance may misfit correlated features; (4) extreme initial Gaussian offsets can cause representability failures in centered moment arithmetic; (5) the log-domain implementation is finite-precision, not arbitrary precision; (6) ModelID is neither authentication nor a durable state serialization protocol; (7) all input data must be held stable for the duration of each call; (8) the current EM stores private pair responsibilities for each sequence, which increases peak memory relative to smoothing; (9) no built-in probabilistic calibration or decision threshold is supplied.
+**Limitations worth keeping visible:** (1) EM converges to a stationary/local solution, not necessarily a global maximum; (2) hidden-state labels are exchangeable; (3) diagonal covariance may misfit correlated features; (4) genuinely unrepresentable Gaussian density, expected variance, or total objective remains an explicit numeric failure; (5) the log-domain implementation is finite-precision, not arbitrary precision; (6) ModelID is neither authentication nor a durable state serialization protocol; (7) all input data must be held stable for the duration of each call; (8) the current EM stores private pair responsibilities for one sequence and Gaussian EM recomputes responsibilities for central variance, which costs time; (9) no built-in probabilistic calibration or decision threshold is supplied.
 
 For the library's general engineering policies, see [`lvlath_UES.md`](lvlath_UES.md), [`TUTORIAL.md`](TUTORIAL.md), [`FAQ_&_TIPS.md`](FAQ_%26_TIPS.md), and the package charter in [`hmm/doc.go`](../hmm/doc.go).
+
+
+## 13. Numerical hardening: bounded coordinates and classified failures
+
+The following cases are **implemented numerical contracts**, not suggested new APIs. Their tests are in [`audit_h01_h03_test.go`](../hmm/audit_h01_h03_test.go), [`audit_h04_h06_test.go`](../hmm/audit_h04_h06_test.go), and [`oracle_exact_path_test.go`](../hmm/oracle_exact_path_test.go). All use `package hmm_test` and the exported API only.
+
+### 13.1. Local forward normalization (posterior versus evidence)
+
+Define `p_j = log P(z_t=j | x_0:t-1)` (or `log Prior[j]` at `t=0`), and `e_j=log b_j(x_t)`. Let `e_max` be the greatest emission value among states with possible predictive mass. Construct
+
+![Local forward normalization](https://latex.codecogs.com/svg.image?%5Ctilde%7Br%7D_j%3Dp_j%2B%28e_j-e_%7B%5Cmax%7D%29%2C%5Cquad%5Cell_j%3D%28%5Ctilde%7Br%7D_j-r_%7B%5Cmax%7D%29-%5Cln%5Csum_i%5Cexp%28%5Ctilde%7Br%7D_i-r_%7B%5Cmax%7D%29)
+
+The posterior is `ell_j`. The **separate** evidence increment is `e_max + r_max + log(sum(exp(r_j-r_max)))`. No code attempts to recover `ell_j` by subtracting a potentially `1e16`-scale rounded evidence scalar. Exact structural zeros remain `-Inf`; invalid `NaN` log inputs do not masquerade as zero support.
+
+For two equally likely states with identical unit-variance Gaussian emissions and `x=1e8`, the posterior remains `[0.5,0.5]`, not approximately `[0.3679,0.3679]`. The returned `FilterState` passes the unchanged `1e-12` normalization gate on the next `FilterStep`. Identity transitions and a nonuniform `[0.7,0.3]` prior preserve that distinct posterior under equal emissions; appending future data does not alter the prefix.
+
+The Backward recursion subtracts a common next-emission offset before summing transition terms, then shifts each beta row by its own maximum. Smoothed gamma and within-sequence xi use local score normalization. These shifts cancel algebraically in posterior ratios and do not expose future data to the causal filter.
+
+### 13.2. Representable Gaussian density with an overflowing raw difference
+
+The direct `delta=x-mean` path is used whenever that subtraction is representable, preserving small residuals at large offsets. Otherwise the standardized residual is computed as `x/sigma - mean/sigma`, where `sigma=sqrt(variance)`, before squaring with the half factor. With `x=+1.1e308`, `mean=-1.1e308` and `variance=MaxFloat64`, the unscaled delta overflows while the Gaussian log density is approximately `-1.3461696843968569e308`. An independent `big.Rat` quadratic oracle verifies its value.
+
+This does **not** imply that every Gaussian result is representable: two individually finite `-1.125e308` emissions have an unrepresentable two-step log sum, and the correct failure is `ErrOverflow`.
+
+### 13.3. Viterbi support cannot be inferred from an overflowed log score
+
+```text
+P(path) = 0                   -> structural impossible candidate
+P(path) > 0, score finite     -> ordinary float64 candidate
+P(path) > 0, score too large  -> extended-range candidate
+```
+
+The decoder uses ordinary binary64 scores until arithmetic exceeds that range; only those exceptional candidates use 256-bit `math/big.Float` values. The `reachable` flag remains separate. Competing candidates are compared before final publication, so an overflowed losing branch does not poison a finite winner. If the **optimal supported** path's final log score cannot be represented by `float64`, the result is `nil, ErrOverflow`, never `ErrImpossibleSequence`. This is fixed-precision exceptional arithmetic, not a general correctly rounded arbitrary-precision theorem.
+
+### 13.4. Allocation checks precede virtual-matrix reads
+
+Every user-sized row-major buffer uses a checked bound equivalent to
+
+![Byte footprint bound](https://latex.codecogs.com/svg.image?0%5Cleq%20R%5Ccdot%20C%5Cleq%5Cleft%5Clfloor%5Cfrac%7B%5Cmathrm%7BMaxInt%7D%7D%7B%5Cmathrm%7BelementBytes%7D%7D%5Cright%5Crfloor)
+
+Checks cover float64 matrix copies, history, smoothing messages and xi tables, integer Viterbi backpointers, and output materialization. A virtual Matrix advertising `MaxInt/8+1` float64 cells returns `ErrOverflow` **before any Matrix.At call** rather than triggering `makeslice: len out of range`. This is an arithmetic allocation-bound guarantee, not a promise that a physically feasible slice will always find available RAM.
+
+### 13.5. Two-pass Gaussian weighted central moments
+
+The E-step does not change responsibilities during either pass. Each independent sequence starts from Prior on both passes; gamma and xi never cross sequence boundaries. Per-feature scales bound the first pass's anchored means and the second pass's centered variance:
+
+![Weighted Gaussian moments](https://latex.codecogs.com/svg.image?%5Cmu%3D%5Cfrac%7B%5Csum_t%20w_t%20x_t%7D%7B%5Csum_t%20w_t%7D%2C%5Cquad%5Csigma%5E2%3D%5Cfrac%7B%5Csum_t%20w_t%28x_t-%5Cmu%29%5E2%7D%7B%5Csum_t%20w_t%7D)
+
+The estimated variance is population-weighted (`DDOF=0`), not sample-weighted. `VarianceFloor` is projected **after** computing it in physical feature² units. The acceptance suite independently verifies `x=[1e8-1,1e8+1] -> variance=1` and `[-1e154,0,1e154] -> variance≈6.666666666666667e307`. A separate analytic test checks unequal posterior weights across three independent singleton sequences.
+
+### 13.6. Large Dirichlet pseudocounts require a bounded denominator
+
+For counts `c_j` and pseudocount `lambda`, use `s=max(lambda,max_j c_j)` and the scaled identity
+
+![Scaled Dirichlet M-step](https://latex.codecogs.com/svg.image?p_j%3D%5Cfrac%7Bc_j%2Fs%2B%5Clambda%2Fs%7D%7B%5Csum_i%20c_i%2Fs%2BA%5Clambda%2Fs%7D)
+
+At `lambda=1e308`, a 2-symbol row with expected counts `[1,1]` therefore remains `[0.5,0.5]` instead of collapsing to zeros. At lambda zero, a dead row retains its previous parameters; no hidden uniform reset is introduced. The penalized MAP objective remains the convergence criterion and may itself be unrepresentable for genuinely extreme data.
+
+### 13.7. Test and deployment boundaries
+
+```bash
+go test ./hmm -count=1
+go test -race ./hmm -count=1
+go test ./hmm -run '^TestAudit' -count=1
+go vet ./hmm
+golangci-lint run
+```
+
+The exact numerical regression tests use both independent analytic calculations and `math/big.Rat` tiny-path enumeration. The tests verify classes with `errors.Is`, check the absence of a partially published result, and include a virtual matrix whose `At` counter must remain zero after an arithmetic size rejection.
+
+A released `ModelID` identifies model parameters, **not** the arithmetic revision used to compute old `FilterState` values. Do not relax state normalization to import old corrupted checkpoints; replay the causal prefix under the updated kernel while retaining external time-watermark and preprocessing provenance. Models still do not promise authenticated binary checkpoint serialization or automatic feature resampling.

@@ -471,3 +471,279 @@ func ExampleFitGaussian() {
 	// Output:
 	// cycles=4 converged=true hot-regime=1.000 model-id-length=64
 }
+
+// ExampleGaussianModel_FilterStep_liquidityMonitor demonstrates real-time
+// order-book liquidity monitoring without retrospective label leakage.
+//
+// Scenario:
+//   - A venue's event stream provides quoted spread in basis points and
+//     normalized bid/ask depth imbalance for each successive order-book update.
+//   - Two pre-calibrated Gaussian regimes represent normal and stressed liquidity.
+//   - An operational alert is based exclusively on evidence available at that update.
+//
+// Implementation:
+//   - Stage 1: Fix two regime densities and a state-transition matrix.
+//   - Stage 2: Feed 15 ordered, synthetic market observations to FilterStep.
+//   - Stage 3: Count only contemporaneous stress probabilities above an alert threshold.
+//
+// Behavior highlights:
+//   - No Smooth or Decode output is used to fabricate a past trading decision.
+//
+// Inputs:
+//   - Each feature vector contains [spreadBasisPoints, absoluteDepthImbalance].
+//
+// Returns:
+//   - Printed event-level alert count and final causal stress probability.
+//
+// Errors:
+//   - Model and streaming input failures are reported and stop the scenario.
+//
+// Determinism:
+//   - Observations, parameters and threshold are fixed; there is no RNG.
+//
+// Complexity:
+//   - Time O(T*K^2+T*K*D), live workspace O(K) for fixed K=2, D=2.
+//
+// Notes:
+//   - Demonstration data are synthetic, not measured exchange order-book records.
+//
+// AI-Hints:
+//   - Calibrate spreads and imbalance statistics on training-only history.
+//   - A regime probability is a monitoring signal, not an execution instruction.
+func ExampleGaussianModel_FilterStep_liquidityMonitor() {
+	model, err := exampleGaussianModel(
+		[]float64{.97, .03},
+		[][]float64{{.96, .04}, {.15, .85}},
+		[][]float64{{12, .12}, {75, .75}},
+		[][]float64{{25, .01}, {144, .0256}},
+	)
+	if err != nil {
+		fmt.Println("model:", err)
+		return
+	}
+	orderBook := [][2]float64{
+		{13, .10}, {10, .08}, {14, .15}, {12, .12}, {13, .13},
+		{16, .17}, {34, .42}, {65, .68}, {88, .84}, {79, .74},
+		{72, .78}, {49, .50}, {24, .27}, {15, .15}, {11, .10},
+	}
+	const alertThreshold = .80
+	var previous *hmm.FilterState
+	alerts, first := 0, -1
+	for i, observation := range orderBook {
+		next, filterErr := model.FilterStep(context.Background(), previous, observation[:])
+		if filterErr != nil {
+			fmt.Println("stream:", filterErr)
+			return
+		}
+		stress := math.Exp(next.LogPosterior[1])
+		if stress >= alertThreshold {
+			alerts++
+			if first < 0 {
+				first = i
+			}
+		}
+		previous = next
+	}
+	fmt.Printf("updates=%d alerts=%d first=%d final-stress=%.3f\n",
+		previous.Steps, alerts, first, math.Exp(previous.LogPosterior[1]))
+	// Output:
+	// updates=15 alerts=6 first=6 final-stress=0.000
+}
+
+// ExampleGaussianModel_Smooth_ecgReview illustrates retrospective ECG beat
+// review while distinguishing it explicitly from live physiological alerts.
+//
+// Scenario:
+//   - Each row contains an RR interval and a QRS duration in milliseconds.
+//   - A synthetic short episode contains premature-like widened beats followed
+//     by return to baseline rhythm, represented by two calibrated HMM states.
+//   - A clinician-oriented offline report may use future evidence; a live
+//     monitor must instead use the causal Filter output at the earlier time.
+//
+// Implementation:
+//   - Stage 1: Create an explicitly parameterized diagonal-Gaussian model.
+//   - Stage 2: Run Smooth and Decode over the completed ECG feature batch.
+//   - Stage 3: Publish the decoded episode span and identify posterior differences.
+//
+// Behavior highlights:
+//   - Viterbi gives a globally consistent path, not independently maximal gamma.
+//
+// Inputs:
+//   - Synthetic RR/QRS feature matrix with T=12, D=2.
+//
+// Returns:
+//   - Printed offline episode indices and evidence that retrospective inference differs.
+//
+// Errors:
+//   - Every model, matrix, or inference failure stops without partial reporting.
+//
+// Determinism:
+//   - Fixed observation and parameter sequences; deterministic tie-breaking.
+//
+// Complexity:
+//   - Time O(T*K^2+T*K*D); memory O(T*K+T*D).
+//
+// Notes:
+//   - This demonstrates signal analysis, not validated clinical arrhythmia diagnosis.
+//
+// AI-Hints:
+//   - Never backdate a smoothed episode probability as an online alarm outcome.
+func ExampleGaussianModel_Smooth_ecgReview() {
+	model, err := exampleGaussianModel(
+		[]float64{.95, .05},
+		[][]float64{{.98, .02}, {.5, .5}},
+		[][]float64{{800, 90}, {560, 160}},
+		[][]float64{{3600, 225}, {6400, 900}},
+	)
+	if err != nil {
+		fmt.Println("model:", err)
+		return
+	}
+	readings, err := exampleMatrix([][]float64{
+		{810, 92}, {795, 89}, {825, 94}, {805, 91}, {788, 88},
+		{560, 158}, {540, 166}, {575, 161}, {785, 92},
+		{800, 88}, {820, 95}, {805, 91},
+	})
+	if err != nil {
+		fmt.Println("matrix:", err)
+		return
+	}
+	causal, err := model.FilterWithHistory(context.Background(), readings)
+	if err != nil {
+		fmt.Println("filter:", err)
+		return
+	}
+	smooth, err := model.Smooth(context.Background(), readings)
+	if err != nil {
+		fmt.Println("smooth:", err)
+		return
+	}
+	path, err := model.Decode(context.Background(), readings)
+	if err != nil {
+		fmt.Println("decode:", err)
+		return
+	}
+	first, last, count := -1, -1, 0
+	for i, state := range path.States {
+		if state == 1 {
+			if first < 0 {
+				first = i
+			}
+			last = i
+			count++
+		}
+	}
+	filtered, err := causal.Posterior.At(4, 1)
+	if err != nil {
+		fmt.Println("causal posterior:", err)
+		return
+	}
+	retrospective, err := smooth.Posterior.At(4, 1)
+	if err != nil {
+		fmt.Println("smoothed posterior:", err)
+		return
+	}
+	fmt.Printf("beats=%d reviewed=%d episode=%d..%d future-changes-posterior=%t\n",
+		len(path.States), count, first, last, math.Abs(filtered-retrospective) > 1e-12)
+	// Output:
+	// beats=12 reviewed=3 episode=5..7 future-changes-posterior=true
+}
+
+// ExampleFitGaussian_sensorFleet trains Gaussian regimes on independent
+// synthetic industrial bearing-monitoring sessions without joining machines.
+//
+// Scenario:
+//   - Ten bearing assets each contribute one six-step operating session.
+//   - Two dimensionless features represent externally normalized vibration
+//     velocity and bearing-housing temperature; the normalization is fixed.
+//   - A physically consistent VarianceFloor applies in squared normalized units.
+//
+// Implementation:
+//   - Stage 1: Generate ten deterministic, separate per-asset sessions.
+//   - Stage 2: Fit the old-model responsibilities and two-pass weighted moments.
+//   - Stage 3: Admit a heldout high-vibration sample only after convergence.
+//
+// Behavior highlights:
+//   - No inter-machine transitions enter xi, and zero-occupancy states are retained.
+//
+// Inputs:
+//   - Fixed 10x6x2 normalized sensor observations and caller-selected FitOptions.
+//
+// Returns:
+//   - Printed fitted-session count, sample count and causal high-load probability.
+//
+// Errors:
+//   - Partial models from ErrNotConverged are intentionally not deployed.
+//
+// Determinism:
+//   - Data generation uses only arithmetic and a fixed loop order.
+//
+// Complexity:
+//   - Time O(iterations*2*sum(T_s)*(K^2+K*D)); peak EM workspace depends
+//     on the longest session rather than concatenated inter-session transitions.
+//
+// Notes:
+//   - These synthetic normalized features are not calibrated plant measurements.
+//
+// AI-Hints:
+//   - Persist the external normalization and asset/session boundaries with each fit.
+func ExampleFitGaussian_sensorFleet() {
+	modelTransition, err := exampleMatrix([][]float64{{.92, .08}, {.18, .82}})
+	if err != nil {
+		fmt.Println("transition:", err)
+		return
+	}
+	initialMeans, err := exampleMatrix([][]float64{{.3, .35}, {1.8, 1.6}})
+	if err != nil {
+		fmt.Println("means:", err)
+		return
+	}
+	initialVariances, err := exampleMatrix([][]float64{{.12, .10}, {.25, .20}})
+	if err != nil {
+		fmt.Println("variances:", err)
+		return
+	}
+	initial := hmm.GaussianSpec{
+		Common: hmm.Common{Prior: []float64{.85, .15}, Transition: modelTransition},
+		Means:  initialMeans, Variances: initialVariances,
+	}
+	runs := make([]matrix.Matrix, 0, 10)
+	for asset := 0; asset < 10; asset++ {
+		drift := float64(asset) * .012
+		rows := [][]float64{
+			{.28 + drift, .34 + drift}, {.31 + drift, .36 + drift},
+			{.29 + drift, .31 + drift}, {.32 + drift, .37 + drift},
+		}
+		if asset%3 == 0 {
+			rows = append(rows, []float64{1.72 + drift, 1.50 + drift}, []float64{2.04 + drift, 1.77 + drift})
+		} else {
+			rows = append(rows, []float64{.33 + drift, .35 + drift}, []float64{.30 + drift, .33 + drift})
+		}
+		reading, buildErr := exampleMatrix(rows)
+		if buildErr != nil {
+			fmt.Println("asset:", buildErr)
+			return
+		}
+		runs = append(runs, reading)
+	}
+	fit, err := hmm.FitGaussian(context.Background(), runs, initial, hmm.FitOptions{
+		MaxIterations: 60, Tolerance: 1e-5, Pseudocount: .1, VarianceFloor: .01,
+	})
+	if err != nil && !errors.Is(err, hmm.ErrNotConverged) {
+		fmt.Println("fit:", err)
+		return
+	}
+	if fit == nil || !fit.Diagnostics.Converged {
+		fmt.Println("training incomplete")
+		return
+	}
+	state, err := fit.Model.FilterStep(context.Background(), nil, []float64{2.05, 1.72})
+	if err != nil {
+		fmt.Println("heldout:", err)
+		return
+	}
+	fmt.Printf("assets=%d training-samples=%d converged=%t high-load=%.3f\n",
+		len(runs), 6*len(runs), fit.Diagnostics.Converged, math.Exp(state.LogPosterior[1]))
+	// Output:
+	// assets=10 training-samples=60 converged=true high-load=1.000
+}

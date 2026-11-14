@@ -38,6 +38,10 @@ import "math"
 // AI-Hints:
 //   - Test the all--Inf case; naive maximum-shift code otherwise yields NaN.
 func LogSumExp(a, b float64) float64 {
+	// A corrupted log score must not be misclassified as infinite support.
+	if math.IsNaN(a) || math.IsNaN(b) {
+		return math.NaN()
+	}
 	if math.IsInf(a, 1) || math.IsInf(b, 1) {
 		return math.Inf(1)
 	}
@@ -62,6 +66,7 @@ func LogSumExp(a, b float64) float64 {
 //
 // Behavior highlights:
 //   - Empty vectors and all-impossible vectors both yield -Inf.
+//   - An invalid NaN input is propagated as NaN, never misread as impossible support.
 //
 // Inputs:
 //   - v: read-only log values, typically finite or -Inf; NaN is outside the valid domain.
@@ -86,6 +91,9 @@ func LogSumExp(a, b float64) float64 {
 func LogSumExpSlice(v []float64) float64 {
 	m := math.Inf(-1)
 	for _, x := range v {
+		if math.IsNaN(x) {
+			return math.NaN()
+		}
 		if x > m {
 			m = x
 		}
