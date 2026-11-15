@@ -3,7 +3,7 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/FAQ_&_TIPS.md
-  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca and the wider lvlath package family
+  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm and the wider lvlath package family
   lvlath - FAQ & Tips
 
   Purpose:
@@ -683,7 +683,7 @@ The implementation keeps one upper-triangle accumulator and writes its value int
 
 ### Q6.10. Can `Correlation` succeed when `Covariance` fails?
 
-Yes. Correlation is dimensionless and is computed from **normalized centered moments**, not by dividing a materialized covariance matrix. Two perfectly anticorrelated channels of magnitude `1e200` have Pearson coefficient `-1`, even if the covariance exceeds finite binary64. Their standard deviations may still be representable. For a constant feature, the entire correlation row and column—including the diagonal—is exactly zero; for nonconstant features the diagonal is one.
+Yes. Correlation is dimensionless and is computed from **normalized centered moments**, not by dividing a materialized covariance matrix. Two perfectly anticorrelated channels of magnitude `1e200` have Pearson coefficient `-1`, even if the covariance exceeds finite binary64. Their standard deviations may still be representable. For a constant feature, the entire correlation row and column-including the diagonal-is exactly zero; for nonconstant features the diagonal is one.
 
 ### Q6.11. Does `CenterColumns` always return a detached matrix?
 
@@ -2002,7 +2002,7 @@ or the `ErrUnsupportedSolver` policy for `ThinSVD`.
 
 ---
 
-### 13e. HMM FAQ — causal regimes, smoothing, decoding and EM
+### 13e. HMM FAQ - causal regimes, smoothing, decoding and EM
 
 #### Q13e.1. When do I use `FilterStep`, `FilterWithHistory`, `Smooth` or `Decode`?
 
@@ -2038,7 +2038,7 @@ With independent sequences, each one gets its **own** initial hidden state drawn
 
 #### Q13e.9. Why does `FitGaussian` reject a positive initial variance below the floor?
 
-`NewGaussian` accepts any strictly positive finite diagonal variance. `FitGaussian` additionally requires **initial variance >= effective `VarianceFloor`**, which defaults to `1e-8` in *feature²* units. The constrained M-step uses `max(empiricalVariance,VarianceFloor)`—it does not add the floor as noise. If the seed is outside the constrained feasible domain, it is `ErrInvalidOption`, not a silently repaired start. Scaling training features changes the physical interpretation of the variance floor; freeze preprocessing units first.
+`NewGaussian` accepts any strictly positive finite diagonal variance. `FitGaussian` additionally requires **initial variance >= effective `VarianceFloor`**, which defaults to `1e-8` in *feature²* units. The constrained M-step uses `max(empiricalVariance,VarianceFloor)`-it does not add the floor as noise. If the seed is outside the constrained feasible domain, it is `ErrInvalidOption`, not a silently repaired start. Scaling training features changes the physical interpretation of the variance floor; freeze preprocessing units first.
 
 #### Q13e.10. What happens to a dead hidden state with zero posterior occupancy?
 
@@ -2987,6 +2987,47 @@ Fit `stats.FitStandardizer` on a stable training `matrix.Matrix` with explicit `
 Fit `pca.FitWithComponents` on the healthy **training** matrix and retain the immutable `Model`. Reconstruct a separate healthy **calibration** matrix and derive a documented threshold from its per-row residuals in consistent units. Score untouched holdout/production rows with the same model; do not refit PCA or recompute feature means for the incoming batch. A threshold exceedance is an **investigation signal**, not a hardware shutdown or clinical decision. For mixed-unit channels, calibrate physical-channel residuals separately or define an independently fitted weighting rule; the PCA Model does not expose its internal scales.
 
 See [`PCA.md`](PCA.md) and [`pca/example_test.go`](../pca/example_test.go) for the actual public API and deterministic examples.
+
+### Recipe L. Investigate fixed-window retry or vibration periodicity
+
+Validate the sampling cadence and choose two **non-overlapping or otherwise
+explicitly defined** analysis windows. After handling any `series` validity
+masks, call `acf.ComputeDefault` for the same scientific lag horizon in each
+window. Compare coefficients **and** `PairCounts`, and persist the estimator
+convention and window boundaries with the incident record. A repeat peak is
+an investigation lead, not a root-cause diagnosis or a p-value. For
+physical-zero raw signals use `acf.ComputeUncentered` deliberately; for
+lag-adjusted covariance ratios use `acf.ComputeLagAdjusted` without clipping.
+Never substitute `LagAdjusted` into a Toeplitz PSD-sensitive solver.
+
+See [`ACF.md`](ACF.md) and the reproducible `go run ./examples/acf` program.
+
+---
+
+### Recipe M. Replay an index-only block-bootstrap audit
+
+```go
+plan := bootstrap.Plan{
+    Kind: bootstrap.StationaryBlocks,
+    Length: trainingRows,
+    BlockLength: 8,
+    Replicates: 200,
+    Seed: 0,
+}
+result, err := bootstrap.SampleIndices(ctx, trainingRows, plan)
+if err != nil {
+    // A non-nil partial Result can contain completed rows; do not silently
+    // accept those rows as the requested full 200-replicate ensemble.
+    return err
+}
+// Persist plan, trainingRows and result.RNG before gathering domain values.
+_ = result
+```
+
+This snippet belongs inside a function returning `error` with `ctx` and
+`trainingRows` supplied by the caller. `bootstrap` does not read observations,
+select block length or estimate confidence intervals. See
+[`BOOTSTRAP.md`](BOOTSTRAP.md) for exact mathematics and memory limits.
 
 ---
 
