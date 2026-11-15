@@ -35,14 +35,14 @@ The `pca` package learns an **orthogonal latent coordinate system** from a train
 
 Each row of `X` is one observation; each column is one ordered feature. `Fit` requires `n >= 2`, `d >= 1`, and all cells to be finite `float64`. The caller must not modify `X` while a call is reading it; `Fit` never changes or retains `X`.
 
-`FitResult` contains a `Model` with **private fitted** means, scales, and `d×k` loadings, and caller-owned detached `Eigenvalues`/`ExplainedVarianceRatio` slices. The mutable public diagnostics cannot modify the model's private buffers. `(*FitResult)(nil).IsNil()` is true; `(&FitResult{}).IsNil()` is false. The latter does not mean an unfitted result is a valid trained model.
+`FitResult` contains a `Model` with **private fitted** population-scaling means, scales, two-part covariance centers, and `d×k` loadings, and caller-owned detached `Eigenvalues`/`ExplainedVarianceRatio` slices. The mutable public diagnostics cannot modify the model's private buffers. `(*FitResult)(nil).IsNil()` is true; `(&FitResult{}).IsNil()` is false. The latter does not mean an unfitted result is a valid trained model.
 
 ```mermaid
 flowchart LR
-    A["Training matrix n x d"] --> B["Fit: learn means / scales"]
-    B --> C["matrix.Covariance: sample C"]
-    C --> D["matrix.EigenSym + certification"]
-    D --> E["Frozen Model: means, scales, V_k"]
+    A["Training matrix n x d"] --> B["Population scaling (optional)"]
+    B --> C["matrix.Covariance + exact two-part center"]
+    C --> D["Power-of-two scaled EigenSym + certification"]
+    D --> E["Frozen Model: scales, composite center, V_k"]
     E --> F["Transform: new x -> scores"]
     E --> G["InverseTransform: scores -> reconstructed x"]
     H["Holdout matrix"] --> F
@@ -55,37 +55,61 @@ A production workflow should keep **chronological or entity-based** separation a
 
 ### 3.1. Fitted affine preprocessing
 
-For training observation `i` and feature `j`, define
+The preprocessing boundary is a **composition of two frozen affine maps**.
+Let `muStats` and `scale` be the trained population-standardizer parameters
+(`muStats=0`, `scale=1` when standardization is disabled). The prepared observations
+are the *finite binary64 output* of this first map, not ideal unrounded reals:
 
 $$
-Y_{ij}=\frac{X_{ij}-\mu_j}{s_j},\quad
-\mu_j=\operatorname{mean}_{i\in train}X_{ij}.
+A_{ij}=\frac{X_{ij}-\mu_{\mathrm{stats},j}}{s_j},\qquad
+c_j=\frac1n\sum_{i=1}^{n}A_{ij},\qquad U_{ij}=A_{ij}-c_j.
 $$
+
+`matrix.Covariance(A)` forms sample central moments in prepared coordinates.
+It can preserve deviations lost when `c_j` is rounded to one float.
+`Fit` therefore freezes a first-observation **anchor** and the exact mean
+**displacement split into high and low parts** for every prepared feature.
+The displacement is accumulated as exact binary integers with quantum `2^-1074`;
+neither this center nor the fitted scales are recomputed on holdout data.
+Covariance formation remains approximate float64 arithmetic, but the fitted
+origin represents the exact mean of the same prepared binary64 observations.
 
 With `Standardize=false`, every `s_j=1`. With `Standardize=true`, `stats.FitStandardizer` supplies a **population** (`DDOF=0`) standard deviation and `RejectConstant` policy. An exactly constant training feature fails with `ErrZeroVariance`; it is not silently dropped. A constant column is legal without standardization if other features carry nonzero variance.
 
-The sample covariance always uses the sample denominator `n-1`, regardless of the scale convention:
+The sample covariance uses the sample denominator `n-1`, regardless of the
+population-scaling convention:
 
 $$
-C=\frac{1}{n-1}\,(Y-\overline{Y})^{\mathsf T}(Y-\overline{Y}),\qquad
-C\,v_j=\lambda_j v_j.
+C=\frac{1}{n-1}U^{\mathsf T}U,\qquad C v_j=\lambda_j v_j.
 $$
 
-For correctly centered training data, `mean(Y)` is numerically near zero; `matrix.Covariance` performs the stable sample-centering itself. These two conventions are intentionally different (`DDOF=0` for fitted scales; `n-1` for covariance).
+The separate covariance center is essential even without standardization:
+`U` must not be replaced with `A - rounded(c)` merely because the public
+covariance API also reports rounded means. `DDOF=0` belongs to the fitted
+scale; `n-1` belongs to sample covariance.
 
-![Sample covariance](https://latex.codecogs.com/svg.image?%5Cdpi%7B120%7DC%3D%5Cfrac%7B1%7D%7Bn-1%7DY%5E%7B%5Cmathsf%7BT%7D%7DY)
+![Centered sample covariance](https://latex.codecogs.com/svg.image?C%3D%5Cfrac%7B1%7D%7Bn-1%7DU%5E%7B%5Cmathsf%7BT%7D%7DU)
 
 ### 3.2. Frozen projection and reconstruction
 
-For an inference matrix `Xnew` with the original `d` columns:
+For an inference matrix `Xnew` with its original `d` columns, the fitted
+population-standardizer parameters and the prepared covariance center `c`
+are applied **in that order**:
 
 $$
-Z = \left[(X_{new}-\mu)\oslash s\right] V_k,
-\qquad
-\widehat{X}_{new}=(Z V_k^{\mathsf T})\odot s+\mu.
+A_{new}=(X_{new}-\mu_{\mathrm{stats}})\oslash s,\qquad
+Z=(A_{new}-c)V_k,\qquad
+\widehat A=ZV_k^{\mathsf T}+c,\qquad
+\widehat X=\widehat A\odot s+\mu_{\mathrm{stats}}.
 $$
 
-![PCA projection and reconstruction](https://latex.codecogs.com/svg.image?Z%3D%5B%28X_%7Bnew%7D-%5Cmu%29%5Coslash%20s%5DV_k%2C%5Cquad%20%5Cwidehat%7BX%7D_%7Bnew%7D%3D%28ZV_k%5E%7B%5Cmathsf%7BT%7D%7D%29%5Codot%20s%2B%5Cmu)
+The stored `c` is not materialized as a single rounded float during projection.
+In particular, for `base=2^450`, `next=Nextafter(base,+Inf)`, and `g=next-base`,
+a full-rank unstandardized fit produces scores near `[-g/2,+g/2]`, not `[0,g]`.
+The inverse adds the high/low mean displacement and anchor **before** restoring
+physical population scales. Normal floating-point rounding can still change
+non-exactly-representable reconstructions; there is no universal bitwise
+round-trip guarantee for arbitrary inputs.
 
 `Transform(ctx,x)` returns `nnew×k` scores. `InverseTransform(ctx,scores)` returns `nnew×d` values in the **original feature units**. `Reconstruct(ctx,x)` calls these two operations in sequence. Every output is detached; valid zero-row inference returns an allocated zero-row matrix with correct width. When `k` is truncated, reconstruction is intentionally lossy.
 
@@ -104,11 +128,11 @@ The denominator includes **all** accepted nonnegative eigenvalues, even positive
 The training diagnostic is the Frobenius norm of reconstruction error in **prepared** coordinates:
 
 $$
-R=\left\|Y-YV_kV_k^{\mathsf T}\right\|_F,\qquad
+R=\left\|U-UV_kV_k^{\mathsf T}\right\|_F,\qquad
 R^2\approx(n-1)\sum_{j=k+1}^{d}\lambda_j.
 $$
 
-![PCA reconstruction residual identity](https://latex.codecogs.com/svg.image?R%5E2%3D%5C%7CY-YV_kV_k%5E%7B%5Cmathsf%7BT%7D%7D%5C%7C_F%5E2%5Capprox%28n-1%29%5Csum_%7Bj%3Dk%2B1%7D%5E%7Bd%7D%5Clambda_j)
+![PCA reconstruction residual identity](https://latex.codecogs.com/svg.image?R%5E2%3D%5C%7CU-UV_kV_k%5E%7B%5Cmathsf%7BT%7D%7D%5C%7C_F%5E2%5Capprox%28n-1%29%5Csum_%7Bj%3Dk%2B1%7D%5E%7Bd%7D%5Clambda_j)
 
 This identity is a *test oracle*, not an instruction to replace the direct residual kernel with the eigenvalue tail. The residual is measured across **all n training observations**, not on a single row. A heldout per-observation squared prediction error (SPE) instead starts from the difference between the **measured** row and its `Model.Reconstruct` output. With `Standardize=false` and physically homogeneous features, `SPE(x)=sum_j (x_j-xhat_j)^2` has squared sensor units; with `Standardize=true`, the corresponding optimization-space score requires frozen training scales and is not obtained by naively adding mixed-unit raw squares. The current `Model` intentionally exposes no fitted-scale getter: downstream code must explicitly define and freeze its own independently auditable weighting policy when such a metric is needed.
 
@@ -124,7 +148,24 @@ Hotelling's `T²` is a *different* retained-score statistic, typically proportio
 | `ThinSVD`         | Immediately returns `ErrUnsupportedSolver`; **no fallback**   | Reserved API enum only, not an available algorithm                      |
 | Unknown `Solver`  | `ErrInvalidOption`                                            | Never guessed or converted                                              |
 
-`matrix.EigenSym` is a Jacobi solver accepting an **absolute maximum off-diagonal pivot tolerance**, while `pca.Options.EigenTolerance` is **relative** to the covariance infinity norm. The adapter computes `absoluteTol=relativeTol*||C||∞`; zero selects `1e-12`, with an underflow guard. The independent eigenpair verification bound is no weaker than the default quality criterion even if a user requests an excessively loose stopping tolerance.
+`matrix.EigenSym` accepts an **absolute maximum off-diagonal pivot tolerance**;
+`pca.Options.EigenTolerance` specifies the corresponding relative policy.
+The adapter first reads and verifies every original covariance cell, selects
+`E = Frexp(max(abs(Cij))).exponent` and constructs `Cs[i,j]=Ldexp(C[i,j],-E)`.
+For PSD covariance the largest-magnitude cell occurs on the diagonal; the
+all-cell maximum also bounds intermediate operations on corrupted inputs,
+which are still rejected rather than silently repaired. Crucially, `2^E`
+**is never materialized**: for `E=1024` it would overflow despite a finite
+public eigenvalue. Then `absoluteTol=relativeTol*||Cs||∞` is finite under the
+ordinary default (`1e-12`) and all Jacobi rotations run on `Cs`.
+
+Sorting, PSD allowance `epsilon*d*lambdaMaxScaled`, eigenpair equation residuals
+and numerical rank are verified **entirely in scaled units**. Ratios are formed
+before restoration. The public eigenvalues are restored with
+`math.Ldexp(lambdaScaled,E)` and individually checked for true overflow;
+nonzero retained modes are never silently published as zero after underflow.
+An overly loose solver pivot threshold still cannot weaken PCA's independent
+model-publication check.
 
 `MaxRotations=0` means **checked `50*d*d` individual Jacobi rotations**; this is not a sweep count. `MaxRotations>0` is an explicit budget. Exhaustion returns `nil, ErrNotConverged`, with `matrix.ErrMatrixEigenFailed` also discoverable via `errors.Is`. The eigensolver does not accept a `context.Context`; cancellation is checked before/after the solver call and throughout cancellable PCA loops, not inside Jacobi rotations.
 
@@ -133,13 +174,13 @@ Hotelling's `T²` is a *different* retained-score statistic, typically proportio
 By construction, a mathematically correct sample covariance is positive semidefinite. Numerical calculation can introduce very small negative eigenvalues. The current strict policy is:
 
 $$
-a=\epsilon\,d\,\lambda_{max},\quad \epsilon=2^{-52},\qquad
-\lambda_j< -a\Longrightarrow \texttt{ErrNumerical}.
+a_s=\epsilon\,d\,\lambda_{max,s},\quad \epsilon=2^{-52},\qquad
+\lambda_{j,s}< -a_s\Longrightarrow \texttt{ErrNumerical}.
 $$
 
-Only `-a <= lambda < 0` may be replaced with positive zero. Exact covariance symmetry is checked because the canonical covariance kernel mirrors its upper triangle into the lower triangle. The eigensolver is not allowed to repair a corrupted covariance. **This allowance is an engineering scale-aware gate, not a proven uniform error bound for every covariance calculation**; especially ill-conditioned data require a direct SVD approach and independent high-precision oracles.
+Only `-a_s <= lambdaScaled < 0` may be replaced with positive zero **before restoring units**. Exact covariance symmetry is checked because the canonical covariance kernel mirrors its upper triangle into the lower triangle. The eigensolver is not allowed to repair a corrupted covariance. **This allowance is an engineering scale-aware gate, not a proven uniform error bound for every covariance calculation**; especially ill-conditioned data require a direct SVD approach and independent high-precision oracles.
 
-Every retained eigenvector is checked for finite elements, unit norm, mutual orthogonality and its *raw* eigen-equation residual `||Cv-λv||₂` against the original covariance snapshot. A large user-provided `EigenTolerance` cannot certify an unrotated diagonal as an eigenvalue spectrum.
+Every eigenvector is checked for finite elements, unit norm, mutual orthogonality and its *raw* scaled eigen-equation residual `||Cs*v-λs*v||₂` against the original **scaled snapshot** of the pre-solver covariance. No verification uses an eigensolver-mutated matrix. A large user-provided `EigenTolerance` cannot certify an unrotated diagonal as an eigenvalue spectrum.
 
 ### 4.3. Rank and deterministic basis signs
 
@@ -151,15 +192,16 @@ Eigenvalues are stably sorted descending; equal values keep their Jacobi column 
 
 For `n` rows, `d` features, `k` retained components and at most `R` Jacobi rotations:
 
-| Stage                            | Time          | Additional storage                 |
-|----------------------------------|---------------|------------------------------------|
-| Finite scans and fitted scaling  | `O(nd)`       | `O(nd+d)` if standardized          |
-| Stable sample covariance         | `O(nd²)`      | `O(d²)` plus matrix workspaces     |
-| Max-pivot Jacobi                 | `O(Rd²)`      | `O(d²)`                            |
-| Eigenpair certification          | `O(d³)`       | `O(d²)` covariance/basis snapshots |
-| Training reconstruction residual | `O(ndk)`      | `O(d+k)` row buffers               |
-| Inference transform              | `O(nnew*d*k)` | `O(nnew*k)` output/workspace       |
-| Inverse transform                | `O(nnew*d*k)` | `O(nnew*d+k)` output/workspace     |
+| Stage                            | Time                               | Additional storage                  |
+|----------------------------------|------------------------------------|-------------------------------------|
+| Finite scans and fitted scaling  | `O(nd)`                            | `O(nd+d)` if standardized           |
+| Frozen exact covariance center   | `O(nd)` bounded binary-integer ops | `O(d)` model + O(1) fitting buffers |
+| Stable sample covariance         | `O(nd²)`                           | `O(d²)` plus matrix workspaces      |
+| Max-pivot Jacobi                 | `O(Rd²)`                           | `O(d²)`                             |
+| Eigenpair certification          | `O(d³)`                            | `O(d²)` covariance/basis snapshots  |
+| Training reconstruction residual | `O(ndk)`                           | `O(d+k)` row buffers                |
+| Inference transform              | `O(nnew*d*k)`                      | `O(nnew*k)` output/workspace        |
+| Inverse transform                | `O(nnew*d*k)`                      | `O(nnew*d+k)` output/workspace      |
 
 `R=50d²` is an **upper bound** when omitted, not a claim that every dataset needs that many rotations. Covariance formation squares the condition number: poorly separated tiny eigenmodes can disappear even when a direct SVD would retain them. The current implementation does not promise a condition-number certificate or high-condition rank reliability.
 
@@ -212,7 +254,7 @@ Use the full `Fit` when a numerical rank policy or rotation budget must be expli
 
 ### 5.2. An executable leakage-safe pipeline
 
-This example compiles against the actual public functions. For richer scenarios with physical units and independent validation, use [`pca/example_test.go`](../pca/example_test.go) and [`examples/pca/main.go`](../examples/pca/main.go).
+This example compiles against the actual public functions. For richer scenarios with physical units and independent validation, use [`pca/example_test.go`](../../../../Downloads/lvlath-pca-num03-num04/pca/example_test.go) and [`examples/pca/main.go`](../../../../Downloads/lvlath-pca-num03-num04/examples/pca/main.go).
 
 ```go
 package main
@@ -318,14 +360,15 @@ For `Fit`, the externally observable validation order is **context → options �
 ## 8. Determinism, performance, and concurrency
 
 - Input scans follow ascending observation index then ascending original feature index. Sorted eigenpairs use stable descending eigenvalues with Jacobi source-index tie breaks. The loading sign pivot chooses the first maximum-absolute row.
-- All persisted `Model` arrays are privately owned after `Fit`; exported diagnostics and getter/inference matrices are detached. Concurrent `Model.Transform`, `InverseTransform` and `Reconstruct` calls are safe with distinct, non-mutated input matrices; each call creates its own workspace.
+- All persisted `Model` arrays (population means/scales, two-part covariance centers, and loadings) are privately owned after `Fit`; exported diagnostics and getter/inference matrices are detached. Concurrent `Model.Transform`, `InverseTransform` and `Reconstruct` calls are safe with distinct, non-mutated input matrices; each call creates its own workspace.
 - `*matrix.Dense` benefits from inexpensive `At` calls; its private backing storage is **not** accessible from `pca`. Introducing unsafe direct slice access as an optimization would require a separately admitted matrix API change.
-- Projection/reconstruction returns `ErrOverflow` when intermediate or final results are not finite. Input NaN/±Inf remains `ErrNonFinite`, not an arithmetic overflow or a missing-data sentinel.
+- Binary-power covariance scaling is internal; an overflowing *diagnostic raw infinity norm* does not reject a representable spectrum. The restoration stage nevertheless returns `ErrOverflow` for a genuinely unrepresentable required eigenvalue.
+- Projection/reconstruction returns `ErrOverflow` when required final results are not finite; rare exact rescues prevent false overflow from early affine subtraction or addition. Input NaN/±Inf remains `ErrNonFinite`, not an arithmetic overflow or a missing-data sentinel.
 - Benchmark `BenchmarkPCA_CovarianceEigen` measures n=100/1000 and d=10/50/100 with all dataset construction excluded from timing; measurements depend on the real matrix/statistics implementation, CPU and toolchain.
 
 ## 9. Tests and operational constraints
 
-The external `package pca_test` suite checks low rank, requested rank errors, holdout leakage, repeated-eigenspace projectors, detached components, typed-nil `core.Nilable`, zero variance, unsupported ThinSVD, exhausted rotations, numerical error on loose-tolerance false convergence, checked allocation sizes and concurrent inference. It also includes a high-precision rational 2×2 covariance oracle and original-space reconstruction checks.
+The external `package pca_test` suite includes independent extreme midpoint (`2^450` and its next float) and finite rank-one (`~1.608e308`) counterexamples, plus tests for truly overflowing leading eigenvalues, small binary-power scaling, and oversized original-unit differences that become finite after population division. It also checks low rank, requested rank errors, holdout leakage, repeated-eigenspace projectors, detached components, typed-nil `core.Nilable`, zero variance, unsupported ThinSVD, exhausted rotations, numerical error on loose-tolerance false convergence, checked allocation sizes and concurrent inference. It also includes a high-precision rational 2×2 covariance oracle and original-space reconstruction checks.
 
 **Required acceptance commands in the actual repository**:
 

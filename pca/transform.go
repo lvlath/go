@@ -18,7 +18,7 @@ import (
 //
 // Implementation:
 //   - Stage 1: reject nil receivers and nonpositive fitted dimensions.
-//   - Stage 2: require d training means and positive-scale storage positions.
+//   - Stage 2: require d scaling means, positive scales, and composite centers.
 //   - Stage 3: require a complete d-by-k private loading buffer.
 //
 // Behavior highlights:
@@ -48,7 +48,8 @@ import (
 //   - Do not expose setters or mutable slices that could invalidate ready.
 func (m *Model) ready() bool {
 	return m != nil && m.d > 0 && m.k > 0 && len(m.means) == m.d &&
-		len(m.scales) == m.d && len(m.loadings) == m.d*m.k
+		len(m.scales) == m.d && len(m.centers) == m.d &&
+		len(m.loadings) == m.d*m.k
 }
 
 // Transform maps new observations to scores in the learned latent space.
@@ -57,13 +58,15 @@ func (m *Model) ready() bool {
 //
 // Implementation:
 //   - Stage 1: validate context, fitted receiver, input shape, and all finite cells.
-//   - Stage 2: center/scale each row with frozen means/scales and project via Vk.
+//   - Stage 2: apply population scaling, subtract the two-part covariance
+//     center and project the resulting coordinates via Vk.
 //   - Stage 3: publish an independently allocated rows-by-k score matrix.
 //
 // Behavior highlights:
 //   - A correctly shaped zero-row input returns a detached 0-by-k output.
 //   - Subtraction overflow is retried as separately scaled operands when valid.
 //   - math.FMA reduces intermediate rounding in fixed-order score dot products.
+//   - A two-part covariance center preserves between-float64 training means.
 //
 // Inputs:
 //   - ctx: active non-nil context, checked before input access and per row.
@@ -126,16 +129,11 @@ func (m *Model) Transform(ctx context.Context, x matrix.Matrix) (matrix.Matrix, 
 			if readErr != nil {
 				return nil, readErr
 			}
-			// Subtract before dividing for precision near the training mean.
-			// When the subtraction itself overflows, scale the operands first;
-			// opposite-sign operands cannot cancel in this fallback branch.
-			difference := v - m.means[col]
-			centered := difference / m.scales[col]
-			if !finite(difference) {
-				centered = v/m.scales[col] - m.means[col]/m.scales[col]
-			}
-			if !finite(centered) {
-				return nil, ErrOverflow
+			// Population standardization and covariance centering are distinct.
+			// Both use frozen training state, including the sub-ULP center offset.
+			centered, centerErr := m.preprocessFeature(v, col)
+			if centerErr != nil {
+				return nil, centerErr
 			}
 			for j := 0; j < m.k; j++ {
 				index := i*m.k + j
@@ -160,7 +158,8 @@ func (m *Model) Transform(ctx context.Context, x matrix.Matrix) (matrix.Matrix, 
 // Implementation:
 //   - Stage 1: validate context, fitted receiver, score width, and finite cells.
 //   - Stage 2: reconstruct each feature with Vk^T from one buffered score row.
-//   - Stage 3: apply fitted scales/means and publish a detached rows-by-d Dense.
+//   - Stage 3: restore the prepared-space center and population scales, then
+//     publish a detached rows-by-d Dense.
 //
 // Behavior highlights:
 //   - A 0-by-k score matrix becomes a legal detached 0-by-d feature matrix.
@@ -241,8 +240,13 @@ func (m *Model) InverseTransform(ctx context.Context, scores matrix.Matrix) (mat
 				// Ascending component order is stable across repeated calls.
 				projected = math.FMA(score, m.loadings[col*m.k+component], projected)
 			}
-			// One fused affine operation restores the original training units.
-			value := math.FMA(projected, m.scales[col], m.means[col])
+			// First undo the exact prepared-space covariance origin, then the
+			// frozen population scaling. Reversing this order shifts predictions.
+			prepared, centerErr := m.centers[col].restore(projected)
+			if centerErr != nil {
+				return nil, centerErr
+			}
+			value := math.FMA(prepared, m.scales[col], m.means[col])
 			if !finite(value) {
 				return nil, ErrOverflow
 			}

@@ -105,6 +105,10 @@
 //     accessor; do not bypass its private storage or promise an unsafe fast-path.
 //   - Do not remove penalty-first equilibration to recover one allocation:
 //     huge but finite Lambda can otherwise make the computed slope exactly -0.
+//   - Every penalized column attains unit magnitude after max-abs balancing;
+//     the current matrix QR global max-abs factor scale is therefore one.
+//     Replacing per-column balancing with raw global scaling can reintroduce
+//     premature loss of the response under extreme factor magnitudes.
 //   - The QR right scaling is NOT predictor Standardize: it is undone before
 //     physical coefficients and the explicitly scaled-L2 penalty are published.
 package ridge

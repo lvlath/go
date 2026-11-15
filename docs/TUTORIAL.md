@@ -3,14 +3,14 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/TUTORIAL.md
-  Package reference: matrix, stats, ols, ridge, acf and the wider lvlath package family
+  Package reference: matrix, stats, ols, ridge and the wider lvlath package family
   Contract status: learning guide; package doc.go and source define the public API.
   Scope: graph, matrix, factorization, statistical and temporal workflows.
   lvlath - Repository Tutorial
 
   Purpose:
     This tutorial is the first educational entry point for lvlath. It introduces
-    fundamental graph, matrix, stable-statistics, causal time-series, fixed-window ACF estimators, dependent-data block-bootstrap indices, and symbolic SAX ideas; explains how lvlath
+    fundamental graph, matrix, stable-statistics, causal time-series, and symbolic SAX ideas; explains how lvlath
     maps mathematical algorithms into deterministic Go packages, and helps readers move from basic
     graph and series concepts to package-specific documentation. It does not duplicate every
     package specification; instead it teaches the mental model, core entities,
@@ -25,7 +25,7 @@
 
 > **hard math on an easy level**
 
-Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fixed-window autocorrelation, reproducible block-bootstrap indices, version-pinned RNG streams, fitted feature scaling, covariance PCA, and time-series alignment.
+Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fitted feature scaling, covariance PCA, and time-series alignment.
 
 This tutorial is the beginning of the learning path. It introduces the objects and ideas that most packages share: graphs, matrices, options, result artifacts, error contracts, and deterministic algorithm execution.
 
@@ -112,7 +112,7 @@ warping alignment          *dtw.Result                 distance, reachability, p
 causal sample transform    *series.TransformResult     detached Values + Valid mask
 timestamp-grid inspection  *series.ValidationResult    exact cadence / missing slots
 dependent index ensembles  *bootstrap.Result           detached complete rows / RNG replay revision
-versioned stochastic path   rng.RNG                    mutable PCG-DXSM draw stream, owned by one goroutine
+versioned stochastic path  rng.RNG                    mutable PCG-DXSM draw stream, owned by one goroutine
 sample autocorrelation     *acf.Result                 fixed-window lag coefficients / pair counts
 streaming statistics       *stats.Summary              exact-binary-input mean / scaled variance
 train-only scaling         *stats.ScaleFitResult       detached fit metadata / immutable model
@@ -122,9 +122,9 @@ fitted PCA subspace        *pca.FitResult              verified covariance rank 
 causal regime              *hmm.FilterResult           current log posterior / optional causal history
 retrospective regime       *hmm.SmoothResult           future-conditioned posterior
 joint regime trajectory    *hmm.DecodeResult           optimal path / joint log probability
-fractional PAA              *paa.Result                detached means / exact rational segments
-SAX symbolic word           *sax.Result                detached symbols / policy identity / optional PAA
-closed tour                 *tsp.Result                cost, exactness, timeout, ratio
+fractional PAA             *paa.Result                detached means / exact rational segments
+SAX symbolic word          *sax.Result                detached symbols / policy identity / optional PAA
+closed tour                *tsp.Result                cost, exactness, timeout, ratio
 ```
 
 ### Why lvlath?
@@ -1792,7 +1792,7 @@ If `NoIntercept=true`, there is **no column of ones**, the physical intercept is
 
 ### 11d.2. Why is a safe penalty weight not enough?
 
-With two observations `X=[1,2]`, `y=[1,2]`, `NoIntercept=true`, and `Lambda=1e100`, the **correct** coefficient is `5/(5+2*Lambda)≈2.5e-100` - exceptionally small but nonzero. Forming `sqrt(n*Lambda)` through the naive floating multiplication can overflow at high Lambda, but even `sqrt(n)*sqrt(Lambda)` alone does not eliminate Householder cancellation: original observation rows placed before a much larger penalty row can lose the tiny `Qᵀ*y` projection and produce `-0`.
+With two observations `X=[1,2]`, `y=[1,2]`, `NoIntercept=true`, and `Lambda=1e100`, the **correct** coefficient is `5/(5+2*Lambda)≈2.5e-100` — exceptionally small but nonzero. Forming `sqrt(n*Lambda)` through the naive floating multiplication can overflow at high Lambda, but even `sqrt(n)*sqrt(Lambda)` alone does not eliminate Householder cancellation: original observation rows placed before a much larger penalty row can lose the tiny `Qᵀ*y` projection and produce `-0`.
 
 The fitted QR input is an *exactly equivalent system* that performs three deterministic operations:
 
@@ -1893,34 +1893,47 @@ For six executable examples with real decision workflows (chronological macro ho
 
 ## 11e. PCA Foundations: Certified Covariance Factors and Frozen Inference
 
-`stats` tells us what each feature's population spread is; `matrix` forms the covariance and supplies a symmetric eigensolver; `pca` turns those primitives into an **immutable fitted orthogonal transform** and checks whether its returned spectrum can be trusted.
+`stats` tells us what each feature's population spread is; `matrix` forms the covariance and supplies a symmetric eigensolver; `pca` turns those primitives into an **immutable fitted orthogonal transform**, freezes a two-part covariance center, and checks whether its scaled eigenspectrum can be trusted.
 
-### 11e.1. Train-only origin and scale
+### 11e.1. Two frozen origins, not one rounded mean
 
-Training observations form `X` with `n>=2` rows and `d>=1` features. `Fit` always centers columns; `Standardize=true` additionally fits **population** standard deviations (`DDOF=0`, `stats.RejectConstant`). Sample covariance uses the distinct `n-1` denominator:
+Training observations form `X` with `n>=2` rows and `d>=1` features. With
+`Standardize=true`, `stats.FitStandardizer` fits population deviations
+(`DDOF=0`, `stats.RejectConstant`) and produces the prepared matrix `A`.
+Without standardization `A=X`. The covariance then centers these **prepared
+binary64 observations**, not the unrounded hypothetical real-number values:
 
 $$
-Y_{ij}=\frac{X_{ij}-\mu_j}{s_j},\qquad C=\frac{1}{n-1}(Y-\bar{Y})^\mathsf{T}(Y-\bar{Y}).
+A=(X-\mu_{\mathrm{stats}})\oslash s,\quad
+c=\operatorname{mean}_{train}(A),\quad
+U=A-c,\quad C=\frac{1}{n-1}U^\mathsf{T}U.
 $$
 
-![PCA sample covariance](https://latex.codecogs.com/svg.image?C%3D%5Cfrac%7B1%7D%7Bn-1%7D%28Y-%5Cbar%7BY%7D%29%5E%7B%5Cmathsf%7BT%7D%7D%28Y-%5Cbar%7BY%7D%29)
+`pca.Model` freezes `muStats`, `s`, and the distinct covariance center `c` as
+an anchor plus high/low mean displacement. An ordinary rounded float64 mean
+cannot represent `base+g/2` for two adjacent values `base=2^450` and
+`base+g`; naive `x-roundedMean` gives scores `[0,g]` instead of the
+correct `[-g/2,+g/2]`. The composite center fixes this without changing
+`matrix.Covariance` or refitting on a future batch.
 
-The frozen fitted map projects **new** rows as `Z=((Xnew-mu)/s) * Vk`, with `k<=rank`. Calling `FitStandardizer` or `Fit` again on holdout data changes the origin, destroys comparability and leaks the future into a trained pipeline.
+New observations always use `Z=(Anew-c)*Vk`. Reconstruction first adds `c`
+and only then reverses population scaling. The covariance denominator remains
+`n-1` regardless of the fitted scale's `DDOF=0` convention.
 
 ### 11e.2. Rank, verification, and two different failure causes
 
-`CovarianceEigen` uses `matrix.Covariance` and `matrix.EigenSym`. Jacobi receives a checked `50*d*d` default rotation budget and a norm-scaled absolute pivot threshold. The adapter then independently verifies orthonormality and `C*v=lambda*v` against the **original covariance**. When the solver exhausts rotations, `ErrNotConverged` retains `matrix.ErrMatrixEigenFailed`; when it returns an inaccurate eigenbasis, `ErrNumerical` refuses publication. Materially negative eigenvalues are never blindly clipped, and `ThinSVD` immediately returns `ErrUnsupportedSolver`.
+`CovarianceEigen` uses `matrix.Covariance` and `matrix.EigenSym`. Before computing a row-sum infinity norm or invoking Jacobi, it scales the covariance by an exact binary exponent `E` so that `Cs=Ldexp(C,-E)` has bounded entries. Jacobi receives a checked `50*d*d` default rotation budget and a norm-scaled absolute pivot threshold in the scaled coordinates. The adapter then independently verifies orthonormality and `Cs*v=lambdaScaled*v` against the **original scaled snapshot**, restores eigenvalues with `Ldexp(lambdaScaled,E)`, and never forms the potentially overflowing scale `2^E` as a float. When the solver exhausts rotations, `ErrNotConverged` retains `matrix.ErrMatrixEigenFailed`; when it returns an inaccurate eigenbasis, `ErrNumerical` refuses publication. Materially negative eigenvalues are never blindly clipped, and `ThinSVD` immediately returns `ErrUnsupportedSolver`.
 
 Numerical rank counts `lambda > tau*lambdaMax`, where `tau=epsilon*max(n,d)` by default. `Components=0` selects that rank; a positive request exceeding rank fails. PCA covariance conditioning can be substantially worse than a direct SVD: never loosen tolerances to force high-condition data into an apparently full-rank result.
 
 ### 11e.3. What the result means
 
-`FitResult.Model` privately owns means, scales and `d×k` loading matrix; its public diagnostic slices are detached. `Model.Components()` returns a **copy**, not a writable model view. `Model.Transform(ctx,holdout)` gives `holdoutRows×k` scores; `InverseTransform` and `Reconstruct` return original-unit approximations.
+`FitResult.Model` privately owns population means/scales, composite covariance centers and the `d×k` loading matrix; its public diagnostic slices are detached. `Model.Components()` returns a **copy**, not a writable model view. `Model.Transform(ctx,holdout)` gives `holdoutRows×k` scores; `InverseTransform` and `Reconstruct` return original-unit approximations.
 
 `ExplainedVarianceRatio[i]` divides retained eigenvalue `i` by the **complete** accepted spectrum. The returned ratios do not automatically sum to one when dimensions are discarded. `ReconstructionResidual` is the **training Frobenius norm in prepared coordinates**, not a forecast score or an industrial alarm threshold:
 
 $$
-\lVert Y-YV_kV_k^\mathsf{T}\rVert_F^2\approx(n-1)\sum_{j>k}\lambda_j.
+\lVert U-UV_kV_k^\mathsf{T}\rVert_F^2\approx(n-1)\sum_{j>k}\lambda_j.
 $$
 
 Repeated-eigenvalue eigenspaces have nonunique bases. Compare `Vk*Vk^T` across implementations if `k` retains the **whole** repeated subspace; comparing individual loading signs is not a valid cross-solver oracle.

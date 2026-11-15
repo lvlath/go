@@ -35,6 +35,7 @@ type spectralData struct {
 	rank          int
 	maximum       float64
 	normalizedSum float64
+	unitRatios    []float64 // Dimensionless lambda_i / maximum before exponent restoration.
 }
 
 // spectralPair keeps one Jacobi eigenvalue paired with its original column.
@@ -46,11 +47,12 @@ type spectralPair struct {
 }
 
 // covarianceSnapshot is a detached, validated representation of a symmetric C.
-// values is row-major d-by-d; norm is the infinity norm of the covariance.
+// values is row-major d-by-d scaled covariance; norm is its infinity norm.
 // The snapshot is used solely to verify the eigensolver's returned eigenpairs.
 type covarianceSnapshot struct {
-	values []float64
-	norm   float64
+	values   []float64 // Symmetric covariance scaled to a bounded binary exponent.
+	norm     float64   // Infinity norm of scaled entries; safe for row summation.
+	exponent int       // C = Ldexp(scaledC, exponent), without materializing scale.
 }
 
 // analyzeSpectrum validates every eigenpair before accepting a covariance rank.
@@ -58,12 +60,12 @@ type covarianceSnapshot struct {
 // rank deficiency distinguishable rather than treating them as one error.
 //
 // Implementation:
-//   - Stage 1: resolve the checked rotation budget; read finite, exactly
-//     symmetric covariance and compute the infinity norm.
+//   - Stage 1: resolve rotations, verify the original covariance, and build
+//     a bounded binary-power-scaled symmetric snapshot and infinity norm.
 //   - Stage 2: run matrix.EigenSym exactly once, sort eigenpairs, canonicalize
 //     loading signs, and reject negative eigenvalues outside PSD allowance.
-//   - Stage 3: independently verify orthonormality/eigen-equation residuals,
-//     then derive the full numerical rank and normalized spectral trace.
+//   - Stage 3: verify orthogonality, equations, PSD and rank in scaled units;
+//     restore finite physical covariance eigenvalues only after certification.
 //
 // Behavior highlights:
 //   - EigenTolerance changes Jacobi's pivot cutoff, never the independent
@@ -83,7 +85,7 @@ type covarianceSnapshot struct {
 //   - ErrZeroVariance: covariance has exactly zero norm.
 //   - ErrNotConverged: exhausted Jacobi rotations, preserving matrix sentinel.
 //   - ErrNumerical: asymmetry, invalid PSD, nonorthogonality, or large residual.
-//   - ErrOverflow: norms, thresholds, or required counts cannot be represented.
+//   - ErrOverflow: physical eigenvalues, tolerances or counts cannot be represented.
 //   - ErrRankDeficient: the prescribed numerical rank is zero.
 //   - ctx.Err() and Matrix.At errors: cancellation or backend read failures.
 //
@@ -115,7 +117,16 @@ func analyzeSpectrum(ctx context.Context, cov matrix.Matrix, n, d int, opts Opti
 	if err != nil {
 		return nil, err
 	}
-	pairs, vectors, absoluteTol, err := solveCovarianceEigen(ctx, cov, d, opts.EigenTolerance, rotations, covariance.norm)
+	// Jacobi must receive the bounded covariance, not the potentially huge
+	// original. Re-expansion is deferred until all scaled spectral checks pass.
+	scaled, err := matrix.NewDense(d, d)
+	if err != nil {
+		return nil, wrapDependency(err)
+	}
+	if err = scaled.Fill(covariance.values); err != nil {
+		return nil, wrapDependency(err)
+	}
+	pairs, vectors, absoluteTol, err := solveCovarianceEigen(ctx, scaled, d, opts.EigenTolerance, rotations, covariance.norm)
 	if err != nil {
 		return nil, err
 	}
@@ -139,6 +150,12 @@ func analyzeSpectrum(ctx context.Context, cov matrix.Matrix, n, d int, opts Opti
 	if err = determineSpectralRank(spectrum, n, d, opts.RankTolerance); err != nil {
 		return nil, err
 	}
+	// Rescale eigenvalues only after rank, PSD, residuals and ratios have been
+	// accepted in the bounded coordinates. A genuinely unrepresentable
+	// published eigenvalue still fails instead of producing +Inf.
+	if err = restoreSpectrumEigenvalues(spectrum, covariance.exponent); err != nil {
+		return nil, err
+	}
 	return spectrum, nil
 }
 
@@ -148,8 +165,8 @@ func analyzeSpectrum(ctx context.Context, cov matrix.Matrix, n, d int, opts Opti
 //
 // Implementation:
 //   - Stage 1: allocate a detached d-by-d verification snapshot.
-//   - Stage 2: scan all cells row-major, accumulating each absolute row sum.
-//   - Stage 3: check exact mirrored equality and nonzero infinity norm.
+//   - Stage 2: validate all finite symmetric entries and select binary scale.
+//   - Stage 3: scale each value and sum bounded absolute rows.
 //
 // Behavior highlights:
 //   - Exact symmetry is justified because matrix.Covariance mirrors each
@@ -160,10 +177,10 @@ func analyzeSpectrum(ctx context.Context, cov matrix.Matrix, n, d int, opts Opti
 //   - cov: read-only d-by-d covariance matrix; d: validated dimension.
 //
 // Returns:
-//   - *covarianceSnapshot: detached finite values and finite infinity norm.
+//   - *covarianceSnapshot: detached scaled values, exponent and finite norm.
 //
 // Errors:
-//   - ErrOverflow: unrepresentable matrix element or absolute row sum.
+//   - ErrOverflow: nonfinite matrix entry or unrepresentable scaled row sum.
 //   - ErrNumerical: asymmetry between corresponding upper/lower cells.
 //   - ErrZeroVariance: the matrix has zero norm and thus no useful spectrum.
 //   - ctx.Err() or Matrix.At error: cancellation or backend read failure.
@@ -181,12 +198,18 @@ func analyzeSpectrum(ctx context.Context, cov matrix.Matrix, n, d int, opts Opti
 //   - Do not replace strict mirrored equality with matrix.Symmetrize;
 //     a success result with broken symmetry must remain a numerical failure.
 func readSymmetricCovariance(ctx context.Context, cov matrix.Matrix, d int) (*covarianceSnapshot, error) {
+	if _, err := checkedFloatElements(d, d); err != nil {
+		return nil, err
+	}
 	snapshot := &covarianceSnapshot{values: make([]float64, d*d)}
+	var maximum float64
+
+	// Read the real covariance before scaling: its original finite entries
+	// and exact mirrored symmetry remain mandatory, even when norm overflows.
 	for row := 0; row < d; row++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		var rowSum float64
 		for col := 0; col < d; col++ {
 			value, err := cov.At(row, col)
 			if err != nil {
@@ -196,16 +219,12 @@ func readSymmetricCovariance(ctx context.Context, cov matrix.Matrix, d int) (*co
 				return nil, ErrOverflow
 			}
 			snapshot.values[row*d+col] = value
-			rowSum += math.Abs(value)
-			if !finite(rowSum) {
-				return nil, ErrOverflow
+			if abs := math.Abs(value); abs > maximum {
+				maximum = abs
 			}
 		}
-		if rowSum > snapshot.norm {
-			snapshot.norm = rowSum
-		}
 	}
-	if snapshot.norm == 0 {
+	if maximum == 0 {
 		return nil, ErrZeroVariance
 	}
 	for row := 0; row < d; row++ {
@@ -213,6 +232,28 @@ func readSymmetricCovariance(ctx context.Context, cov matrix.Matrix, d int) (*co
 			if snapshot.values[row*d+col] != snapshot.values[col*d+row] {
 				return nil, ErrNumerical
 			}
+		}
+	}
+
+	// For a PSD covariance the maximum-magnitude element is on the diagonal;
+	// using all entries also makes malformed inputs safe to inspect before PSD
+	// certification. The scale 2^exponent need not be representable itself.
+	_, snapshot.exponent = math.Frexp(maximum)
+	for row := 0; row < d; row++ {
+		var rowSum float64
+		for col := 0; col < d; col++ {
+			index := row*d + col
+			snapshot.values[index] = math.Ldexp(snapshot.values[index], -snapshot.exponent)
+			if !finite(snapshot.values[index]) {
+				return nil, ErrNumerical
+			}
+			rowSum += math.Abs(snapshot.values[index])
+		}
+		if !finite(rowSum) {
+			return nil, ErrOverflow
+		}
+		if rowSum > snapshot.norm {
+			snapshot.norm = rowSum
 		}
 	}
 	return snapshot, nil
@@ -665,5 +706,61 @@ func determineSpectralRank(spectrum *spectralData, n, d int, relativeTolerance f
 	if spectrum.rank == 0 {
 		return ErrRankDeficient
 	}
+	// Retain normalized ratios before conversion back to physical eigenvalues;
+	// some tiny discarded modes may underflow on exponent restoration.
+	spectrum.unitRatios = make([]float64, d)
+	for index, eigenvalue := range spectrum.values {
+		spectrum.unitRatios[index] = eigenvalue / spectrum.maximum / spectrum.normalizedSum
+	}
+	return nil
+}
+
+// restoreSpectrumEigenvalues recovers the physical covariance spectrum exactly
+// once, after all eigensystem checks have run in scaled coordinates.
+// The power-of-two exponent is kept separately because 2^1024 is not finite,
+// although multiplying a sufficiently small mantissa by it may be finite.
+// Implementation:
+//   - Stage 1: traverse verified eigenvalues in stable descending order.
+//   - Stage 2: restore each with math.Ldexp, avoiding a materialized scale.
+//   - Stage 3: reject genuinely unrepresentable published values atomically.
+//
+// Behavior highlights:
+//   - Ratios and rank have already been computed without physical-scale overflow.
+//
+// Inputs:
+//   - spectrum: privately owned verified scaled values; exponent: binary scale.
+//
+// Returns:
+//   - error: nil after replacing each value with physical covariance units.
+//
+// Errors:
+//   - ErrOverflow: one restored eigenvalue is not finite.
+//
+// Determinism:
+//   - Ascending index; no second eigensolver invocation or sorting.
+//
+// Complexity:
+//   - Time O(d), Space O(1).
+//
+// Notes:
+//   - The caller publishes no model on error; spectrum is still private.
+//
+// AI-Hints:
+//   - Do not compute math.Ldexp(1, exponent) and multiply; that scale can overflow.
+func restoreSpectrumEigenvalues(spectrum *spectralData, exponent int) error {
+	for index, value := range spectrum.values {
+		restored := math.Ldexp(value, exponent)
+		if !finite(restored) || (index < spectrum.rank && value > 0 && restored == 0) {
+			// A selected nonzero covariance mode must never be published
+			// as an exact zero after restoration from scaled coordinates.
+			return ErrOverflow
+		}
+		spectrum.values[index] = restored
+	}
+	maximum := math.Ldexp(spectrum.maximum, exponent)
+	if !finite(maximum) {
+		return ErrOverflow
+	}
+	spectrum.maximum = maximum
 	return nil
 }

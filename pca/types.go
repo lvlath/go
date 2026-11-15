@@ -120,14 +120,16 @@ type Options struct {
 
 // Model holds a fitted affine preprocessing map and an orthonormal loading basis.
 // All parameters are private, independently owned, and immutable after Fit.
+// A two-part covariance origin remains separate from fitted population scaling
+// so scores never silently drift when a training mean lies between floats.
 //
 // Implementation:
-//   - Stage 1: Fit freezes training means and positive population scales.
+//   - Stage 1: Fit freezes population scales and a two-part covariance center.
 //   - Stage 2: it copies retained canonical loadings into private row-major storage.
 //   - Stage 3: Transform, InverseTransform, and Components read but never mutate it.
 //
 // Behavior highlights:
-//   - Transform uses (x-mean)/scale and projects onto the retained loading axes.
+//   - Transform subtracts the frozen prepared-space covariance center after scaling.
 //   - InverseTransform restores original units after reconstruction.
 //   - Each invocation owns its temporary buffers; the Model contains no mutexes.
 //
@@ -156,11 +158,12 @@ type Options struct {
 //   - Do not recompute test-batch moments during inference.
 //   - Never expose loadings as a mutable view; call Components for a detached copy.
 type Model struct {
-	d        int       // Original feature count; never changes after fitting.
-	k        int       // Retained latent dimension; never changes after fitting.
-	means    []float64 // Training-only means, in original feature units, length d.
-	scales   []float64 // Strictly positive training scales (or ones), length d.
-	loadings []float64 // Row-major orthonormal loading matrix, d-by-k.
+	d        int            // Original feature count; never changes after fitting.
+	k        int            // Retained latent dimension; never changes after fitting.
+	means    []float64      // Frozen population-standardizer means, or zeros, length d.
+	scales   []float64      // Frozen positive population scales, or ones, length d.
+	centers  []fittedCenter // High/low covariance origins in prepared coordinates, length d.
+	loadings []float64      // Row-major orthonormal loading matrix, d-by-k.
 }
 
 // FitResult publishes the immutable fitted model and detached spectral diagnostics.

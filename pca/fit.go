@@ -14,15 +14,17 @@ import (
 	"github.com/lvlath/go/stats"
 )
 
-// trainingData carries one call's original-unit fitted preprocessing parameters.
-// Only the training call may populate means and scales; the published Model takes
-// ownership after the covariance and spectrum have passed their validations.
-// prepared aliases the caller's input when Standardize=false and otherwise owns
-// the detached output of stats.Standardizer.Transform.
+// trainingData owns the two fitted affine stages of one training call.
+// means/scales belong to original-unit population standardization, while
+// centers belong to the independently centered prepared covariance space.
+// Only Fit populates this state; Model takes ownership after all checks.
+// prepared borrows input without standardization, otherwise it owns the
+// detached result of stats.Standardizer.Transform.
 type trainingData struct {
 	prepared matrix.Matrix
 	means    []float64
 	scales   []float64
+	centers  []fittedCenter
 }
 
 // fitKernel runs exactly one covariance-based PCA training pipeline.
@@ -82,7 +84,7 @@ func fitKernel(ctx context.Context, input matrix.Matrix, n, d int, opts Options)
 
 	// The covariance stage owns the exact sample n-1 denominator through the
 	// canonical matrix implementation, including its overflow protection.
-	covariance, err := trainingCovariance(ctx, training, d, opts.Standardize)
+	covariance, err := trainingCovariance(ctx, training, d)
 	if err != nil {
 		return nil, err
 	}
@@ -103,10 +105,10 @@ func fitKernel(ctx context.Context, input matrix.Matrix, n, d int, opts Options)
 // It never estimates parameters from later prediction or validation batches.
 //
 // Implementation:
-//   - Stage 1: allocate unit scales for the unstandardized coordinate system.
+//   - Stage 1: allocate zero original-unit means and unit scales by default.
 //   - Stage 2: when requested, call stats.FitStandardizer with DDOF=0 and
 //     RejectConstant and check every returned parameter before division.
-//   - Stage 3: materialize one detached standardized matrix without changing x.
+//   - Stage 3: materialize a detached standardized matrix without changing x.
 //
 // Behavior highlights:
 //   - An unstandardized input is borrowed, not cloned, until Fit returns.
@@ -118,7 +120,7 @@ func fitKernel(ctx context.Context, input matrix.Matrix, n, d int, opts Options)
 //   - n,d: validated sizes; standardize selects the population scale policy.
 //
 // Returns:
-//   - *trainingData: per-call scales, means, and working matrix, or nil.
+//   - *trainingData: frozen scaling stage and working matrix, or nil.
 //
 // Errors:
 //   - ErrZeroVariance: stats.RejectConstant refuses a constant feature.
@@ -141,7 +143,7 @@ func fitKernel(ctx context.Context, input matrix.Matrix, n, d int, opts Options)
 //     can overflow when a valid standard deviation is representable.
 //   - Keep the population DDOF=0 convention distinct from sample covariance.
 func prepareTraining(ctx context.Context, input matrix.Matrix, n, d int, standardize bool) (*trainingData, error) {
-	training := &trainingData{prepared: input, scales: make([]float64, d)}
+	training := &trainingData{prepared: input, means: make([]float64, d), scales: make([]float64, d)}
 	for feature := range training.scales {
 		training.scales[feature] = 1
 	}
@@ -192,7 +194,7 @@ func prepareTraining(ctx context.Context, input matrix.Matrix, n, d int, standar
 // Implementation:
 //   - Stage 1: check cancellation before any covariance calculation.
 //   - Stage 2: call matrix.Covariance and check its dimensions and means.
-//   - Stage 3: retain the unstandardized means or verify frozen scaled means.
+//   - Stage 3: fit a two-part covariance center in the prepared coordinates.
 //
 // Behavior highlights:
 //   - Always uses n-1 in sample covariance, including standardized training.
@@ -200,14 +202,14 @@ func prepareTraining(ctx context.Context, input matrix.Matrix, n, d int, standar
 //
 // Inputs:
 //   - ctx: active context; training: per-fit preprocessing state.
-//   - d: validated feature count; standardized selects the fitted origin.
+//   - d: validated feature count; the center belongs to prepared coordinates.
 //
 // Returns:
 //   - matrix.Matrix: detached d-by-d sample covariance or nil on failure.
 //
 // Errors:
 //   - ErrNumerical: inconsistent dimensions or an absent dependency artifact.
-//   - ErrOverflow: nonfinite returned means/scales or unrepresentable covariance.
+//   - ErrOverflow: unrepresentable prepared-space center or covariance.
 //   - Wrapped matrix errors and ctx.Err(): dependency arithmetic/cancellation.
 //
 // Determinism:
@@ -223,9 +225,9 @@ func prepareTraining(ctx context.Context, input matrix.Matrix, n, d int, standar
 //
 // AI-Hints:
 //   - Do not use a raw centered Gram product to replace matrix.Covariance.
-//   - Train-only means, not the mean of a transformed validation batch,
-//     determine the affine origin of the published Model.
-func trainingCovariance(ctx context.Context, training *trainingData, d int, standardized bool) (matrix.Matrix, error) {
+//   - Frozen population-scaling means and the covariance center are separate:
+//     neither may be recomputed from an inference or validation batch.
+func trainingCovariance(ctx context.Context, training *trainingData, d int) (matrix.Matrix, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -236,16 +238,20 @@ func trainingCovariance(ctx context.Context, training *trainingData, d int, stan
 	if typedNilMatrix(covariance) || covariance.Rows() != d || covariance.Cols() != d || len(covarianceMeans) != d {
 		return nil, ErrNumerical
 	}
-	if !standardized {
-		// The unstandardized fit deliberately borrows X for covariance, then
-		// takes its own means copy before the caller can reuse X.
-		training.means = append([]float64(nil), covarianceMeans...)
-	}
 	for feature := 0; feature < d; feature++ {
 		if !finite(covarianceMeans[feature]) || !finite(training.means[feature]) ||
 			!finite(training.scales[feature]) || training.scales[feature] <= 0 {
 			return nil, ErrOverflow
 		}
+	}
+
+	// Matrix covariance can accumulate centered moments around a mean that
+	// does not fit in one binary64 cell. Freeze a separate anchor/offset center
+	// of the same prepared observations, rather than using covarianceMeans as
+	// the only origin of the subsequently published scores.
+	training.centers, err = fitCovarianceCenters(ctx, training.prepared, d)
+	if err != nil {
+		return nil, err
 	}
 	return covariance, nil
 }
@@ -312,7 +318,8 @@ func publishFitResult(ctx context.Context, original matrix.Matrix, training *tra
 	}
 	model := &Model{
 		d: d, k: components,
-		means: training.means, scales: training.scales, loadings: loadings,
+		means: training.means, scales: training.scales,
+		centers: training.centers, loadings: loadings,
 	}
 	residual, err := trainingResidual(ctx, original, model)
 	if err != nil {
@@ -329,8 +336,7 @@ func publishFitResult(ctx context.Context, original matrix.Matrix, training *tra
 	for component := 0; component < components; component++ {
 		// Divide in eigenvalue-relative coordinates to avoid an overflowing
 		// materialized covariance trace when its ratios are representable.
-		result.ExplainedVarianceRatio[component] =
-			(spectrum.values[component] / spectrum.maximum) / spectrum.normalizedSum
+		result.ExplainedVarianceRatio[component] = spectrum.unitRatios[component]
 	}
 	return result, nil
 }
@@ -340,13 +346,13 @@ func publishFitResult(ctx context.Context, original matrix.Matrix, training *tra
 // each row using only the retained basis, without allocating a reconstructed matrix.
 //
 // Implementation:
-//   - Stage 1: allocate one original-space row and one latent-score workspace.
+//   - Stage 1: allocate one prepared-space row and one latent-score workspace.
 //   - Stage 2: center/scale a row and accumulate its retained projections.
 //   - Stage 3: reconstruct the row and reduce all residuals using math.Hypot.
 //
 // Behavior highlights:
 //   - Hypot avoids squaring a large residual before accumulating its norm.
-//   - Centering uses train means and scales, even for a standardized fit.
+//   - Centering uses frozen population statistics AND the prepared-space center.
 //
 // Inputs:
 //   - ctx: active context; input: read-only original training observations.
@@ -391,15 +397,9 @@ func trainingResidual(ctx context.Context, input matrix.Matrix, model *Model) (f
 			if err != nil {
 				return 0, err
 			}
-			centered := value - model.means[feature]
-			preparedRow[feature] = centered / model.scales[feature]
-			if !finite(centered) {
-				// The exact difference can exceed float64 even when both ratios
-				// remain finite; divide the two operands before subtraction.
-				preparedRow[feature] = value/model.scales[feature] - model.means[feature]/model.scales[feature]
-			}
-			if !finite(preparedRow[feature]) {
-				return 0, ErrOverflow
+			preparedRow[feature], err = model.preprocessFeature(value, feature)
+			if err != nil {
+				return 0, err
 			}
 			for component := 0; component < model.k; component++ {
 				scores[component] = math.FMA(preparedRow[feature], model.loadings[feature*model.k+component], scores[component])

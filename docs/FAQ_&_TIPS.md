@@ -3,7 +3,7 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/FAQ_&_TIPS.md
-  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm and the wider lvlath package family
+  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca and the wider lvlath package family
   lvlath - FAQ & Tips
 
   Purpose:
@@ -1941,7 +1941,7 @@ These errors describe **different** failures. `ErrNotConverged` means Jacobi exh
 
 ### Q13d.5. Why does Transform not center each incoming test batch?
 
-Re-centering changes the coordinate origin and introduces holdout leakage. `Model.Transform(ctx,x)` uses **only** fitted training means and (if enabled) training population scales. A single out-of-range observation must retain a nonzero score rather than being translated to zero because its one-row batch mean equals itself.
+Re-centering changes the coordinate origin and introduces holdout leakage. `Model.Transform(ctx,x)` uses **only** the fitted population parameters (if enabled) plus the independent frozen two-part covariance center in prepared coordinates. A single out-of-range observation must retain a nonzero score rather than being translated to zero because its one-row batch mean equals itself.
 
 ### Q13d.6. Is `Components()` a writable view? Is `FitResult.IsNil()` a fit-status check?
 
@@ -1973,7 +1973,32 @@ Not automatically. PCA eigenvectors diagonalize **sample covariance** for the se
 
 ### Q13d.13. What must I validate before admitting PCA to a production analytics pipeline?
 
-Use the exact repository toolchain; check `go test ./pca -count=1`, `go test -race ./pca`, `go test ./...`, `go vet ./...`, and `golangci-lint run`. Independently test extreme covariance construction, residual identities, repeated-subspace projectors, holdout-only evaluation, and numeric error classification through `errors.Is`. Benchmark **real** dependencies, not a compatibility stand-in. See [`PCA.md`](PCA.md) for the full API and [`pca/example_test.go`](../pca/example_test.go) for executable workflows.
+Use the exact repository toolchain; check `go test ./pca -count=1`, `go test -race ./pca`, `go test ./...`, `go vet ./...`, and `golangci-lint run`. Independently test extreme covariance construction, residual identities, repeated-subspace projectors, holdout-only evaluation, and numeric error classification through `errors.Is`. Benchmark **real** dependencies, not a compatibility stand-in. See [`PCA.md`](PCA.md) for the full API and [`pca/example_test.go`](../../../../Downloads/lvlath-pca-num03-num04/pca/example_test.go) for executable workflows.
+
+### Q13d.14. Why can an accurate covariance still produce incorrectly centered scores?
+
+A single `float64` mean cannot always encode the training origin used by
+`matrix.Covariance` to accumulate stable moments. For `base=2^450` and
+`next=Nextafter(base,+Inf)`, the exact center is `base+g/2` where `g=next-base`.
+Correct one-component scores are `[-g/2,+g/2]`; naive subtraction of a rounded
+mean instead produces `[0,g]`. The fitted PCA model stores a first-row anchor
+and high/low exact binary mean displacement **of the prepared training matrix**,
+separately from the original-unit population-standardizer parameters.
+`Transform`, `InverseTransform`, and the training residual use that frozen origin;
+there is no refit or recentering on a future batch. This stabilizes the model
+coordinate system, not the underlying covariance eigensolver's approximation.
+
+### Q13d.15. Why does an overflowing raw infinity norm not imply PCA overflow?
+
+The raw absolute row sum of covariance entries is an internal scale diagnostic,
+not a published PCA eigenvalue. A rank-one covariance can have a finite leading
+eigenvalue near `1.608e308` even though one absolute row sum exceeds
+`MaxFloat64`. PCA validates the original covariance, scales every entry by
+an exact binary exponent, computes the norm and Jacobi decomposition in bounded
+coordinates, and restores each eigenvalue with `math.Ldexp`. It still returns
+`ErrOverflow` for a genuinely unrepresentable required eigenvalue. This
+correction does not weaken PSD acceptance, rank selection, eigenpair equations,
+or the `ErrUnsupportedSolver` policy for `ThinSVD`.
 
 ---
 
@@ -2560,7 +2585,6 @@ see [`RNG.md`](RNG.md), [`rng/doc.go`](../../../../Downloads/lvlath_rng_phase20_
 [`rng/example_test.go`](../../../../Downloads/lvlath_rng_phase20_v2/rng/example_test.go).
 
 ---
-
 
 ## 14. Builder and gridgraph tips
 

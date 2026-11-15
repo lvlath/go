@@ -17,9 +17,11 @@
 //
 // Shape and numeric laws:
 //   - Fit requires n>=2 rows and d>=1 columns and scans every input for finiteness.
-//   - The covariance is computed in training-centered coordinates; for
-//     Standardize=false, matrix.Covariance performs stable centering without
-//     requiring a separate stored copy of the original training matrix.
+//   - Matrix.Covariance performs stable centering in prepared training
+//     coordinates. Model independently freezes that prepared-space center
+//     as a first-row anchor and high/low exact binary mean displacement.
+//   - A one-float rounded mean cannot express a midpoint between adjacent
+//     large observations; the composite center preserves those scores.
 //   - Standardize additionally fits population deviations (DDOF=0) under
 //     stats.RejectConstant; any exactly constant feature is rejected.
 //   - Sample covariance always uses n-1, even after population standardization.
@@ -36,18 +38,23 @@
 //   - Only negative eigenvalues within machineEpsilon*d*lambdaMax may be
 //     replaced by zero. Material negatives and inaccurate eigenpairs return
 //     ErrNumerical; covariance is never silently symmetrized or repaired.
-//   - All d returned eigenvectors, not merely the requested k columns,
-//     must pass orthogonality and C*v=lambda*v against the original covariance.
+//   - Covariance entries are scaled by a positive binary power chosen from
+//     their maximum magnitude before any infinity norm or Jacobi rotation.
+//     The power of two is kept as an exponent, not a potentially infinite float.
+//   - All d eigenvectors must pass orthogonality and Cscaled*v=lambdaScaled*v
+//     against the original scaled covariance snapshot, before rescaling.
 //   - A loose eigen-solver stopping tolerance cannot weaken the independent
 //     precision check used before publishing the entire fitted spectrum.
 //
 // Fitted projection law:
 //   - Components returns detached d-by-k loading columns, orthonormal within
 //     the validated numerical error budget and ordered by descending eigenvalue.
-//   - Transform returns a detached nnew-by-k score matrix using ONLY stored
-//     training means and scales. It never fits moments on the new batch.
-//   - InverseTransform returns a detached nnew-by-d reconstruction in original
-//     units; Reconstruct composes these existing operations without refitting.
+//   - Transform first applies frozen population scaling (if selected), then
+//     subtracts the separate two-part covariance center in prepared units.
+//     It never fits moments on the new batch.
+//   - InverseTransform restores the covariance center BEFORE undoing the
+//     population scaling and returns original units; Reconstruct composes
+//     these operations without refitting.
 //   - Zero-row Transform and InverseTransform inputs are legal when the feature
 //     or score width matches the fitted model. Training inputs cannot be empty.
 //   - ReconstructionResidual is the training Frobenius norm in centered or
@@ -90,21 +97,28 @@
 //     caller input. ErrNumerical distinguishes failed PSD/eigenpair invariants.
 //
 // Complexity:
+//   - The exact training-center accumulator adds O(n*d) bounded binary-integer
+//     operations; no rational state is retained in the fitted Model.
 //   - Sample covariance takes O(n*d*d) time; max-pivot Jacobi takes
 //     O(R*d*d) for R rotations because each pivot searches O(d*d) cells.
 //     Spectral validation is O(d*d*d); train residual is O(n*d*k).
 //     With the default maximum R=50*d*d, this is an O(d^4) worst-case
 //     Jacobi bound, not a promise of cubic-time Jacobi convergence.
-//   - Fitting uses O(n*d+d*d) workspaces plus O(d*k+d) fitted Model storage;
-//     each inference call costs O(nnew*d*k) and returns its own output buffer.
+//   - Fitting uses O(n*d+d*d) workspaces plus O(d*k+d) Model storage.
+//     Spectral infinity norms, PSD allowances and eigenpair residuals use
+//     bounded coordinates; eigenvalues are restored with math.Ldexp.
+//     Each inference call costs O(nnew*d*k) and owns its output buffer.
 //
 // Explicit limitations and non-goals:
 //   - CovarianceEigen squares the condition number of centered training data.
 //     It is not a reliable substitute for direct thin SVD on high-condition data.
 //   - matrix.EigenSym has no context argument; cancellation is checked before
 //     and after its call but cannot interrupt its internal pivot loop.
-//   - The eigenvalue PSD allowance is deliberately strict and scale-aware;
-//     it is not a universal proof of covariance formation backward accuracy.
+//   - The eigenvalue PSD allowance is deliberately strict and evaluated in
+//     scaled coordinates; it is not a universal proof of covariance accuracy.
+//   - Training centering is exact for the supplied binary64 prepared inputs;
+//     covariance/eigenvectors and projected dot products remain floating-point
+//     approximations rather than an exact arithmetic decomposition.
 //   - PCA does not fit regression targets, prove i.i.d. sampling, forecast
 //     future observations, assign causal economic factor labels, estimate
 //     Nelson-Siegel parameters, calibrate anomaly thresholds, or make
@@ -119,6 +133,8 @@
 //     clip negative eigenvalues, or return a last-iteration Jacobi model.
 //   - Never fit standardization or centering on a holdout batch; Fit must be
 //     isolated to the designated training partition.
+//   - Do not flatten a two-part covariance center into one float64 mean,
+//     or form a raw infinity norm before binary scaling the covariance.
 //   - Do not compare individual loadings across repeated-eigenvalue solvers;
 //     use subspace projectors when a whole eigenspace is retained.
 //   - Prefer *matrix.Dense for efficient At access; matrix's private backing
