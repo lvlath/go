@@ -158,8 +158,8 @@ func factorBuildSolveResult(
 // its own right-hand-side snapshot and triangular workspace.
 // Implementation:
 //   - Stage 1: validate ctx, receiver, nonempty B shape, and finite entries.
-//   - Stage 2: permute and scale each RHS, solve unit-lower and upper systems.
-//   - Stage 3: compute exact original-coordinate L2 residuals and publish X.
+//   - Stage 2: independently normalize RHS columns and solve stored LU factors.
+//   - Stage 3: restore binary exponents, measure exact residuals and publish X.
 //
 // Behavior highlights: The same stored permutation is used on every RHS.
 // Inputs:
@@ -173,6 +173,7 @@ func factorBuildSolveResult(
 // Complexity: Time O(n*n*r) arithmetic plus exact residual work; Space O(n*r+n).
 // Notes: Factor construction already verified numerical rank and conditioning.
 // AI-Hints: Do not use the legacy unpivoted LU(A) output as this factor's storage.
+// A wide-range RHS fallback operates on the same packed L and U factors.
 func (f *LUFactor) Solve(ctx context.Context, b Matrix) (*SolveResult, error) {
 	if err := factorContextErr(ctx); err != nil {
 		return nil, err
@@ -191,25 +192,15 @@ func (f *LUFactor) Solve(ctx context.Context, b Matrix) (*SolveResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	solution := make([]float64, f.n*columns)
-	work := make([]float64, f.n)
-	answer := make([]float64, f.n)
-	for k := 0; k < columns; k++ {
-		if err = ctx.Err(); err != nil {
-			return nil, err
-		}
-		for i := 0; i < f.n; i++ {
-			work[i] = rhs[i*columns+k] / f.scale
-			if err = factorCheckFiniteOutput(work[i]); err != nil {
-				return nil, err
-			}
-		}
-		if err = f.solveUnit(ctx, answer, work); err != nil {
-			return nil, err
-		}
-		for i := 0; i < f.n; i++ {
-			solution[i*columns+k] = answer[i]
-		}
+	// f.solveUnit expects the destination before the normalized RHS.
+	fast := func(ctx context.Context, normalized, destination []float64) error {
+		return f.solveUnit(ctx, destination, normalized)
+	}
+	solution, err := factorSolveScaledColumns(
+		ctx, rhs, f.n, columns, f.n, f.scale, f.condition, fast, f.solveWide,
+	)
+	if err != nil {
+		return nil, err
 	}
 	return factorBuildSolveResult(ctx, f.original, f.n, f.n, solution, rhs, columns, f.condition)
 }
@@ -219,8 +210,8 @@ func (f *LUFactor) Solve(ctx context.Context, b Matrix) (*SolveResult, error) {
 // never silently returns a minimum-norm answer for underdetermined problems.
 // Implementation:
 //   - Stage 1: check context, receiver, B shape and finite coefficients.
-//   - Stage 2: apply compact Q^T to each scaled RHS, back-substitute in R.
-//   - Stage 3: undo the original column permutation and measure true residuals.
+//   - Stage 2: normalize each RHS, apply Q^T and solve upper pivoted R.
+//   - Stage 3: undo pivots and RHS scales, then measure true residuals.
 //
 // Behavior highlights: Explicit Q is never allocated; every Solve is race-safe.
 // Inputs: ctx non-nil, b read-only m-by-r, with r>=1.
@@ -231,6 +222,7 @@ func (f *LUFactor) Solve(ctx context.Context, b Matrix) (*SolveResult, error) {
 // Complexity: Time O(m*n*r+n*n*r) plus exact residuals; workspace O(m+n*r).
 // Notes: Factor condition is kappa_1(R), not the 2-norm condition of A.
 // AI-Hints: Do not multiply by an explicit Q or form A^T*A: both are needless.
+// Keep the independent RHS scale separate until final coefficient restoration.
 func (f *QRFactor) Solve(ctx context.Context, b Matrix) (*SolveResult, error) {
 	if err := factorContextErr(ctx); err != nil {
 		return nil, err
@@ -249,29 +241,26 @@ func (f *QRFactor) Solve(ctx context.Context, b Matrix) (*SolveResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	solution := make([]float64, f.n*columns)
-	work := make([]float64, f.m)
+	// The compact QR work vector is private to each solve invocation.
 	pivoted := make([]float64, f.n)
-	for k := 0; k < columns; k++ {
-		if err = ctx.Err(); err != nil {
-			return nil, err
+	fast := func(ctx context.Context, normalized, destination []float64) error {
+		if err := f.applyQTranspose(ctx, normalized); err != nil {
+			return err
 		}
-		for i := 0; i < f.m; i++ {
-			work[i] = rhs[i*columns+k] / f.scale
-			if err = factorCheckFiniteOutput(work[i]); err != nil {
-				return nil, err
-			}
-		}
-		if err = f.applyQTranspose(ctx, work); err != nil {
-			return nil, err
-		}
-		if err = f.solveUpper(ctx, pivoted, work[:f.n]); err != nil {
-			return nil, err
+		if err := f.solveUpper(ctx, pivoted, normalized[:f.n]); err != nil {
+			return err
 		}
 		for j := 0; j < f.n; j++ {
-			// perm[j] is the original column currently at position j.
-			solution[f.perm[j]*columns+k] = pivoted[j]
+			// perm[j] maps the current R column to its original A column.
+			destination[f.perm[j]] = pivoted[j]
 		}
+		return nil
+	}
+	solution, err := factorSolveScaledColumns(
+		ctx, rhs, f.m, columns, f.n, f.scale, f.condition, fast, f.solveWide,
+	)
+	if err != nil {
+		return nil, err
 	}
 	return factorBuildSolveResult(ctx, f.original, f.m, f.n, solution, rhs, columns, f.condition)
 }
@@ -281,8 +270,8 @@ func (f *QRFactor) Solve(ctx context.Context, b Matrix) (*SolveResult, error) {
 // solves on different goroutines without locks or shared scratch buffers.
 // Implementation:
 //   - Stage 1: validate ctx and finite n-by-r RHS snapshot.
-//   - Stage 2: scale each RHS, then solve L*y=b and L^T*x=y.
-//   - Stage 3: measure residuals against the accepted symmetric A and publish.
+//   - Stage 2: normalize each RHS and solve lower/upper Cholesky triangles.
+//   - Stage 3: restore coefficients, measure accepted-A residuals and publish.
 //
 // Behavior highlights: Approximate symmetry means solving the accepted midpoint A.
 // Inputs: ctx non-nil, b read-only n-by-r Matrix, r>=1.
@@ -293,6 +282,7 @@ func (f *QRFactor) Solve(ctx context.Context, b Matrix) (*SolveResult, error) {
 // Complexity: Time O(n*n*r) plus exact residuals; memory O(n*r+n).
 // Notes: SPD validation was performed at FactorCholesky, not silently repeated.
 // AI-Hints: Never interpret nonzero symmetry tolerance as a diagonal regularizer.
+// The rare wide-range path solves the same accepted lower-triangular factor.
 func (f *CholeskyFactor) Solve(ctx context.Context, b Matrix) (*SolveResult, error) {
 	if err := factorContextErr(ctx); err != nil {
 		return nil, err
@@ -311,25 +301,15 @@ func (f *CholeskyFactor) Solve(ctx context.Context, b Matrix) (*SolveResult, err
 	if err != nil {
 		return nil, err
 	}
-	solution := make([]float64, f.n*columns)
-	work := make([]float64, f.n)
-	answer := make([]float64, f.n)
-	for k := 0; k < columns; k++ {
-		if err = ctx.Err(); err != nil {
-			return nil, err
-		}
-		for i := 0; i < f.n; i++ {
-			work[i] = rhs[i*columns+k] / f.scale
-			if err = factorCheckFiniteOutput(work[i]); err != nil {
-				return nil, err
-			}
-		}
-		if err = f.solveUnit(ctx, answer, work); err != nil {
-			return nil, err
-		}
-		for i := 0; i < f.n; i++ {
-			solution[i*columns+k] = answer[i]
-		}
+	// f.solveUnit expects the destination before the normalized RHS.
+	fast := func(ctx context.Context, normalized, destination []float64) error {
+		return f.solveUnit(ctx, destination, normalized)
+	}
+	solution, err := factorSolveScaledColumns(
+		ctx, rhs, f.n, columns, f.n, f.scale, f.condition, fast, f.solveWide,
+	)
+	if err != nil {
+		return nil, err
 	}
 	return factorBuildSolveResult(ctx, f.accepted, f.n, f.n, solution, rhs, columns, f.condition)
 }
