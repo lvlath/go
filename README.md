@@ -7,7 +7,7 @@
   Purpose:
     This README is the public face of lvlath. It presents the library as a
     deterministic, contract-driven Go toolkit for graph algorithms, flow networks,
-    dense graph algebra, routing, exact timestamp grids, causal time-series primitives, fixed-window ACF, fractional PAA,
+    dense graph algebra, routing, exact timestamp grids, causal time-series primitives, Wilder RSI batch/stream filtering, fixed-window ACF, fractional PAA,
     symbolic SAX encoding, dependent-data block-index resampling, alignment, and reproducible algorithm engineering. It should give a new reader immediate confidence in
     what lvlath can solve, how packages compose, where the formal contracts live,
     and why this repository is engineered beyond ad-hoc algorithm snippets.
@@ -48,7 +48,7 @@
 
 # lvlath
 
-**lvlath** is a pure-Go algorithm engineering library for graphs, flows, dense graph algebra, routing, exact timestamp grids, causal series transforms, fractional PAA, symbolic SAX time-series signatures, stable statistical moments, fitted feature scaling, sample autocorrelation, covariance PCA, causal Hidden Markov Models, version-pinned PCG-DXSM stochastic streams, time-series alignment, and reproducible test fixtures.
+**lvlath** is a pure-Go algorithm engineering library for graphs, flows, dense graph algebra, routing, exact timestamp grids, causal series transforms, fractional PAA, symbolic SAX time-series signatures, stable statistical moments, fitted feature scaling, sample autocorrelation, Wilder RSI, covariance PCA, causal Hidden Markov Models, version-pinned PCG-DXSM stochastic streams, time-series alignment, and reproducible test fixtures.
 
 It is built for people who need algorithmic tools they can explain in a code review, trust in CI, compose across packages, and debug from deterministic artifacts instead of guessing why an answer changed.
 
@@ -71,6 +71,7 @@ It is built for people who need algorithmic tools they can explain in a code rev
 * `pca` fits validated covariance principal components and retains immutable training means/scales for leakage-free latent projection and reconstruction;
 * `hmm` provides typed categorical and diagonal-Gaussian hidden states with strictly causal filtering, retrospective smoothing, global Viterbi paths, and multi-sequence MAP-EM;
 * `acf` computes scaled direct sample autocorrelation with an explicit common versus lag-adjusted estimator convention and exact available-pair counts;
+* `rsi` computes causal Wilder price-strength factors with batch/stream bit parity in one environment and detached restart checkpoints;
 * `bootstrap` constructs reproducible dependent-data index ensembles with unbiased bounded integers, checked memory budgets and complete-row cancellation;
 * `rng` supplies local pinned PCG-DXSM128 streams, strict 52-bit open uniforms, cached Box-Muller normals and logical-path replay;
 * flow, MST, TSP, DTW, grid, and builder packages extend the same discipline into optimization, alignment, fixtures, and examples.
@@ -98,7 +99,8 @@ The common failures are familiar:
 * documentation explains textbook theory but not the actual package contract;
 * high-offset variance disappears through raw-moment cancellation, or inference refits on holdout data;
 * hidden-state filters are accidentally replaced with future-conditioned smoothing, or independent EM training sequences are concatenated;
-* lag-adjusted autocorrelations are clamped to [-1,1], or fed to a PSD-dependent PACF solver without checking their estimator convention.
+* lag-adjusted autocorrelations are clamped to [-1,1], or fed to a PSD-dependent PACF solver without checking their estimator convention;
+* RSI warmup placeholders are read as genuine oscillator zeros, invalid quotes advance stream state, or a config hash is mistaken for checkpoint authentication.
 
 `lvlath` is built against those failure modes. It is an algorithm engineering library: each package publishes a narrow mathematical contract, validates its input domain, returns meaningful result artifacts, and keeps deterministic behavior observable.
 
@@ -182,6 +184,7 @@ lvlath/
 ├── pca/                   # certified covariance PCA, frozen projection and reconstruction
 ├── hmm/                   # categorical/Gaussian HMM, causal filter, smoother, Viterbi, MAP EM
 ├── acf/                   # direct sample ACF, common/lag-adjusted modes, pair counts
+├── rsi/                   # Wilder RSI batch and single-owner streaming with versioned snapshots
 ├── bootstrap/             # versioned Moving/Circular/Stationary block-index ensembles
 ├── rng/                   # pinned SHA256LE/PCG-DXSM streams, open uniforms and cached normals
 ├── gridgraph/             # 2D lattice graph generation
@@ -313,6 +316,12 @@ lvlath/docs/{PACKAGE}.md
                                    └────────────────────────────────────────────┘
 
                                    ┌────────────────────────────────────────────┐
+                                   │ rsi                                        │
+                                   │ causal Wilder changes / ready mask         │
+                                   │ zero-allocation Push / versioned snapshot  │
+                                   └────────────────────────────────────────────┘
+
+                                   ┌────────────────────────────────────────────┐
                                    │ stats                                      │
                                    │ stable Welford/Chan moments, fitted scaling│
                                    │ matrix.Matrix input, immutable inference   │
@@ -347,6 +356,8 @@ Composition rule:
   bootstrap owns versioned block-index replicates; values and inference stay with callers.
   acf owns fixed-window sample autocorrelation, explicit estimator conventions,
   and detached coefficients with exact pair counts; it is not a causal transform.
+  rsi owns causal Wilder gain/loss smoothing, validity masks and single-owner
+  checkpointed streams; timestamps and market decisions remain with callers.
   ols owns full-rank regression artifacts, intercept policy and frozen prediction.
   ridge owns positive-Lambda regression artifacts, unpenalized intercept, and QR equilibration.
   pca owns covariance-based orthogonal factors, strict spectrum admission,
@@ -378,6 +389,7 @@ Composition rule:
 | `rng`       | Version-pinned SHA-256/PCG-DXSM128/64 streams, strict uniform midpoints, cached Box-Muller normals and batch facades.                          | Immutable factory, logical path isolation, no hot-loop allocation and exact raw consumption.                             | Monte Carlo paths, risk simulation, sensor fault injection, repeatable stress experiments.     |
 | `bootstrap` | Reproducible Moving/Circular/Stationary index resampling for dependent series with per-replicate streams and exact bounded integers.           | Detached complete-row results, memory admission and cancellation without interrupted-row publication.                    | Portfolio risk sensitivity, paired serial regression, telemetry alarm calibration.             |
 | `acf`       | Direct fixed-window sample autocorrelation with two explicit denominator conventions and raw/centered origins.                                 | Scaled compensated products, no lag-specific recentering or clipping; caller-owned lag counts.                           | Residual audits, compressor cycles, vibration periodicity, signal pitch.                       |
+| `rsi`       | Deterministic Wilder RSI over finite-positive prices: batch mask, streaming Push and snapshot continuation.                                    | One shared scalar recurrence, explicit warmup, atomic failed Push, detached checkpoints, no signal thresholds.           | Portfolio momentum-factor extraction, feed monitoring, authenticated hot-failover analytics.   |
 | `hmm`       | Typed finite-state categorical and diagonal-Gaussian probability models; causal filtering, smoothing, Viterbi, multi-sequence Baum-Welch.      | Explicit log-domain evidence, immutable model IDs, no future leakage in filtering, no cross-session transition counts.   | Live stress monitoring, machine regimes, independent clickstream sessions.                     |
 | `pca`       | Immutable covariance-based principal components, train-only projection and original-unit reconstruction.                                       | Bounded Jacobi, independent PSD/eigenpair checks, detached loadings and no holdout recentering.                          | Yield-curve factors, turbine residual screening, multichannel telemetry compression.           |
 | `stats`     | Stable scalar mean/variance, mergeable Welford/Chan states, train-only fitted feature standardization.                                         | Exact binary-input mean and scaled second moments, detached fitted metadata, immutable inference without refit.          | Telemetry aggregation, distributed metrics, ML feature preparation, anomaly-score calibration. |
@@ -966,6 +978,88 @@ mask-aware `series` integration example.
 
 ---
 
+### RSI: one Wilder recurrence for batch factors and online price streams
+
+`github.com/lvlath/go/rsi` computes **Wilder Relative Strength Index** over
+finite, strictly positive closing prices, using one numerical transition for
+both whole histories and a single-owner stream. It measures relative smoothed
+upward/downward **price changes**; it does not issue trade signals, choose
+thresholds or infer a timestamp grid.
+
+| Need                                   | API                                                             | Contract to preserve                                                |
+|----------------------------------------|-----------------------------------------------------------------|---------------------------------------------------------------------|
+| Indexed factor values with warmup mask | `rsi.Compute(closes, rsi.Options{Period:p})`                    | `*rsi.Result{Values,Valid}`; first valid at index `P`               |
+| Standard 14-change factor              | `rsi.ComputeDefault(closes)`                                    | Wrapper; needs 15 closes before valid output                        |
+| Explicit-period factor                 | `rsi.ComputePeriod(closes, p)`                                  | Wrapper; no duplicated formula                                      |
+| Final point of a full history          | `rsi.Latest(closes, opts)`                                      | `(value,valid,error)`; O(n) time **and temporary memory**           |
+| Online zero-allocation recurrence      | `rsi.NewPeriod(p)` / `rsi.NewDefault()` -> `Stream.Push(close)` | O(1) time/state, 0 allocs per Push after New                        |
+| Ordered-feed failover                  | `Stream.Snapshot()` / `Restore(state)`                          | Versioned, detached scalar state; externally authenticate transport |
+
+In this deterministic synthetic mark sequence, period two first becomes valid
+at index two. The consumer keeps the mask, instead of treating a warmup zero
+as a numerical measurement:
+
+```go
+package main
+
+import (
+	"fmt"
+
+	"github.com/lvlath/go/rsi"
+)
+
+func main() {
+	closes := []float64{100, 102, 104, 103, 101, 100, 102, 106}
+	const period = 2
+	history, err := rsi.ComputePeriod(closes, period)
+	if err != nil {
+		fmt.Println("RSI:", err)
+		return
+	}
+	firstValid := -1
+	for i, valid := range history.Valid {
+		if valid {
+			firstValid = i
+			break
+		}
+	}
+	latest := len(history.Values) - 1
+	fmt.Printf("first-valid=%d latest-valid=%t latest-rsi=%.2f\n",
+		firstValid, history.Valid[latest], history.Values[latest])
+}
+```
+
+```text
+first-valid=2 latest-valid=true latest-rsi=90.11
+```
+
+A successful short history has **all `Valid=false`**, while a valid falling
+history can genuinely have RSI=0 and a valid flat history has RSI=50.
+`ErrNonFinite` rejects NaN/infinity; `ErrDomain` rejects nonpositive marks;
+`ErrOverflow` rejects unrepresentable arithmetic; `ErrStateVersion` protects
+checkpoint shape/configuration and uninitialized streams. A failed `Push`
+leaves the previous close, averages and Count unchanged. Streams cannot be
+mutated concurrently without synchronization. No path silently clamps a
+numeric failure into `[0,100]`.
+
+**Operational boundary:** `series` can validate a known timestamp cadence,
+while exchange feed logic must check source sequence IDs. On a genuine gap, the caller
+explicitly `Reset`s and rebuilds warmup; RSI never invents missing closes.
+`Snapshot.Config` is SHA-256 of the algorithm ID and normalized period,
+**not** a MAC of mutable state. Authenticate serialized checkpoints and
+persist exchange offsets externally to avoid double-consuming a close after
+failover. Do not reuse a stream across instruments or periods.
+
+Read [`docs/RSI.md`](docs/RSI.md) for stable-ratio mathematics, exact error
+precedence, ownership, ABI and integration examples; [`rsi/doc.go`](rsi/doc.go)
+for the formal charter; [`rsi/example_test.go`](rsi/example_test.go) for six
+executable operational stories (multi-period factors, collateral marks, flat
+FX marks, authenticated failover, order-book sequence gaps and new-instrument
+warmup). Example prices are deterministic fixtures, not authenticated exchange
+history or evidence of strategy performance.
+
+---
+
 ### Bootstrap: reproducible dependent-data resampling without hiding statistics
 
 `github.com/lvlath/go/bootstrap` produces **only observation indexes**. It is
@@ -1191,6 +1285,7 @@ See [`docs/HMM.md`](docs/HMM.md) for formal log-domain equations, EM counts and 
 | Stable Ridge regression   | [`docs/RIDGE.md`](docs/RIDGE.md)             | Positive-Lambda augmented QR, strict intercept policy, wide/collinear designs, nonzero tiny coefficients and frozen prediction. |
 | Dependent index bootstrap | [`docs/BOOTSTRAP.md`](docs/BOOTSTRAP.md)     | Moving/Circular/Stationary laws, exact integer mapping, replay, budget and partial rows.                                        |
 | Sample autocorrelation    | [`docs/ACF.md`](docs/ACF.md)                 | Common/lag-adjusted ACF, full-window centering, Toeplitz PSD proof and numeric limitations.                                     |
+| Wilder RSI                | [`docs/RSI.md`](docs/RSI.md)                 | Stable ratio math, exact seed/warmup, batch/stream equivalence, sentinels and checkpoint ABI.                                   |
 | Finite-state HMM          | [`docs/HMM.md`](docs/HMM.md)                 | Causal log-domain filtering, retrospective smoothing, Viterbi, multi-sequence MAP-EM, error and identity laws.                  |
 | Fitted covariance PCA     | [`docs/PCA.md`](docs/PCA.md)                 | Train-only orthogonal projection, checked covariance eigenpairs, numerical rank and leakage-safe reconstruction.                |
 | Stable OLS regression     | [`docs/OLS.md`](docs/OLS.md)                 | Pivoted Householder QR, explicit intercept, physical coefficients, SSE, frozen Model and holdout pitfalls.                      |
@@ -1726,6 +1821,7 @@ incidence matrix:       columns are edge identities, not vertex-pair weights
 | "What is the max source-to-sink capacity?"                                          | `flow.Dinic` or `flow.EdmondsKarp`                                 | Flow algorithms reason over residual capacity.                                               |
 | "How do I validate exact sample cadence and missing slots?"                         | `series.Validate`                                                  | Signed-nanosecond grid checks; no interpolation.                                             |
 | "How do I compute causal lag, differences, or returns?"                             | `series.Lag` / `Difference` / `SimpleReturns` / `LogReturns`       | Length-preserving values and validity masks.                                                 |
+| "How do I compute Wilder relative strength on an ordered positive price feed?"      | `rsi.ComputePeriod` / `rsi.NewPeriod`                              | Aligned Values+Valid or single-owner zero-allocation streaming; caller handles gaps.         |
 | "How do I compress a window without dropping fractional tails?"                     | `paa.Transform` / `paa.TransformRange`                             | Exact fractional PAA, checked integer geometry and a detached result.                        |
 | "How do I create comparable symbolic time-series signatures?"                       | `sax.NewEncoder` / `sax.Encode`                                    | Fixed-alphabet symbols, compatible policy hash, detached results.                            |
 | "Can SAX MINDIST prune arbitrary DTW candidates?"                                   | No                                                                 | Euclidean-only lower bound; shortlist retrieval must report Recall@K.                        |

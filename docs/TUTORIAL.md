@@ -25,7 +25,7 @@
 
 > **hard math on an easy level**
 
-Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fitted feature scaling, covariance PCA, and time-series alignment.
+Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fitted feature scaling, covariance PCA, causal Wilder RSI, and time-series alignment.
 
 This tutorial is the beginning of the learning path. It introduces the objects and ideas that most packages share: graphs, matrices, options, result artifacts, error contracts, and deterministic algorithm execution.
 
@@ -54,6 +54,7 @@ This tutorial is the beginning of the learning path. It introduces the objects a
     11g. [ACF Foundations: Fixed-Window Serial Dependence and Estimator Conventions](#11g-acf-foundations-fixed-window-serial-dependence-and-estimator-conventions)
     11h. [Bootstrap Foundations: Reproducible Dependent-Data Index Ensembles](#11h-bootstrap-foundations-reproducible-dependent-data-index-ensembles)
     11i. [RNG Foundations: Version-Pinned Stochastic Streams](#11i-rng-foundations-version-pinned-stochastic-streams)
+    11j. [RSI Foundations: Causal Wilder Momentum and Recoverable Streaming](#11j-rsi-foundations-causal-wilder-momentum-and-recoverable-streaming)
 12. [Algorithm Selection Guide](#12-algorithm-selection-guide)
 13. [Professional Best Practices](#13-professional-best-practices)
 14. [Where To Go Next](#14-where-to-go-next)
@@ -87,6 +88,7 @@ The library covers:
 * `pca` immutable train-only principal component projection, certified covariance eigenspectrum, and original-unit reconstruction;
 * `hmm` typed categorical/diagonal-Gaussian hidden-state models, causal filtering, noncausal smoothing, Viterbi, and independent-sequence MAP-EM;
 * `acf` scaled direct sample autocorrelation, explicit common versus pair-adjusted denominators, and detached per-lag pair counts;
+* `rsi` causal Wilder gain/loss smoothing, index-aligned readiness masks, zero-allocation streaming and versioned scalar checkpoints;
 * `bootstrap` reproducible Moving, Circular and Stationary block-index ensembles with per-replicate RNG streams and atomic row publication;
 * `rng` local pinned PCG-DXSM streams with SHA-256 seed derivation, strictly open uniforms and cached Box-Muller normals;
 * `paa` exact fractional time-series compression, rational segment boundaries and value-only feature projection;
@@ -114,6 +116,7 @@ timestamp-grid inspection  *series.ValidationResult    exact cadence / missing s
 dependent index ensembles  *bootstrap.Result           detached complete rows / RNG replay revision
 versioned stochastic path  rng.RNG                    mutable PCG-DXSM draw stream, owned by one goroutine
 sample autocorrelation     *acf.Result                 fixed-window lag coefficients / pair counts
+Wilder RSI factor          *rsi.Result                 aligned oscillator / Valid mask
 streaming statistics       *stats.Summary              exact-binary-input mean / scaled variance
 train-only scaling         *stats.ScaleFitResult       detached fit metadata / immutable model
 full-rank regression       *ols.FitResult              physical beta / intercept / rank / SSE / QR condition
@@ -204,6 +207,7 @@ Read these files as a learning path. `doc.go` files define implemented package c
 | 8h   | [`ACF.md`](ACF.md)                         | Direct sample ACF, common/pair-adjusted estimators, Toeplitz PSD limits, scaled arithmetic and independent oracle.          |
 | 8i   | [`BOOTSTRAP.md`](BOOTSTRAP.md)             | Three block-index laws, unbiased integers, replay, resource admission and partial cancellation.                             |
 | 8j   | [`RNG.md`](RNG.md)                         | PCG-DXSM128/64 streams, open uniforms, Box-Muller spare protocol, logical paths and replay.                                 |
+| 8k   | [`RSI.md`](RSI.md)                         | Wilder seed and smoothing, readiness masks, snapshot ABI, price domain, batch/stream parity.                                |
 | 9    | [`DTW.md`](DTW.md)                         | `Align`, `AlignCostMatrix`, `AlignMatrix`, `AlignBounded`, exact `Search`, numeric and path artifacts.                      |
 | 9a   | [`DTW_SEARCH.md`](DTW_SEARCH.md)           | Fixed-length exact top-K, certified LB_Keogh, workers, budgets, and partial-result law.                                     |
 | 10   | [`TSP.md`](TSP.md)                         | Matrix-backed tours, exact regimes, Christofides, Blossom matching, local search, timeouts.                                 |
@@ -230,6 +234,7 @@ Working on numeric/time-series workflows:
   MATRICES -> STATS -> PCA -> independent holdout reconstruction and residual review
   SERIES -> STATS -> HMM.FilterStep -> online regime monitoring (no future data)
   SERIES -> ACF.ComputeDefault -> fixed-window lag diagnostics (NOT causal)
+  SERIES -> RSI.ComputePeriod / Stream.Push -> causal price-strength factors
   SERIES -> BOOTSTRAP.SampleIndices -> paired matrix/return/sensor resamples -> caller estimators
   RNG.Stream(seed, logicalPath) -> Monte Carlo / fault injection -> indexed reduction
   OLS/RIDGE residual window -> ACF -> investigate serial dependence (NOT a p-value)
@@ -301,6 +306,12 @@ Think of `lvlath` as a contract stack.
                          │ acf                                           │
                          │ fixed-window, scaled direct autocorrelation   │
                          │ common / lag-adjusted; not causal streaming   │
+                         └───────────────────────────────────────────────┘
+
+                         ┌───────────────────────────────────────────────┐
+                         │ rsi                                           │
+                         │ causal Wilder price-strength oscillator       │
+                         │ batch mask / zero-allocation Push / replay    │
                          └───────────────────────────────────────────────┘
 
                          ┌───────────────────────────────────────────────┐
@@ -2685,6 +2696,201 @@ and [`rng/doc.go`](../rng/doc.go).
 
 ---
 
+## 11j. RSI Foundations: Causal Wilder Momentum and Recoverable Streaming
+
+`rsi` is a **causal scalar oscillator** over an already selected, chronologically
+ordered, finite-positive price series. It retains two smoothed price-change
+magnitudes, not a history of market bars. The caller determines what a close
+means (daily settlement, minute-bar mark, or explicitly sampled quote midpoint),
+validates source continuity, and selects a separate stream for each instrument
+and period.
+
+### 11j.1. RSI is not a return, correlation or trading signal
+
+| Question                                                                      | Use                                   | Key difference                                                        |
+|-------------------------------------------------------------------------------|---------------------------------------|-----------------------------------------------------------------------|
+| What was the most recent relative or logarithmic change?                      | `series.SimpleReturns` / `LogReturns` | One-step transformation, with the series domain and index mask        |
+| How strong have smoothed upward price changes been relative to downward ones? | `rsi.Compute` / `Stream.Push`         | Wilder gain/loss recurrence after an explicit seed                    |
+| What fixed-window lag pattern does the whole sample contain?                  | `acf.ComputeDefault`                  | Retrospective centered autocorrelation; not a causal online prefix    |
+| What hidden regime is supported by observations so far?                       | `hmm` filtering                       | Requires an externally configured probabilistic model; RSI is not one |
+
+There are no RSI trading levels or automatic decisions in `rsi`. A downstream
+risk or factor model can consume its numbers, but the model must separately
+establish validation, calibration, holdout and decision policy.
+
+### 11j.2. From a price to a fully seeded feature
+
+The first close is the **baseline**. For each later close, calculate one signed
+difference, split it into a nonnegative gain and a nonnegative loss, and update
+the two running averages in original input order. During the first `P` changes,
+use the increasing divisor `1,2,...,P`; for all later changes use the fixed
+Wilder divisor `P`.
+
+```text
+Accepted closing prices:    p0      p1      p2    ...    pP      p(P+1)
+Price changes:              -       d1      d2    ...    dP      d(P+1)
+Seed updates:               -       /1      /2    ...    /P      -
+Wilder smoothing:           -        -       -    ...     -       /P
+Validity:                   F        F       F    ...     T        T
+Batch indexes:              0        1       2    ...     P       P+1
+```
+
+A `Result` always holds both `Values` and `Valid`, each with the input length.
+**`Values[i]==0` does not prove RSI zero**; if `Valid[i]==false`, that zero
+means only that the sample is still warming up. On a completely flat **valid**
+window, RSI is 50; a strictly falling valid history may genuinely return 0.
+
+The internal RSI conversion uses `min(avgGain,avgLoss)/max(avgGain,avgLoss)`
+so it never needs a possibly overflowing sum or the unbounded `gain/loss`
+quotient. A nonfinite arithmetic result is an `ErrOverflow`, never an
+artificially clamped 0 or 100. See the [mathematical derivation](RSI.md#2-mathematics-price-changes-seed-and-wilder-smoothing).
+
+### 11j.3. One process: batch factor preparation and the live recurrence
+
+The following executable example uses **synthetic, deterministic** US-dollar
+price marks for a monitoring pipeline. It checks the readiness count, then
+compares every online result bitwise with the separately invoked batch facade
+for the *same ordered input*. This tests cross-mode parity, not independent
+mathematical correctness. The values do not claim to be
+historical exchange prints or trading performance.
+
+```go
+package main
+
+import (
+	"fmt"
+	"math"
+
+	"github.com/lvlath/go/rsi"
+)
+
+func main() {
+	closes := []float64{
+		42120, 42185, 42210, 42165, 42270, 42330, 42305,
+		42410, 42370, 42480, 42540, 42490, 42575, 42520,
+		42610, 42695, 42620, 42730, 42705, 42800, 42750,
+	}
+	const period = 7
+
+	batch, err := rsi.ComputePeriod(closes, period)
+	if err != nil {
+		fmt.Println("batch:", err)
+		return
+	}
+	live, err := rsi.NewPeriod(period)
+	if err != nil {
+		fmt.Println("stream:", err)
+		return
+	}
+
+	validCount := 0
+	bitwise := true
+	for i, close := range closes {
+		value, valid, err := live.Push(close)
+		if err != nil {
+			fmt.Println("push:", err)
+			return
+		}
+		if valid {
+			validCount++
+		}
+		if valid != batch.Valid[i] || math.Float64bits(value) != math.Float64bits(batch.Values[i]) {
+			bitwise = false
+		}
+	}
+	last := len(closes) - 1
+	fmt.Printf("closes=%d valid=%d last-ready=%t parity=%t\n",
+		len(closes), validCount, batch.Valid[last], bitwise)
+}
+```
+
+```text
+closes=21 valid=14 last-ready=true parity=true
+```
+
+`ComputeDefault` selects `P=14`; `ComputePeriod` selects an explicit period;
+`Latest` projects the **last** element of the full `Compute` result. In
+particular, `Latest` is **O(n) time and O(n) temporary memory**, not a
+constant-space historical streaming shortcut. A long-running feed should
+initialize a `Stream` once and call `Push` in its one owner goroutine.
+
+### 11j.4. Distinguish an invalid quote from an unseen quote
+
+```text
+accepted close A ──> accepted close B ──> invalid close (0 / NaN)
+       |                     |                      |
+       |                     |                  ErrDomain / ErrNonFinite
+       |                     |                  state NOT changed
+       |                     └─────────────────────────┐
+       |                                               v
+       |                                       next valid close C
+       |                                       delta uses B, not bad quote
+
+accepted sequence 101, 102, 104 (103 missing):
+       upstream knows a gap ──> Stream.Reset() ──> next close becomes baseline
+```
+
+`Push` errors are transactional. They do not advance the accepted-price
+counter, change `previous`, or alter either gain/loss average. A missing
+sequence index or timestamp is a separate application-level continuity
+failure: the package cannot recognize it from floating prices and will not
+interpolate or guess. `series.Validate` can check a known timestamp cadence;
+the caller decides whether to reject the window, segment it, or reset the
+stream. A valid stream has no internal clock or source-sequence counter.
+
+### 11j.5. Checkpoint the numeric state, not the exchange position
+
+```text
+primary:  NewPeriod(P) -> Push ... -> Snapshot()
+                                      |
+                            serialized [Algorithm,
+                             Config, Count,
+                             FloatState, IntState]
+                                      |
+                             external MAC/signature
+                                      |
+standby: authenticate -> NewPeriod(P) -> Restore(snapshot)
+                                      |
+                        next UNSEEN close -> Push
+```
+
+The snapshot version is `rsi/wilder/v1`; `FloatState` is exactly
+`[previous,avgGain,avgLoss]`; `IntState` has length zero. Its `Config`
+fingerprint hashes the algorithm identifier and normalized period in
+little-endian order. It is **not** an authentication code for `Count` or
+`FloatState`. Use an external authenticated transport or MAC, a
+binary64-preserving serialization, and separately persisted feed offsets.
+`Restore` rejects malformed or mismatched state with `ErrStateVersion` without
+mutating the destination; the schema cannot prove the historical origin of a
+well-formed checkpoint. Reset preserves the configured period but starts
+warmup anew.
+
+### 11j.6. Complexity, ownership and test criteria
+
+- `Compute` is O(n) time and O(n) detached output; `Latest` has the same
+  transient complexity through delegation. No batch error publishes a partial
+  `Result`.
+- `Push` takes O(1) time and O(1) private state with **zero heap allocations
+  per step after `New`**, including warmup and rejection. Snapshot copies
+  three float scalars into a detached slice and thus allocates outside the hot
+  path.
+- A mutable Stream belongs to one goroutine; `Snapshot`, `Restore`, `Reset`
+  and `Push` cannot race with each other. Different streams are independent.
+- Test a rational reference for small inputs, every batch/stream prefix,
+  exact warmup masks, rollback on bad prices, checkpoint transfer at phase
+  boundaries, and independently measured allocation regimes. An input/output
+  pair agreeing with a second copy of the same algorithm is **not** an
+  independent mathematical oracle.
+
+Read [`RSI.md`](RSI.md) for numeric proofs, API and sentinel tables, and
+[`../rsi/doc.go`](../rsi/doc.go) for the binding package charter. Six
+executable, operational examples are in
+[`../rsi/example_test.go`](../rsi/example_test.go), covering multi-period
+factors, collateral marks, flat FX marks, authenticated failover,
+order-book gaps and instrument warmup.
+
+---
+
 ## 12. Algorithm Selection Guide
 
 ### If the input is a graph
@@ -2734,6 +2940,7 @@ and [`rng/doc.go`](../rng/doc.go).
 | Fixed-alphabet symbolic window encoding            | `sax.Encode` / `sax.Encoder.Encode`           | Detached symbol word, policy identity and optional transformed PAA.                        |
 | Compatible Euclidean symbolic lower bound          | `sax.Encoder.Mindist` / `sax.MindistValues`   | Lower-bound dissimilarity in the selected transformed space, never a general DTW bound.    |
 | Direct sample ACF by integer lag                   | `acf.ComputeDefault` / `acf.Compute`          | One fitted window, explicit denominator convention and pair counts; not causal streaming.  |
+| Causal Wilder price-strength oscillator            | `rsi.ComputePeriod` / `rsi.NewPeriod`         | Aligned Values+Valid or single-owner zero-allocation stream with explicit Reset.           |
 | Reproducible stochastic simulation paths           | `rng.NewFactory().Stream` / `rng.NewStream`   | Pinned PCG-DXSM, logical path IDs, one goroutine owner per stream.                         |
 | Complete fixed index windows                       | `series.WindowRanges`                         | ordered half-open sample-index intervals.                                                  |
 | Hidden-state streaming causal filtering            | `hmm.FilterStep` / `FilterDefault`            | P(z_t given observations through t), no future-sample leakage.                             |

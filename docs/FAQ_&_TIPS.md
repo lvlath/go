@@ -3,7 +3,7 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/FAQ_&_TIPS.md
-  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm and the wider lvlath package family
+  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi and the wider lvlath package family
   lvlath - FAQ & Tips
 
   Purpose:
@@ -29,6 +29,7 @@
     - Causal hidden-state filtering versus future-conditioned smoothing and MAP-EM training.
     - Fixed-window ACF estimator conventions, numeric safeguards, pair-count diagnostics, and noncausal provenance.
     - Reproducible block-bootstrap indices, unbiased random integers, partial row publication, and resource admission.
+    - Wilder RSI warmup masks, deterministic batch/stream semantics, state rollback and checkpoint boundaries.
 
   License:
     lvlath is licensed under AGPL-3.0-only. See ../LICENSE.
@@ -67,6 +68,7 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
     13f. [ACF FAQ](#13f-acf-faq--estimators-scaled-numerics-and-fixed-windows)
     13g. [Bootstrap FAQ](#13g-bootstrap-faq--dependent-data-blocks-replay-and-safe-partial-results)
     13h. [RNG FAQ](#13h-rng-faq-replay-ownership-and-numeric-safety)
+    13i. [RSI FAQ](#13i-rsi-faq-wilder-streaming-readiness-and-checkpoints)
 14. [Builder and gridgraph tips](#14-builder-and-gridgraph-tips)
 15. [Errors and diagnostics](#15-errors-and-diagnostics)
 16. [Determinism and concurrency](#16-determinism-and-concurrency)
@@ -83,32 +85,33 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
 
 Start with the question, not the algorithm name.
 
-| Question                                                                     | Use                       | Reason                                                                                |
-|:-----------------------------------------------------------------------------|:--------------------------|:--------------------------------------------------------------------------------------|
-| “How many hops away is this vertex?”                                         | `bfs`                     | BFS minimizes edge count.                                                             |
-| “Which vertices are in the same weak island?”                                | `bfs.Components`          | Weak membership ignores direction for component grouping.                             |
-| “What is a deterministic deep traversal?”                                    | `dfs`                     | DFS gives post-order and forest-style structure.                                      |
-| “Does this graph contain a cycle?”                                           | `dfs.DetectCycles`        | Returns deterministic witness cycles.                                                 |
-| “What order can I execute a DAG?”                                            | `dfs.TopologicalSort`     | Topological order is a directed acyclic graph contract.                               |
-| “What is the cheapest route by weight?”                                      | `dijkstra`                | Dijkstra minimizes non-negative total cost.                                           |
-| “What is the cheapest connected backbone?”                                   | `mst`                     | MST solves minimum connected spanning structure.                                      |
-| “What is the maximum throughput?”                                            | `flow`                    | Flow solves capacity-constrained source-to-sink movement.                             |
-| “How do I turn graph topology into numeric features?”                        | `matrix`                  | Adjacency, incidence, degree vector, metric closure, algebra.                         |
-| “How do I model a grid map?”                                                 | `gridgraph`               | Generates lattice topology instead of manual wiring.                                  |
-| “How do I build repeatable fixtures?”                                        | `builder`                 | Deterministic graph/data generation.                                                  |
-| “How do I compress a fixed-size scalar time-series window?”                  | `paa`                     | Exact fractional PAA averages with rational boundaries and no dropped tail.           |
-| “How do I encode a fixed-length symbolic signature?”                         | `sax`                     | Fractional PAA + right-bin quantization, compatible Euclidean MINDIST.                |
-| “How do I align two time series?”                                            | `dtw`                     | Dynamic Time Warping handles local timing drift.                                      |
-| “How do I compute robust moments or merge workers?”                          | `stats`                   | Welford/Chan moments, exact mean sum, scaled M2.                                      |
-| “How do I normalize heldout features without refit?”                         | `stats`                   | Immutable fitted model over matrix columns.                                           |
-| “How do I estimate linear factor coefficients and reuse them?”               | `ols`                     | Full-rank QR, original-unit beta/intercept, immutable prediction.                     |
-| “How do I fit correlated or wide linear factors with explicit L2 shrinkage?” | `ridge`                   | Augmented QR, positive Lambda, unpenalized intercept and frozen physical predictions. |
-| “What serial dependence or cycle repeats at a fixed sample-index lag?”       | `acf`                     | One full-window mean, explicit denominator, exact pair counts.                        |
-| “How do I build deterministic Monte Carlo, GBM or sensor-noise paths?”       | `rng.Factory.Stream`      | Pinned PCG-DXSM, logical path IDs and cached normals; not a cryptographic PRNG.       |
-| “How do I build dependent-data bootstrap index ensembles?”                   | `bootstrap.SampleIndices` | Moving/Circular/Stationary blocks, replay ID and only complete rows.                  |
-| “How do I infer a hidden operating regime from time-ordered observations?”   | `hmm`                     | Typed causal filtering, smoothing, Viterbi, and independent-sequence EM.              |
-| “How do I reduce multivariate dimensions without a response variable?”       | `pca`                     | Validated covariance spectrum and a frozen loadings model for holdout inference.      |
-| “How do I visit all cities in a route?”                                      | `tsp`                     | Tour construction/improvement/exact-small-instance routing.                           |
+| Question                                                                     | Use                                 | Reason                                                                                |
+|:-----------------------------------------------------------------------------|:------------------------------------|:--------------------------------------------------------------------------------------|
+| “How many hops away is this vertex?”                                         | `bfs`                               | BFS minimizes edge count.                                                             |
+| “Which vertices are in the same weak island?”                                | `bfs.Components`                    | Weak membership ignores direction for component grouping.                             |
+| “What is a deterministic deep traversal?”                                    | `dfs`                               | DFS gives post-order and forest-style structure.                                      |
+| “Does this graph contain a cycle?”                                           | `dfs.DetectCycles`                  | Returns deterministic witness cycles.                                                 |
+| “What order can I execute a DAG?”                                            | `dfs.TopologicalSort`               | Topological order is a directed acyclic graph contract.                               |
+| “What is the cheapest route by weight?”                                      | `dijkstra`                          | Dijkstra minimizes non-negative total cost.                                           |
+| “What is the cheapest connected backbone?”                                   | `mst`                               | MST solves minimum connected spanning structure.                                      |
+| “What is the maximum throughput?”                                            | `flow`                              | Flow solves capacity-constrained source-to-sink movement.                             |
+| “How do I turn graph topology into numeric features?”                        | `matrix`                            | Adjacency, incidence, degree vector, metric closure, algebra.                         |
+| “How do I model a grid map?”                                                 | `gridgraph`                         | Generates lattice topology instead of manual wiring.                                  |
+| “How do I build repeatable fixtures?”                                        | `builder`                           | Deterministic graph/data generation.                                                  |
+| “How do I compress a fixed-size scalar time-series window?”                  | `paa`                               | Exact fractional PAA averages with rational boundaries and no dropped tail.           |
+| “How do I encode a fixed-length symbolic signature?”                         | `sax`                               | Fractional PAA + right-bin quantization, compatible Euclidean MINDIST.                |
+| “How do I align two time series?”                                            | `dtw`                               | Dynamic Time Warping handles local timing drift.                                      |
+| “How do I compute robust moments or merge workers?”                          | `stats`                             | Welford/Chan moments, exact mean sum, scaled M2.                                      |
+| “How do I normalize heldout features without refit?”                         | `stats`                             | Immutable fitted model over matrix columns.                                           |
+| “How do I estimate linear factor coefficients and reuse them?”               | `ols`                               | Full-rank QR, original-unit beta/intercept, immutable prediction.                     |
+| “How do I fit correlated or wide linear factors with explicit L2 shrinkage?” | `ridge`                             | Augmented QR, positive Lambda, unpenalized intercept and frozen physical predictions. |
+| “What serial dependence or cycle repeats at a fixed sample-index lag?”       | `acf`                               | One full-window mean, explicit denominator, exact pair counts.                        |
+| “How strong are smoothed up/down changes in an ordered positive price feed?” | `rsi.ComputePeriod` / `Stream.Push` | Wilder oscillator with a validity mask or zero-allocation, single-owner recurrence.   |
+| “How do I build deterministic Monte Carlo, GBM or sensor-noise paths?”       | `rng.Factory.Stream`                | Pinned PCG-DXSM, logical path IDs and cached normals; not a cryptographic PRNG.       |
+| “How do I build dependent-data bootstrap index ensembles?”                   | `bootstrap.SampleIndices`           | Moving/Circular/Stationary blocks, replay ID and only complete rows.                  |
+| “How do I infer a hidden operating regime from time-ordered observations?”   | `hmm`                               | Typed causal filtering, smoothing, Viterbi, and independent-sequence EM.              |
+| “How do I reduce multivariate dimensions without a response variable?”       | `pca`                               | Validated covariance spectrum and a frozen loadings model for holdout inference.      |
+| “How do I visit all cities in a route?”                                      | `tsp`                               | Tour construction/improvement/exact-small-instance routing.                           |
 
 ### Q1.2. How do I avoid using the wrong algorithm?
 
@@ -131,6 +134,7 @@ fit correlated/wide factors           -> Ridge (positive Lambda, unpenalized int
 compress latent features              -> PCA (train-only covariance basis; no target)
 infer hidden temporal regime          -> HMM FilterStep (causal; no future observations)
 detect fixed-window serial dependence -> ACF ComputeDefault (not causal)
+compute causal Wilder price strength  -> RSI ComputePeriod / Stream.Push
 draw dependent-data index replicates  -> BOOTSTRAP SampleIndices (no statistic or CI)
 retrospective regime audit            -> HMM Smooth / Decode (future-conditioned)
 encode symbolic SAX words             -> SAX
@@ -2583,6 +2587,225 @@ go test -run '^$' -bench . -benchmem ./rng
 For full code, six executable operational examples and mathematical proofs,
 see [`RNG.md`](RNG.md), [`rng/doc.go`](../../../../Downloads/lvlath_rng_phase20_v2/rng/doc.go) and
 [`rng/example_test.go`](../../../../Downloads/lvlath_rng_phase20_v2/rng/example_test.go).
+
+---
+
+## 13i. RSI FAQ: Wilder streaming, readiness and checkpoints
+
+### Q13i.1. When should I use `rsi` instead of `series`, `acf` or `stats`?
+
+Use `rsi` for the **relative strength of smoothed positive versus negative
+price changes**, computed causally in supplied price order. `series` validates
+clock cadence or computes individual causal changes and returns; `acf` estimates
+serial correlation over one *entire* supplied window; `stats` summarizes
+moments or fits reusable feature scales. None of these is an interchangeable
+RSI kernel. Unlike `acf`, future valid prices never revise previously
+published RSI values, provided both complete evaluations succeed.
+
+`rsi` has no trading recommendation, fixed 30/70 rule, automatic period
+selection, timestamp interpretation or source freshness check.
+
+### Q13i.2. Why does RSI(14) need 15 prices before its first valid output?
+
+The first price defines the baseline. Each **subsequent** price contributes
+one signed difference, and Wilder's initial means require exactly `P`
+differences. Therefore the first valid batch index is `P`, or accepted stream
+`Count=P+1`. The period is the number of changes, not the number of samples.
+
+```text
+P=2, close=[1,2,3,2]
+Values=[0,0,100,50]
+Valid =[F,F,T,T]
+```
+
+A nonempty short history returns successfully with all `Valid=false`. It is
+not an `ErrEmptyInput`: only an allocated slice of length zero is empty.
+
+### Q13i.3. Is RSI=0 always a price-collapse signal?
+
+No. `Values[i]==0` with `Valid[i]==false` means **no computed RSI** during
+warmup. `Values[i]==0` with `Valid[i]==true` can be a mathematically valid
+loss-only result. A flat valid history has neither gains nor losses and returns
+50. Inspect the mask before any chart, feature extraction or downstream
+statistical calculation; no NaN warmup marker is used.
+
+### Q13i.4. Which API should I call, and is `Latest` O(1) memory?
+
+| Task                                                    | API                                                                          |
+|---------------------------------------------------------|------------------------------------------------------------------------------|
+| Whole period-configured history                         | `rsi.Compute(close, rsi.Options{Period:p})`                                  |
+| Standard 14-change history                              | `rsi.ComputeDefault(close)`                                                  |
+| Explicit period shorthand                               | `rsi.ComputePeriod(close, p)`                                                |
+| Only the latest observation of a complete input history | `rsi.Latest(close, opts)`                                                    |
+| Stateful processing of an ordered feed                  | `rsi.New(opts)` / `rsi.NewDefault()` / `rsi.NewPeriod(p)` followed by `Push` |
+
+`Latest` delegates to the complete `Compute`, returning the final value and
+validity flag. It therefore costs **O(n) time and O(n) temporary output
+memory**. For persistent feeds, `Push` is O(1) time and state, with zero heap
+allocations per call after stream construction.
+
+### Q13i.5. What happens when `Period` is zero, negative or extremely large?
+
+`Period=0` normalizes to 14; an explicitly positive `Period` is used exactly.
+Negative values and any period whose required `Period+1` overflows Go `int`
+return `ErrInvalidOption` before the batch examines prices. There is no
+arbitrary maximum such as 14/28/1000. A large valid period may require an
+impractically long warmup, but is not quietly reduced. Streams with default
+and explicit 14 share the same normalized checkpoint `Config`.
+
+### Q13i.6. Why does the package not use `100*g/(g+loss)` or clamp to [0,100]?
+
+The sum `g+loss` can overflow even when the ratio is a finite, valid RSI.
+Computing `gain/loss` first can also overflow for a tiny positive loss.
+The implementation first handles exact zero combinations and then divides
+the **smaller** average by the larger. Each nonzero ratio is at most one,
+with denominator between one and two. This avoids avoidable intermediate
+overflow without altering Wilder's mathematical objective. A genuinely
+nonfinite, negative or invalid internal value is `ErrOverflow`, not a
+manufactured boundary RSI. It is never repaired with a clamp or an
+application-specific numerical epsilon.
+
+### Q13i.7. Is the initial arithmetic mean exact in `float64`?
+
+The seed is mathematically the mean of the first P gains and of the first P
+losses. The implementation computes it incrementally with divisor `k` at seed
+step `k`, avoiding a raw sum of potentially enormous observations. Binary64
+rounding can still discard sub-ULP contributions. This is **not** the
+exact-binary-input mean algorithm from `stats`, nor is a universal
+correctly-rounded mean promised. Changing the seed accumulator would change
+observable batch/stream bits and checkpoint continuity.
+
+### Q13i.8. Are batch and stream results bitwise identical?
+
+For the **same valid input sequence**, the same normalized period and the
+same floating-point execution environment, yes: both invoke the same private
+`stepWilder` transition in ascending order. A batch validates its **entire**
+history before producing a result, whereas `Push` validates one price per
+call. On a bad batch price, no partial Result is published; on a rejected
+stream price, successful earlier steps remain committed. These error-publication
+contracts differ intentionally and do not contradict successful-output parity.
+
+Do not expect bitwise identity after changing close representation, running a
+different algorithm version/toolchain, resetting only one side, or comparing
+under different floating-point environments.
+
+### Q13i.9. Does a rejected `Push` corrupt the next delta or trigger a reset?
+
+No. `Push` returns an error **without updating** the previous price, Count,
+gain mean or loss mean. The next valid price is compared with the **last
+accepted** price. Invalid `NaN`/infinity is `ErrNonFinite`; finite `0`, `-0`
+and negative prices are `ErrDomain`. A rejected price is not automatically a
+missing observation. If the caller *also* knows that a feed sequence or clock
+interval was lost, it must handle that discontinuity explicitly, normally by
+calling `Reset` and rebuilding the seed.
+
+### Q13i.10. Can I use RSI over an irregular or timestamped feed?
+
+`rsi` accepts only price numbers, in caller-defined sequence order. It has no
+timestamp field, bar calendar or gap interpolator. Validate the sampling grid
+with `series.Validate` where a known cadence matters; use source sequence IDs
+or exchange offsets where relevant. A reported gap is metadata, **not** an
+inserted close. If a discontinuity invalidates the intended consecutive-change
+interpretation, start a fresh stream with `Reset()` or compute on independently
+segmented, validated windows. Never feed manufactured zeros as gaps.
+
+### Q13i.11. Which errors take precedence?
+
+`Compute`: options → nil history → non-nil empty history → first invalid
+price **by ascending index** (per-element nonfinite before domain) →
+calculation. The `ComputeDefault`, `ComputePeriod` and `Latest` wrappers
+preserve these classifications.
+
+`Push`: nil receiver → uninitialized `Stream{}` → bad price → arithmetic,
+including `Count==MaxUint64`. Therefore an invalid price beats counter overflow
+in the same call. `Restore`: nil receiver → uninitialized stream → snapshot
+version/configuration/structure; all malformed snapshot classes return
+`ErrStateVersion`. Classify with `errors.Is`, never error message text.
+
+### Q13i.12. What exactly does a Snapshot contain?
+
+`Snapshot.Algorithm` is `"rsi/wilder/v1"`; `Config` is lowercase hex SHA-256 of
+those UTF-8 bytes followed by **LE64(normalized period)**. `Count` is the
+number of accepted prices, `FloatState` is **exactly**
+`[previous,avgGain,avgLoss]`, and `IntState` has length zero. The caller owns
+these arrays; mutating them after `Snapshot` does not change the stream, and
+`Restore` does not retain them. `Reset` keeps the configured period/config
+but clears Count and averages.
+
+The checkpoint does **not** include timestamps, exchange sequence IDs,
+bar-price definitions or the complete price history. Persist that provenance
+at the application boundary.
+
+### Q13i.13. Does `Config` make a checkpoint tamper-proof?
+
+No. It identifies the **algorithm version and normalized period**, not the
+mutable Count or mean values. It has no secret key and is not an HMAC.
+Authenticate the *entire serialized snapshot* with an application-managed
+MAC or signature before trusting externally transported state; also ensure
+serialization preserves the exact binary64 bits. The
+[`ExampleStream_Snapshot`](../rsi/example_test.go) demonstrates a deterministic
+HMAC-protected transfer with an illustrative key, not production key management.
+
+### Q13i.14. What does `Restore` reject, and can it prove historical provenance?
+
+It rejects foreign algorithm IDs, mismatched configuration hashes, a
+`FloatState` length other than three, nonempty `IntState`, nonfinite or
+negative averages, a nonpositive previous price when Count>0, nonzero
+state when Count=0, nonzero averages when Count=1, and both averages positive
+when Count=2 (one price change cannot be simultaneously positive and
+negative). Failure leaves the destination unchanged.
+
+The v1 shape cannot prove the actual previous price history for arbitrary
+later counts. `Restore` enforces **necessary structural/numeric invariants**;
+it does not authenticate the source or certify that every accepted snapshot
+was ever produced by valid historical calls.
+
+### Q13i.15. What happens with nil, zero-value and exhausted streams?
+
+`(*Stream)(nil).Push` and `.Restore` return `ErrNilInput`;
+`(&Stream{}).Push` and `.Restore` return `ErrStateVersion`.
+`Reset(nil)` is safe, and `Snapshot(nil)` and `Snapshot(&Stream{})` return
+`Snapshot{}`, not a valid initialized checkpoint. A properly configured
+stream with `Count=MaxUint64` rejects the **next valid** `Push` with
+`ErrOverflow` and leaves its state unchanged. `(*Result)(nil).IsNil()`
+returns true without reflection or a panic.
+
+### Q13i.16. Can multiple goroutines share a Stream?
+
+Not without external synchronization. `Stream` owns private mutable recurrence
+state and no internal lock. Its `Push`, `Reset`, `Snapshot` and `Restore`
+methods must not race with one another. Give each independent instrument/period
+one owned stream and feed it in the authoritative order. Independent streams
+can run concurrently. `Compute` may operate concurrently on read-only stable
+input arrays, but concurrent mutation of those arrays by the caller is
+unsupported. Successful result and snapshot slices are detached and
+caller-owned.
+
+### Q13i.17. How should I test and benchmark RSI?
+
+Test independent manual and high-precision reference fixtures, period-one and
+flat cases, short warmup, extreme finite prices, all invalid price categories,
+per-prefix batch/stream bit identity, rejected-Push rollback, snapshot
+boundaries `Count={0,1,P,P+1,P+2}`, `Count=MaxUint64`, aliasing, nilable
+receivers and Reset after source gaps. **Parity alone cannot prove correct
+mathematics.** Keep tests in external `package rsi_test` and exercise only
+`rsi.` exports; do not add test-only production hooks or `reflect`.
+
+Bench separately: batch `n=10^3` and `n=10^6`, `New`, and `Push` after
+construction for representative periods and seed/steady/error branches.
+`Push` should report **0 B/op and 0 allocs/op**; Snapshot may allocate a
+small detached float slice and is deliberately outside the hot path.
+
+```bash
+go test ./rsi -count=1 -cover
+go test -race ./rsi -count=1
+go test ./rsi -run '^$' -bench . -benchmem
+go vet ./rsi
+```
+
+For exact formulas, error precedence and snapshot ABI, see
+[`RSI.md`](RSI.md), [`../rsi/doc.go`](../rsi/doc.go), and six executable
+operational scenarios in [`../rsi/example_test.go`](../rsi/example_test.go).
 
 ---
 
