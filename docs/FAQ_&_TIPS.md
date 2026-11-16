@@ -3,7 +3,7 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/FAQ_&_TIPS.md
-  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi and the wider lvlath package family
+  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd and the wider lvlath package family
   lvlath - FAQ & Tips
 
   Purpose:
@@ -30,6 +30,7 @@
     - Fixed-window ACF estimator conventions, numeric safeguards, pair-count diagnostics, and noncausal provenance.
     - Reproducible block-bootstrap indices, unbiased random integers, partial row publication, and resource admission.
     - Wilder RSI warmup masks, deterministic batch/stream semantics, state rollback and checkpoint boundaries.
+    - MACD SMA-seeded EMAs, signed features, three readiness masks, checkpoint identity and hot-path ownership.
 
   License:
     lvlath is licensed under AGPL-3.0-only. See ../LICENSE.
@@ -60,15 +61,17 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
 11. [Series FAQ](#11-series-faq)
 12. [Stats FAQ](#12-stats-faq)
 13. [PAA FAQ](#13-paa-faq)
+
     13a. [SAX FAQ](#13a-sax-faq)
     13b. [OLS FAQ](#13b-ols-faq)
     13c. [Ridge FAQ](#13c-ridge-faq)
     13d. [PCA FAQ](#13d-pca-faq)
-    13e. [HMM FAQ](#13e-hmm-faq--causal-regimes-smoothing-decoding-and-em)
-    13f. [ACF FAQ](#13f-acf-faq--estimators-scaled-numerics-and-fixed-windows)
-    13g. [Bootstrap FAQ](#13g-bootstrap-faq--dependent-data-blocks-replay-and-safe-partial-results)
+    13e. [HMM FAQ](#13e-hmm-faq---causal-regimes-smoothing-decoding-and-em)
+    13f. [ACF FAQ](#13f-acf-faq---estimators-scaled-numerics-and-fixed-windows)
+    13g. [Bootstrap FAQ](#13g-bootstrap-faq---dependent-data-blocks-replay-and-safe-partial-results)
     13h. [RNG FAQ](#13h-rng-faq-replay-ownership-and-numeric-safety)
     13i. [RSI FAQ](#13i-rsi-faq-wilder-streaming-readiness-and-checkpoints)
+    13j. [MACD FAQ](#13j-macd-faq--sma-seeding-signed-values-batchstream-replay-and-feature-safety)
 14. [Builder and gridgraph tips](#14-builder-and-gridgraph-tips)
 15. [Errors and diagnostics](#15-errors-and-diagnostics)
 16. [Determinism and concurrency](#16-determinism-and-concurrency)
@@ -85,61 +88,63 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
 
 Start with the question, not the algorithm name.
 
-| Question                                                                     | Use                                 | Reason                                                                                |
-|:-----------------------------------------------------------------------------|:------------------------------------|:--------------------------------------------------------------------------------------|
-| “How many hops away is this vertex?”                                         | `bfs`                               | BFS minimizes edge count.                                                             |
-| “Which vertices are in the same weak island?”                                | `bfs.Components`                    | Weak membership ignores direction for component grouping.                             |
-| “What is a deterministic deep traversal?”                                    | `dfs`                               | DFS gives post-order and forest-style structure.                                      |
-| “Does this graph contain a cycle?”                                           | `dfs.DetectCycles`                  | Returns deterministic witness cycles.                                                 |
-| “What order can I execute a DAG?”                                            | `dfs.TopologicalSort`               | Topological order is a directed acyclic graph contract.                               |
-| “What is the cheapest route by weight?”                                      | `dijkstra`                          | Dijkstra minimizes non-negative total cost.                                           |
-| “What is the cheapest connected backbone?”                                   | `mst`                               | MST solves minimum connected spanning structure.                                      |
-| “What is the maximum throughput?”                                            | `flow`                              | Flow solves capacity-constrained source-to-sink movement.                             |
-| “How do I turn graph topology into numeric features?”                        | `matrix`                            | Adjacency, incidence, degree vector, metric closure, algebra.                         |
-| “How do I model a grid map?”                                                 | `gridgraph`                         | Generates lattice topology instead of manual wiring.                                  |
-| “How do I build repeatable fixtures?”                                        | `builder`                           | Deterministic graph/data generation.                                                  |
-| “How do I compress a fixed-size scalar time-series window?”                  | `paa`                               | Exact fractional PAA averages with rational boundaries and no dropped tail.           |
-| “How do I encode a fixed-length symbolic signature?”                         | `sax`                               | Fractional PAA + right-bin quantization, compatible Euclidean MINDIST.                |
-| “How do I align two time series?”                                            | `dtw`                               | Dynamic Time Warping handles local timing drift.                                      |
-| “How do I compute robust moments or merge workers?”                          | `stats`                             | Welford/Chan moments, exact mean sum, scaled M2.                                      |
-| “How do I normalize heldout features without refit?”                         | `stats`                             | Immutable fitted model over matrix columns.                                           |
-| “How do I estimate linear factor coefficients and reuse them?”               | `ols`                               | Full-rank QR, original-unit beta/intercept, immutable prediction.                     |
-| “How do I fit correlated or wide linear factors with explicit L2 shrinkage?” | `ridge`                             | Augmented QR, positive Lambda, unpenalized intercept and frozen physical predictions. |
-| “What serial dependence or cycle repeats at a fixed sample-index lag?”       | `acf`                               | One full-window mean, explicit denominator, exact pair counts.                        |
-| “How strong are smoothed up/down changes in an ordered positive price feed?” | `rsi.ComputePeriod` / `Stream.Push` | Wilder oscillator with a validity mask or zero-allocation, single-owner recurrence.   |
-| “How do I build deterministic Monte Carlo, GBM or sensor-noise paths?”       | `rng.Factory.Stream`                | Pinned PCG-DXSM, logical path IDs and cached normals; not a cryptographic PRNG.       |
-| “How do I build dependent-data bootstrap index ensembles?”                   | `bootstrap.SampleIndices`           | Moving/Circular/Stationary blocks, replay ID and only complete rows.                  |
-| “How do I infer a hidden operating regime from time-ordered observations?”   | `hmm`                               | Typed causal filtering, smoothing, Viterbi, and independent-sequence EM.              |
-| “How do I reduce multivariate dimensions without a response variable?”       | `pca`                               | Validated covariance spectrum and a frozen loadings model for holdout inference.      |
-| “How do I visit all cities in a route?”                                      | `tsp`                               | Tour construction/improvement/exact-small-instance routing.                           |
+| Question                                                                         | Use                                  | Reason                                                                                          |
+|:---------------------------------------------------------------------------------|:-------------------------------------|:------------------------------------------------------------------------------------------------|
+| “How many hops away is this vertex?”                                             | `bfs`                                | BFS minimizes edge count.                                                                       |
+| “Which vertices are in the same weak island?”                                    | `bfs.Components`                     | Weak membership ignores direction for component grouping.                                       |
+| “What is a deterministic deep traversal?”                                        | `dfs`                                | DFS gives post-order and forest-style structure.                                                |
+| “Does this graph contain a cycle?”                                               | `dfs.DetectCycles`                   | Returns deterministic witness cycles.                                                           |
+| “What order can I execute a DAG?”                                                | `dfs.TopologicalSort`                | Topological order is a directed acyclic graph contract.                                         |
+| “What is the cheapest route by weight?”                                          | `dijkstra`                           | Dijkstra minimizes non-negative total cost.                                                     |
+| “What is the cheapest connected backbone?”                                       | `mst`                                | MST solves minimum connected spanning structure.                                                |
+| “What is the maximum throughput?”                                                | `flow`                               | Flow solves capacity-constrained source-to-sink movement.                                       |
+| “How do I turn graph topology into numeric features?”                            | `matrix`                             | Adjacency, incidence, degree vector, metric closure, algebra.                                   |
+| “How do I model a grid map?”                                                     | `gridgraph`                          | Generates lattice topology instead of manual wiring.                                            |
+| “How do I build repeatable fixtures?”                                            | `builder`                            | Deterministic graph/data generation.                                                            |
+| “How do I compress a fixed-size scalar time-series window?”                      | `paa`                                | Exact fractional PAA averages with rational boundaries and no dropped tail.                     |
+| “How do I encode a fixed-length symbolic signature?”                             | `sax`                                | Fractional PAA + right-bin quantization, compatible Euclidean MINDIST.                          |
+| “How do I align two time series?”                                                | `dtw`                                | Dynamic Time Warping handles local timing drift.                                                |
+| “How do I compute robust moments or merge workers?”                              | `stats`                              | Welford/Chan moments, exact mean sum, scaled M2.                                                |
+| “How do I normalize heldout features without refit?”                             | `stats`                              | Immutable fitted model over matrix columns.                                                     |
+| “How do I estimate linear factor coefficients and reuse them?”                   | `ols`                                | Full-rank QR, original-unit beta/intercept, immutable prediction.                               |
+| “How do I fit correlated or wide linear factors with explicit L2 shrinkage?”     | `ridge`                              | Augmented QR, positive Lambda, unpenalized intercept and frozen physical predictions.           |
+| “What serial dependence or cycle repeats at a fixed sample-index lag?”           | `acf`                                | One full-window mean, explicit denominator, exact pair counts.                                  |
+| “How strong are smoothed up/down changes in an ordered positive price feed?”     | `rsi.ComputePeriod` / `Stream.Push`  | Wilder oscillator with a validity mask or zero-allocation, single-owner recurrence.             |
+| “How do fast and slow price trends diverge and how does that separation change?” | `macd.ComputeDefault` / `NewDefault` | SMA-seeded EMA, three signed aligned series, independent readiness masks and replayable Stream. |
+| “How do I build deterministic Monte Carlo, GBM or sensor-noise paths?”           | `rng.Factory.Stream`                 | Pinned PCG-DXSM, logical path IDs and cached normals; not a cryptographic PRNG.                 |
+| “How do I build dependent-data bootstrap index ensembles?”                       | `bootstrap.SampleIndices`            | Moving/Circular/Stationary blocks, replay ID and only complete rows.                            |
+| “How do I infer a hidden operating regime from time-ordered observations?”       | `hmm`                                | Typed causal filtering, smoothing, Viterbi, and independent-sequence EM.                        |
+| “How do I reduce multivariate dimensions without a response variable?”           | `pca`                                | Validated covariance spectrum and a frozen loadings model for holdout inference.                |
+| “How do I visit all cities in a route?”                                          | `tsp`                                | Tour construction/improvement/exact-small-instance routing.                                     |
 
 ### Q1.2. How do I avoid using the wrong algorithm?
 
 Keep this mental table:
 
 ```text
-minimize hops                         -> BFS
-inspect depth structure               -> DFS
-prove/locate cycle                    -> DFS cycle witness
-order DAG tasks                       -> DFS topological sort
-minimize weighted cost                -> Dijkstra
-connect all cheaply                   -> MST
-maximize throughput                   -> Flow
-compute all-pairs costs               -> Matrix metric closure
-validate grid/causal features         -> Series
-stream/merge stable moments           -> Stats
-fit training-only scaling             -> Stats
-fit full-rank linear factors          -> OLS (pivoted QR, no refit)
-fit correlated/wide factors           -> Ridge (positive Lambda, unpenalized intercept)
-compress latent features              -> PCA (train-only covariance basis; no target)
-infer hidden temporal regime          -> HMM FilterStep (causal; no future observations)
-detect fixed-window serial dependence -> ACF ComputeDefault (not causal)
-compute causal Wilder price strength  -> RSI ComputePeriod / Stream.Push
-draw dependent-data index replicates  -> BOOTSTRAP SampleIndices (no statistic or CI)
-retrospective regime audit            -> HMM Smooth / Decode (future-conditioned)
-encode symbolic SAX words             -> SAX
-align time-warped signals             -> DTW
-build a closed tour                   -> TSP
+minimize hops                          -> BFS
+inspect depth structure                -> DFS
+prove/locate cycle                     -> DFS cycle witness
+order DAG tasks                        -> DFS topological sort
+minimize weighted cost                 -> Dijkstra
+connect all cheaply                    -> MST
+maximize throughput                    -> Flow
+compute all-pairs costs                -> Matrix metric closure
+validate grid/causal features          -> Series
+stream/merge stable moments            -> Stats
+fit training-only scaling              -> Stats
+fit full-rank linear factors           -> OLS (pivoted QR, no refit)
+fit correlated/wide factors            -> Ridge (positive Lambda, unpenalized intercept)
+compress latent features               -> PCA (train-only covariance basis; no target)
+infer hidden temporal regime           -> HMM FilterStep (causal; no future observations)
+detect fixed-window serial dependence  -> ACF ComputeDefault (not causal)
+compute causal Wilder price strength   -> RSI ComputePeriod / Stream.Push
+compute signed trend-separation factor -> MACD ComputeDefault / Stream.Push
+draw dependent-data index replicates   -> BOOTSTRAP SampleIndices (no statistic or CI)
+retrospective regime audit             -> HMM Smooth / Decode (future-conditioned)
+encode symbolic SAX words              -> SAX
+align time-warped signals              -> DTW
+build a closed tour                    -> TSP
 ```
 
 The most common mistake is using BFS on a weighted routing problem. BFS answers “fewest edges,” not “cheapest total weight.”
@@ -1977,7 +1982,7 @@ Not automatically. PCA eigenvectors diagonalize **sample covariance** for the se
 
 ### Q13d.13. What must I validate before admitting PCA to a production analytics pipeline?
 
-Use the exact repository toolchain; check `go test ./pca -count=1`, `go test -race ./pca`, `go test ./...`, `go vet ./...`, and `golangci-lint run`. Independently test extreme covariance construction, residual identities, repeated-subspace projectors, holdout-only evaluation, and numeric error classification through `errors.Is`. Benchmark **real** dependencies, not a compatibility stand-in. See [`PCA.md`](PCA.md) for the full API and [`pca/example_test.go`](../../../../Downloads/lvlath-pca-num03-num04/pca/example_test.go) for executable workflows.
+Use the exact repository toolchain; check `go test ./pca -count=1`, `go test -race ./pca`, `go test ./...`, `go vet ./...`, and `golangci-lint run`. Independently test extreme covariance construction, residual identities, repeated-subspace projectors, holdout-only evaluation, and numeric error classification through `errors.Is`. Benchmark **real** dependencies, not a compatibility stand-in. See [`PCA.md`](PCA.md) for the full API and [`pca/example_test.go`](../pca/example_test.go) for executable workflows.
 
 ### Q13d.14. Why can an accurate covariance still produce incorrectly centered scores?
 
@@ -2070,7 +2075,7 @@ Categorical `FilterDefault` requires O(K) live workspace plus immutable model; `
 
 #### Q13e.16. Where can I see practical, executable scenarios and independent proofs?
 
-[`hmm/example_test.go`](../hmm/example_test.go) exercises clickstream intent, live market regime monitoring, retrospective incident interpretation, industrial state decoding, and independent-session EM. [`examples/hmm`](../../../../Downloads/lvlath_hmm_v7_hardened/examples/hmm) (when installed) shows a standalone synthetic streaming regime scenario. The `hmm_test` suite checks exact tiny hidden-path enumeration, prefix invariance, state detachment, long-sequence log evidence, Viterbi ties, MAP objective behavior and concurrent inference. The worked formulas and decision boundaries are in [`HMM.md`](HMM.md). Real deployments must separately validate regime semantics, policy thresholds and out-of-sample calibration.
+[`hmm/example_test.go`](../hmm/example_test.go) exercises clickstream intent, live market regime monitoring, retrospective incident interpretation, industrial state decoding, and independent-session EM. [`examples/hmm`](../examples/hmm) (when installed) shows a standalone synthetic streaming regime scenario. The `hmm_test` suite checks exact tiny hidden-path enumeration, prefix invariance, state detachment, long-sequence log evidence, Viterbi ties, MAP objective behavior and concurrent inference. The worked formulas and decision boundaries are in [`HMM.md`](HMM.md). Real deployments must separately validate regime semantics, policy thresholds and out-of-sample calibration.
 
 #### Q13e.17. Why can a normalized log posterior fail after a very large Gaussian observation?
 
@@ -2585,8 +2590,8 @@ go test -run '^$' -bench . -benchmem ./rng
 ```
 
 For full code, six executable operational examples and mathematical proofs,
-see [`RNG.md`](RNG.md), [`rng/doc.go`](../../../../Downloads/lvlath_rng_phase20_v2/rng/doc.go) and
-[`rng/example_test.go`](../../../../Downloads/lvlath_rng_phase20_v2/rng/example_test.go).
+see [`RNG.md`](RNG.md), [`rng/doc.go`](../rng/doc.go) and
+[`rng/example_test.go`](../rng/example_test.go).
 
 ---
 
@@ -2806,6 +2811,207 @@ go vet ./rsi
 For exact formulas, error precedence and snapshot ABI, see
 [`RSI.md`](RSI.md), [`../rsi/doc.go`](../rsi/doc.go), and six executable
 operational scenarios in [`../rsi/example_test.go`](../rsi/example_test.go).
+
+---
+
+## 13j. MACD FAQ - SMA seeding, signed values, batch/stream replay and feature safety
+
+### Q13j.1. What does a MACD Result represent?
+
+`macd.Result` holds three **separate, index-aligned** `Series` values:
+`Line = fast price EMA - slow price EMA`, `Signal = EMA(valid Line)`, and
+`Histogram = Line - Signal`. Each `Series` has `Values` and `Valid` slices
+of the exact input length. It is a descriptive trend-separation feature,
+**not** an order signal, volatility model, forecast or confidence interval.
+The package does not fetch quotes, select candle boundaries or choose a risk
+threshold for a trading engine.
+
+### Q13j.2. Why is the seed an SMA rather than the first price?
+
+The first `P` samples of **each EMA's own input sequence** establish an
+ordinary arithmetic mean. Only after that does EMA smoothing use the factor
+`2/(P+1)`. Fast and Slow both start with the *same first close*; the Signal
+seed starts at the **first valid Line**, not the first close. Seeding from
+`close[0]` for a period greater than one changes every early value and cannot
+be silently substituted as an optimization. `Fast=1` is the legitimate
+single-sample special case.
+
+### Q13j.3. Is MACD smoothing the same as RSI's Wilder smoothing?
+
+No. The conventional MACD recurrence uses **`alpha=2/(P+1)`** whereas
+`rsi` uses Wilder's **`alpha=1/P`** for its gain/loss averages *after*
+its seed. Their inputs also differ: MACD smooths price and signed Line;
+RSI smooths the separate nonnegative gain/loss magnitudes of price changes.
+Same period integers and the word "EMA" do not make their warmup or numerical
+outputs interchangeable. See [MACD mathematics](MACD.md#3-mathematics-and-warmup-proof)
+and [RSI mathematics](RSI.md).
+
+### Q13j.4. When does each output become valid?
+
+For normalized `(Fast, Slow, Signal)`, the first `Line.Valid=true` is at
+**index `Slow-1`**, after `Slow` accepted closes. `Signal.Valid` and
+`Histogram.Valid` first become true at **index `Slow+Signal-2`**, after
+`Slow+Signal-1` accepted closes. Thus default 12/26/9 needs 26 closes
+for Line and **34 closes** for all three outputs. A shorter nonempty batch
+is successful, but its unready fields remain `(Values=0, Valid=false)`.
+
+### Q13j.5. Does a zero histogram mean the signal is missing?
+
+No. An invalid warmup cell is `Histogram.Values[i]==0` **and**
+`Histogram.Valid[i]==false`. A fully computed histogram can also be exactly
+zero. For `Signal=1`, Signal equals the valid Line and every valid Histogram
+is exactly `+0.0`; those zeros are **real computed values**, not missing
+values. In streaming mode Histogram has no dedicated validity flag:
+`Point.SignalValid` is its validity flag. Check this boolean rather than
+`Histogram==0` before using a point.
+
+### Q13j.6. Which prices are legal, and may the indicator be negative?
+
+All *input closes* must be strictly positive finite `float64` values,
+including positive subnormals and very large finite numbers. Zero, negative
+zero and negative finite closes are `ErrDomain`; NaN and both infinities are
+`ErrNonFinite`. In contrast, `Line`, `Signal` and `Histogram` are signed.
+A negative Signal is a normal mathematical state. Do not apply the price
+validator to any intermediate or feed signed returns into `Compute` as if
+they were closing prices.
+
+### Q13j.7. Which validation error wins when a batch has multiple bad prices?
+
+`Compute` checks options first, then nil input, empty input, **all nonfinite
+prices**, and finally **all nonpositive finite prices**. As a result,
+`[]float64{-1, 2, math.NaN()}` produces `ErrNonFinite`, even though the
+negative price appears earlier. A `Push` validates only its one price after
+checking nil/uninitialized receiver state. Both APIs classify errors via
+`errors.Is`; neither returns usable partial output on an error.
+
+### Q13j.8. Can finite prices still cause arithmetic overflow?
+
+Yes. `ErrOverflow` is not the same as `ErrNonFinite`: an individually valid
+close may contribute to an unrepresentable **derived** Line or Histogram
+under an extreme state. The SMA warmup uses a bounded online mean rather
+than summing `P` large prices; signed Signal updates avoid raw subtraction
+of opposite-sign large operands. This avoids *avoidable* overflow but does
+not promise exact real-number arithmetic. If any required derived value is
+not finite, the entire `Push` is rejected without committing fast, slow,
+signal or count.
+
+### Q13j.9. Why can the same periods disagree with a charting service?
+
+Check the source candle history, price adjustments, first accepted index,
+missing-bar decisions and seed convention. Some libraries seed price EMAs
+from different offsets or the first price rather than the same initial
+SMA windows. Even mathematically equivalent recurrences can differ in the
+last binary64 bits because arithmetic order matters. `Compute` and `Push`
+in *this* package share one kernel, but their bitwise parity is guaranteed
+only for the same input/order/options and floating-point execution
+conditions, not for arbitrary external implementations.
+
+### Q13j.10. Does failed Push partially advance the fast EMA?
+
+No. A `Push` computes fast, slow, Signal and Histogram in a **private
+candidate** and commits only after all checks succeed. Whether failure
+comes from the supplied price, total counter, signal calculation or final
+histogram, `Point{}` is returned and the existing stream is unchanged.
+The caller may correct and resend a price, but must separately guard
+source-sequence IDs to prevent a duplicate accepted close.
+
+### Q13j.11. What exactly does Snapshot preserve?
+
+For an initialized Stream, `Algorithm` is exactly `"macd/sma-ema/v1"`;
+`Config` is lowercase SHA-256 of that ASCII version plus LE64-encoded
+normalized Fast, Slow and Signal. `Count` counts **accepted closes**.
+`FloatState` is the three current fast/slow/signal SMA-or-EMA means;
+`IntState` is the three corresponding *saturated seed counts* in that order.
+Both slices are detached copies. Snapshot works **during warmup** as well
+as after full readiness; no historical prices are needed to continue.
+An uninitialized or nil Stream produces a zero Snapshot.
+
+### Q13j.12. Does the SHA-256 Config authenticate my checkpoint?
+
+**No.** It fingerprints only algorithm/version/period configuration and
+is not an HMAC, digital signature, checksum of the mutable means, or proof
+of original prices. `Restore` checks version, config, exact slice lengths,
+count/phase consistency, finite values and inactive-state canonical zeros.
+A mathematically plausible but forged mean can still pass. Authenticate
+the **whole checkpoint plus source offset** in the application and do not
+assume `Restore` prevents replay or record replacement by a malicious peer.
+
+### Q13j.13. How should I restart after a crash or feed gap?
+
+For failover: create `New` with the **same normalized options**, securely
+load the checkpoint, `Restore`, and submit the **first unseen** close after
+the separately persisted source offset. Do not repeat the already committed
+last close. A missing time slot or new instrument session is different: the
+package has no clock or feed-ID validator. Decide upstream whether to
+reject the feed, reconstruct explicitly with provenance, or call `Reset`
+and wait through a new warmup. Do **not** inject zero or synthetic prices
+into MACD as a hidden gap policy.
+
+### Q13j.14. May several goroutines share one Stream?
+
+No. `Stream` has no locks; `Push`, `Reset`, `Restore` and `Snapshot` may not
+race with mutation. One logical instrument/cadence/parameter stream has
+one owner at a time. Independent Streams and concurrently **read-only**
+completed Results are fine while their input/output slices remain stable.
+`Push` uses O(1) state and has no heap allocation in its hot path after
+construction, but Snapshot allocates two small detached slices; parsing,
+network IO, authentication and caller logging are outside the 0-allocation
+promise.
+
+### Q13j.15. How do I combine MACD with RSI, ACF or learned models?
+
+Validate timestamp cadence with an explicit `series` policy, construct
+**positive closes** without inserting placeholder zeros, then compute MACD
+and keep *all* masks. RSI becomes ready on its own (different) schedule;
+for a common feature row, require every selected feature to be ready at
+that **same original index**. `acf` is retrospective over a *completed*
+window and cannot act as an online causal feature without a separate
+provenance decision. Fit `stats`, `ols`, `ridge`, `pca` or `hmm` only under
+their own training and holdout rules; a causal MACD column does not make
+an otherwise leaky pipeline safe.
+
+### Q13j.16. Can I compare raw histograms across instruments or trade a crossover?
+
+MACD values inherit **price units**. A 0.5 histogram on a $10 asset is not
+numerically equivalent to 0.5 on a $1,000 asset. Any normalization, spread
+filter, latency gate, hysteresis, cross-asset ranking or trading execution
+belongs to the caller. A crossover detector must have **two consecutive
+valid histograms** and an explicit zero policy; the first valid histogram
+is not automatically a sign change. No MACD result certifies future returns.
+
+### Q13j.17. Is `Result.IsNil()` a validity check?
+
+No. It implements the `core.Nilable` pointer-presence convention:
+`var result *macd.Result; result.IsNil()` is true, while
+`(&macd.Result{}).IsNil()` is false. It does not inspect series lengths,
+readiness masks or data provenance. On a batch error `Compute` returns
+a **nil Result**, not a partially filled object. On successful short
+history it returns an allocated Result with unready masks.
+
+### Q13j.18. What must MACD tests and benchmarks prove independently?
+
+Verify SMA seeds and warmup against exact-rational oracles, not solely
+batch/stream self-comparison. Then test per-index bitwise parity, extreme
+finite constants, signed Line/Signal, Signal=1, error precedence, rejected
+Push rollback, per-phase Snapshot/Restore, alias isolation, nil receivers,
+zero-count canonical state, and invalid hash/version/shape. External tests
+belong to `package macd_test` and call public `macd.` symbols only. Benchmark
+batch `n=10^3` and `10^6` separately from a steady-state `Push`, with input
+setup outside the timer and `b.ReportAllocs()`. Do not claim a full-service
+latency bound from one kernel's `ns/op`.
+
+```bash
+go test ./macd -count=1 -cover
+go test -race ./macd -count=1
+go test ./macd -run '^Example' -count=1 -v
+go test ./macd -run '^$' -bench . -benchmem
+go vet ./macd
+golangci-lint run
+```
+
+The full mathematical contract and operational workflows are in
+[`MACD.md`](MACD.md), [`../macd/doc.go`](../macd/doc.go), and
+[`../macd/example_test.go`](../macd/example_test.go).
 
 ---
 
@@ -3251,6 +3457,74 @@ This snippet belongs inside a function returning `error` with `ctx` and
 `trainingRows` supplied by the caller. `bootstrap` does not read observations,
 select block length or estimate confidence intervals. See
 [`BOOTSTRAP.md`](BOOTSTRAP.md) for exact mathematics and memory limits.
+
+---
+
+### Recipe N. Build a chronological supervised table from MACD without false warmup rows
+
+Use a historical training block with known **future labels**, but construct
+features only from closes available at each feature index. The last training
+feature index must be earlier than the last training close because its
+next-close label is unavailable otherwise. Never perform this label lookup
+in a live `Push` callback.
+
+```go
+package main
+
+import (
+    "fmt"
+
+    "github.com/lvlath/go/macd"
+)
+
+func main() {
+    closes := make([]float64, 48)
+    for index := range closes {
+        closes[index] = 80 + 0.08*float64(index) + 0.17*float64(index%7-3)
+    }
+    result, err := macd.ComputeDefault(closes)
+    if err != nil {
+        fmt.Println("MACD:", err)
+        return
+    }
+
+    // A fixed chronological training block ends before close index 40.
+    const trainingEnd = 40
+    type trainingRow struct {
+        index int
+        histogram float64
+        nextCloseHigher bool
+    }
+    var rows []trainingRow
+    for index := 0; index+1 < trainingEnd; index++ {
+        if !result.Histogram.Valid[index] {
+            continue
+        }
+        rows = append(rows, trainingRow{
+            index: index,
+            histogram: result.Histogram.Values[index],
+            nextCloseHigher: closes[index+1] > closes[index],
+        })
+    }
+    if len(rows) == 0 {
+        fmt.Println("no ready training rows")
+        return
+    }
+    fmt.Printf("training rows=%d first=%d last=%d\n",
+        len(rows), rows[0].index, rows[len(rows)-1].index)
+    // Output:
+    // training rows=6 first=33 last=38
+}
+```
+
+The `nextCloseHigher` label is intentionally historical and **not** a MACD
+prediction. The remaining closes (indices 40–47) are outside the training
+block; an application may reserve them for holdout after fixing its entire
+feature and label policy. The package itself does not split datasets, fit
+models, produce probabilities or promise positive trading performance.
+
+See [`MACD.md`](MACD.md) and the streaming/failover example in the
+[Tutorial](TUTORIAL.md#11k-macd-foundations-sma-seeded-ema-signed-momentum-and-checkpoint-replay).
 
 ---
 

@@ -7,7 +7,7 @@
   Purpose:
     This README is the public face of lvlath. It presents the library as a
     deterministic, contract-driven Go toolkit for graph algorithms, flow networks,
-    dense graph algebra, routing, exact timestamp grids, causal time-series primitives, Wilder RSI batch/stream filtering, fixed-window ACF, fractional PAA,
+    dense graph algebra, routing, exact timestamp grids, causal time-series primitives, Wilder RSI batch/stream filtering, SMA-seeded MACD, fixed-window ACF, fractional PAA,
     symbolic SAX encoding, dependent-data block-index resampling, alignment, and reproducible algorithm engineering. It should give a new reader immediate confidence in
     what lvlath can solve, how packages compose, where the formal contracts live,
     and why this repository is engineered beyond ad-hoc algorithm snippets.
@@ -48,7 +48,7 @@
 
 # lvlath
 
-**lvlath** is a pure-Go algorithm engineering library for graphs, flows, dense graph algebra, routing, exact timestamp grids, causal series transforms, fractional PAA, symbolic SAX time-series signatures, stable statistical moments, fitted feature scaling, sample autocorrelation, Wilder RSI, covariance PCA, causal Hidden Markov Models, version-pinned PCG-DXSM stochastic streams, time-series alignment, and reproducible test fixtures.
+**lvlath** is a pure-Go algorithm engineering library for graphs, flows, dense graph algebra, routing, exact timestamp grids, causal series transforms, fractional PAA, symbolic SAX time-series signatures, stable statistical moments, fitted feature scaling, sample autocorrelation, Wilder RSI, SMA-seeded MACD, covariance PCA, causal Hidden Markov Models, version-pinned PCG-DXSM stochastic streams, time-series alignment, and reproducible test fixtures.
 
 It is built for people who need algorithmic tools they can explain in a code review, trust in CI, compose across packages, and debug from deterministic artifacts instead of guessing why an answer changed.
 
@@ -72,6 +72,7 @@ It is built for people who need algorithmic tools they can explain in a code rev
 * `hmm` provides typed categorical and diagonal-Gaussian hidden states with strictly causal filtering, retrospective smoothing, global Viterbi paths, and multi-sequence MAP-EM;
 * `acf` computes scaled direct sample autocorrelation with an explicit common versus lag-adjusted estimator convention and exact available-pair counts;
 * `rsi` computes causal Wilder price-strength factors with batch/stream bit parity in one environment and detached restart checkpoints;
+* `macd` computes signed EMA convergence/divergence, signal and histogram series with independent readiness masks, atomic zero-allocation Push and detached checkpoint replay;
 * `bootstrap` constructs reproducible dependent-data index ensembles with unbiased bounded integers, checked memory budgets and complete-row cancellation;
 * `rng` supplies local pinned PCG-DXSM128 streams, strict 52-bit open uniforms, cached Box-Muller normals and logical-path replay;
 * flow, MST, TSP, DTW, grid, and builder packages extend the same discipline into optimization, alignment, fixtures, and examples.
@@ -100,7 +101,8 @@ The common failures are familiar:
 * high-offset variance disappears through raw-moment cancellation, or inference refits on holdout data;
 * hidden-state filters are accidentally replaced with future-conditioned smoothing, or independent EM training sequences are concatenated;
 * lag-adjusted autocorrelations are clamped to [-1,1], or fed to a PSD-dependent PACF solver without checking their estimator convention;
-* RSI warmup placeholders are read as genuine oscillator zeros, invalid quotes advance stream state, or a config hash is mistaken for checkpoint authentication.
+* RSI warmup placeholders are read as genuine oscillator zeros, invalid quotes advance stream state, or a config hash is mistaken for checkpoint authentication;
+* MACD is seeded from the first price instead of initial SMA, Signal is seeded with invalid Line zeros, or a checkpoint is replayed from the wrong source offset.
 
 `lvlath` is built against those failure modes. It is an algorithm engineering library: each package publishes a narrow mathematical contract, validates its input domain, returns meaningful result artifacts, and keeps deterministic behavior observable.
 
@@ -185,6 +187,7 @@ lvlath/
 ├── hmm/                   # categorical/Gaussian HMM, causal filter, smoother, Viterbi, MAP EM
 ├── acf/                   # direct sample ACF, common/lag-adjusted modes, pair counts
 ├── rsi/                   # Wilder RSI batch and single-owner streaming with versioned snapshots
+├── macd/                  # SMA-seeded EMA MACD, aligned masks, transactional stream and snapshots
 ├── bootstrap/             # versioned Moving/Circular/Stationary block-index ensembles
 ├── rng/                   # pinned SHA256LE/PCG-DXSM streams, open uniforms and cached normals
 ├── gridgraph/             # 2D lattice graph generation
@@ -209,6 +212,7 @@ lvlath/
 │   ├── PCA.md
 │   ├── HMM.md
 │   ├── ACF.md
+│   ├── MACD.md
 │   ├── BOOTSTRAP.md
 │   ├── RNG.md
 │   ├── PAA.md
@@ -322,6 +326,12 @@ lvlath/docs/{PACKAGE}.md
                                    └────────────────────────────────────────────┘
 
                                    ┌────────────────────────────────────────────┐
+                                   │ macd                                       │
+                                   │ SMA-seeded Appel EMA, signed MACD features │
+                                   │ 3 aligned masks / atomic Push / checkpoint│
+                                   └────────────────────────────────────────────┘
+
+                                   ┌────────────────────────────────────────────┐
                                    │ stats                                      │
                                    │ stable Welford/Chan moments, fitted scaling│
                                    │ matrix.Matrix input, immutable inference   │
@@ -358,6 +368,8 @@ Composition rule:
   and detached coefficients with exact pair counts; it is not a causal transform.
   rsi owns causal Wilder gain/loss smoothing, validity masks and single-owner
   checkpointed streams; timestamps and market decisions remain with callers.
+  macd owns SMA-seeded fast/slow price EMAs, signed Signal/Histogram, aligned
+  readiness masks and transactional streaming; feed identity and decisions are external.
   ols owns full-rank regression artifacts, intercept policy and frozen prediction.
   ridge owns positive-Lambda regression artifacts, unpenalized intercept, and QR equilibration.
   pca owns covariance-based orthogonal factors, strict spectrum admission,
@@ -390,6 +402,7 @@ Composition rule:
 | `bootstrap` | Reproducible Moving/Circular/Stationary index resampling for dependent series with per-replicate streams and exact bounded integers.           | Detached complete-row results, memory admission and cancellation without interrupted-row publication.                    | Portfolio risk sensitivity, paired serial regression, telemetry alarm calibration.             |
 | `acf`       | Direct fixed-window sample autocorrelation with two explicit denominator conventions and raw/centered origins.                                 | Scaled compensated products, no lag-specific recentering or clipping; caller-owned lag counts.                           | Residual audits, compressor cycles, vibration periodicity, signal pitch.                       |
 | `rsi`       | Deterministic Wilder RSI over finite-positive prices: batch mask, streaming Push and snapshot continuation.                                    | One shared scalar recurrence, explicit warmup, atomic failed Push, detached checkpoints, no signal thresholds.           | Portfolio momentum-factor extraction, feed monitoring, authenticated hot-failover analytics.   |
+| `macd`      | SMA-seeded fast/slow EMAs, signed Line/Signal/Histogram, batch and single-owner streaming.                                                     | Shared kernel, separate warmup masks, bitwise batch/stream parity and detached state snapshots.                          | Trend-feature pipelines, bar-feed monitoring, replayable analytics failover.                   |
 | `hmm`       | Typed finite-state categorical and diagonal-Gaussian probability models; causal filtering, smoothing, Viterbi, multi-sequence Baum-Welch.      | Explicit log-domain evidence, immutable model IDs, no future leakage in filtering, no cross-session transition counts.   | Live stress monitoring, machine regimes, independent clickstream sessions.                     |
 | `pca`       | Immutable covariance-based principal components, train-only projection and original-unit reconstruction.                                       | Bounded Jacobi, independent PSD/eigenpair checks, detached loadings and no holdout recentering.                          | Yield-curve factors, turbine residual screening, multichannel telemetry compression.           |
 | `stats`     | Stable scalar mean/variance, mergeable Welford/Chan states, train-only fitted feature standardization.                                         | Exact binary-input mean and scaled second moments, detached fitted metadata, immutable inference without refit.          | Telemetry aggregation, distributed metrics, ML feature preparation, anomaly-score calibration. |
@@ -1060,6 +1073,91 @@ history or evidence of strategy performance.
 
 ---
 
+### MACD: SMA-seeded EMA trend separation with deterministic batch/stream replay
+
+`github.com/lvlath/go/macd` computes three **signed, index-aligned** indicator
+series from an ordered sequence of strictly positive finite closes. Its
+Fast and Slow EMAs each use the arithmetic mean of their first `P` closes as
+the seed; the Signal EMA is seeded only from the first `Signal` *valid* MACD
+Line observations. It uses the conventional Appel EMA coefficient `2/(P+1)`,
+**not** RSI's Wilder `1/P` recurrence. No first-price seed shortcut or
+alternative hidden algorithm is selected by a wrapper.
+
+| Requirement                          | Public API                                                      | Contract boundary                                                     |
+|--------------------------------------|-----------------------------------------------------------------|-----------------------------------------------------------------------|
+| Complete batch with explicit periods | `macd.Compute(closes, macd.Options{Fast:5, Slow:35, Signal:5})` | Canonical `*macd.Result`, three detached `Values`/`Valid` pairs       |
+| Conventional 12/26/9                 | `macd.ComputeDefault(closes)`                                   | Same recurrence; first Line index 25, first Signal/Histogram index 33 |
+| Three standalone period integers     | `macd.ComputeWithPeriods(closes, 5, 35, 5)`                     | Option assembly only; no second EMA kernel                            |
+| Continuous stream                    | `macd.NewDefault()` / `macd.NewWithPeriods(5,35,5)` then `Push` | O(1) mutable state, 0 heap allocations in Push after initialization   |
+| Controlled transfer between workers  | `Stream.Snapshot()` / `Stream.Restore(state)`                   | Detached state, version and period identity, transactional validation |
+
+Every Result series has length `len(closes)`. Unready numeric cells contain
+`+0` with `Valid=false`; a **valid** zero histogram is a different state.
+Histogram readiness exactly matches Signal readiness, while Line can be
+ready earlier. `Signal=1` makes Signal equal Line and Histogram identically
+zero from the first valid Line onward. `Result.IsNil()` follows the
+`core.Nilable` pointer-presence convention, not a readiness test.
+
+This runnable example checks index alignment without interpreting histogram
+values as orders. Its prices are synthetic and deterministic:
+
+```go
+package main
+
+import (
+    "fmt"
+
+    "github.com/lvlath/go/macd"
+)
+
+func main() {
+    closes := make([]float64, 40)
+    for index := range closes {
+        closes[index] = 100 + float64(index)
+    }
+    result, err := macd.ComputeDefault(closes)
+    if err != nil {
+        fmt.Println("macd:", err)
+        return
+    }
+    firstLine, firstSignal, ready := -1, -1, 0
+    for index := range closes {
+        if result.Line.Valid[index] && firstLine < 0 {
+            firstLine = index
+        }
+        if result.Signal.Valid[index] {
+            ready++
+            if firstSignal < 0 {
+                firstSignal = index
+            }
+        }
+    }
+    fmt.Printf("line=%d signal=%d usable=%d\n", firstLine, firstSignal, ready)
+    // Output:
+    // line=25 signal=33 usable=7
+}
+```
+
+**Operational boundary:** `Compute` processes complete batches in O(n) time
+and O(n) result space. `Stream.Push` is error-atomic and needs O(1) time
+and memory; a failed price, count or computed output cannot partially
+advance its state. A Stream belongs to one goroutine and one
+instrument/cadence. Missing bars, source offsets, duplicate sequence IDs,
+corporate-action adjustments and downstream execution rules belong to the
+caller. `Snapshot.Config` is a SHA-256 fingerprint of the **version and
+periods**, not an authentication tag for the state; authenticate persisted
+checkpoints and resume with the first unseen bar. These guarantees are
+independent of, and do not imply, trading profitability.
+
+Read [`docs/MACD.md`](docs/MACD.md) for mathematical and numeric proofs,
+[`macd/doc.go`](macd/doc.go) for the package charter,
+[`macd/example_test.go`](macd/example_test.go) for five reproducible
+operational examples, and the [MACD Tutorial](docs/TUTORIAL.md#11k-macd-foundations-sma-seeded-ema-signed-momentum-and-checkpoint-replay)
+for a checked failover pipeline. The [MACD FAQ](docs/FAQ_%26_TIPS.md#13j-macd-faq--sma-seeding-signed-values-batchstream-replay-and-feature-safety)
+covers warmup, signed arithmetic, error precedence and checkpoint trust.
+
+---
+
 ### Bootstrap: reproducible dependent-data resampling without hiding statistics
 
 `github.com/lvlath/go/bootstrap` produces **only observation indexes**. It is
@@ -1210,10 +1308,10 @@ path and reduce in ascending index order. Factory is concurrent-safe; RNG is not
 For six executable operational examples (fulfillment-load stress, GBM option
 pricing, circular-latency blocks, industrial temperature sensor faults, Gaussian
 cache interleaving and six-channel batch telemetry), see
-[`rng/example_test.go`](../../../Downloads/lvlath_rng_phase20_v2/rng/example_test.go). Run the standalone 100,000-path
+[`rng/example_test.go`](rng/example_test.go). Run the standalone 100,000-path
 Monte Carlo scenario with `go run ./examples/rng`. The complete proof,
 consumption table and integration restrictions are in [`docs/RNG.md`](docs/RNG.md)
-and [`rng/doc.go`](../../../Downloads/lvlath_rng_phase20_v2/rng/doc.go).
+and [`rng/doc.go`](rng/doc.go).
 
 ---
 
@@ -1286,6 +1384,7 @@ See [`docs/HMM.md`](docs/HMM.md) for formal log-domain equations, EM counts and 
 | Dependent index bootstrap | [`docs/BOOTSTRAP.md`](docs/BOOTSTRAP.md)     | Moving/Circular/Stationary laws, exact integer mapping, replay, budget and partial rows.                                        |
 | Sample autocorrelation    | [`docs/ACF.md`](docs/ACF.md)                 | Common/lag-adjusted ACF, full-window centering, Toeplitz PSD proof and numeric limitations.                                     |
 | Wilder RSI                | [`docs/RSI.md`](docs/RSI.md)                 | Stable ratio math, exact seed/warmup, batch/stream equivalence, sentinels and checkpoint ABI.                                   |
+| SMA-seeded MACD           | [`docs/MACD.md`](docs/MACD.md)               | Appel EMA seed/recurrence, signed values, aligned masks, batch/stream parity, checkpoint safety.                                |
 | Finite-state HMM          | [`docs/HMM.md`](docs/HMM.md)                 | Causal log-domain filtering, retrospective smoothing, Viterbi, multi-sequence MAP-EM, error and identity laws.                  |
 | Fitted covariance PCA     | [`docs/PCA.md`](docs/PCA.md)                 | Train-only orthogonal projection, checked covariance eigenpairs, numerical rank and leakage-safe reconstruction.                |
 | Stable OLS regression     | [`docs/OLS.md`](docs/OLS.md)                 | Pivoted Householder QR, explicit intercept, physical coefficients, SSE, frozen Model and holdout pitfalls.                      |
@@ -1822,6 +1921,7 @@ incidence matrix:       columns are edge identities, not vertex-pair weights
 | "How do I validate exact sample cadence and missing slots?"                         | `series.Validate`                                                  | Signed-nanosecond grid checks; no interpolation.                                             |
 | "How do I compute causal lag, differences, or returns?"                             | `series.Lag` / `Difference` / `SimpleReturns` / `LogReturns`       | Length-preserving values and validity masks.                                                 |
 | "How do I compute Wilder relative strength on an ordered positive price feed?"      | `rsi.ComputePeriod` / `rsi.NewPeriod`                              | Aligned Values+Valid or single-owner zero-allocation streaming; caller handles gaps.         |
+| "How do fast and slow price trends diverge, and what is their smoothed separation?" | `macd.ComputeDefault` / `macd.NewDefault`                          | Three signed aligned series with readiness masks and transactional single-owner streaming.   |
 | "How do I compress a window without dropping fractional tails?"                     | `paa.Transform` / `paa.TransformRange`                             | Exact fractional PAA, checked integer geometry and a detached result.                        |
 | "How do I create comparable symbolic time-series signatures?"                       | `sax.NewEncoder` / `sax.Encode`                                    | Fixed-alphabet symbols, compatible policy hash, detached results.                            |
 | "Can SAX MINDIST prune arbitrary DTW candidates?"                                   | No                                                                 | Euclidean-only lower bound; shortlist retrieval must report Recall@K.                        |
