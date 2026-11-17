@@ -150,7 +150,7 @@ func NewWithPeriods(fast, slow, signal int) (*Stream, error) {
 //   - Histogram validity always equals signal validity, even for a true zero histogram.
 //
 // Inputs:
-//   - close: non-nil, nonempty, read-only []float64 of finite strictly positive closes.
+//   - closes: non-nil, nonempty, read-only []float64 of finite strictly positive closes.
 //   - opts: Fast/Slow/Signal periods with individual zero defaults of 12/26/9.
 //
 // Returns:
@@ -179,33 +179,33 @@ func NewWithPeriods(fast, slow, signal int) (*Stream, error) {
 // AI-Hints:
 //   - Do not shift or truncate the leading warmup observations: align masks to closes.
 //   - Do not replace the single Push kernel with an independently vectorized EMA formula.
-func Compute(close []float64, opts Options) (*Result, error) {
+func Compute(closes []float64, opts Options) (*Result, error) {
 	normalized, err := normalizeOptions(opts)
 	if err != nil {
 		return nil, err
 	}
-	if close == nil {
+	if closes == nil {
 		return nil, ErrNilInput
 	}
-	if len(close) == 0 {
+	if len(closes) == 0 {
 		return nil, ErrEmptyInput
 	}
 
 	// Nonfinite values take precedence over domain violations across the entire
 	// batch, irrespective of their indices. Both scans finish before allocation.
-	for _, price := range close {
+	for _, price := range closes {
 		if !finite(price) {
 			return nil, ErrNonFinite
 		}
 	}
-	for _, price := range close {
+	for _, price := range closes {
 		if price <= 0 {
 			return nil, ErrDomain
 		}
 	}
 
 	stream := Stream{opts: normalized, initialized: true}
-	length := len(close)
+	length := len(closes)
 	result := &Result{
 		Line:      Series{Values: make([]float64, length), Valid: make([]bool, length)},
 		Signal:    Series{Values: make([]float64, length), Valid: make([]bool, length)},
@@ -214,7 +214,7 @@ func Compute(close []float64, opts Options) (*Result, error) {
 
 	// The one canonical step yields readiness and values together. A later error
 	// discards all arrays rather than returning a misleading partially filled result.
-	for index, price := range close {
+	for index, price := range closes {
 		point, pushErr := stream.Push(price)
 		if pushErr != nil {
 			return nil, pushErr
@@ -227,7 +227,7 @@ func Compute(close []float64, opts Options) (*Result, error) {
 }
 
 // ComputeDefault calculates a full batch using the conventional 12/26/9 periods.
-// It is precisely Compute(close, Options{}) and exposes the same masks and errors.
+// It is precisely Compute(closes, Options{}) and exposes the same masks and errors.
 //
 // Implementation:
 //   - Stage 1: select the default Options policy.
@@ -235,14 +235,14 @@ func Compute(close []float64, opts Options) (*Result, error) {
 //   - Stage 3: return its complete Result or nil on error.
 //
 // Inputs:
-//   - close: non-nil, nonempty finite positive prices; input is never retained.
+//   - closes: non-nil, nonempty finite positive prices; input is never retained.
 //
 // Returns:
 //   - *Result: three detached aligned Series; nil on any error.
 //   - error: the exact errors and precedence of Compute with default periods.
 //
 // Determinism:
-//   - Bitwise identical to Compute(close, Options{}).
+//   - Bitwise identical to Compute(closes, Options{}).
 //
 // Complexity:
 //   - Time O(n), Space O(n).
@@ -252,8 +252,8 @@ func Compute(close []float64, opts Options) (*Result, error) {
 //
 // AI-Hints:
 //   - Signal first becomes valid at index 33 for the default 12/26/9 configuration.
-func ComputeDefault(close []float64) (*Result, error) {
-	return Compute(close, Options{})
+func ComputeDefault(closes []float64) (*Result, error) {
+	return Compute(closes, Options{})
 }
 
 // ComputeWithPeriods computes MACD with three explicitly supplied horizons.
@@ -265,7 +265,7 @@ func ComputeDefault(close []float64) (*Result, error) {
 //   - Stage 3: publish the unchanged Result/error pair.
 //
 // Inputs:
-//   - close: read-only non-nil finite-positive price history in index order.
+//   - closes: read-only non-nil finite-positive price history in index order.
 //   - fast: fast EMA period, or 0 for the default 12.
 //   - slow: slow EMA period, or 0 for the default 26.
 //   - signal: signal EMA period, or 0 for the default 9.
@@ -275,16 +275,16 @@ func ComputeDefault(close []float64) (*Result, error) {
 //   - error: exactly the categories, ordering and behavior of Compute.
 //
 // Determinism:
-//   - Bitwise identical to Compute(close, Options{fast,slow,signal}).
+//   - Bitwise identical to Compute(closes, Options{fast,slow,signal}).
 //
 // Complexity:
 //   - Time O(n), Space O(n).
 //
 // Notes:
-//   - Both Fast and Slow must be seeded from the SAME first close index.
+//   - Both Fast and Slow must be seeded from the SAME first closes index.
 //
 // AI-Hints:
 //   - Mixing periods from different bar cadences is a caller data-preparation error.
-func ComputeWithPeriods(close []float64, fast, slow, signal int) (*Result, error) {
-	return Compute(close, Options{Fast: fast, Slow: slow, Signal: signal})
+func ComputeWithPeriods(closes []float64, fast, slow, signal int) (*Result, error) {
+	return Compute(closes, Options{Fast: fast, Slow: slow, Signal: signal})
 }

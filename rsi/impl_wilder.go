@@ -156,7 +156,7 @@ func rsiFromAverages(gain, loss float64) (float64, error) {
 //
 // Inputs:
 //   - current: private, value-copied state after zero or more accepted prices.
-//   - close: previously validated finite positive price, in the caller's price units.
+//   - price: previously validated finite positive price, in the caller's price units.
 //   - period: strictly positive uint64 smoothing period, normalized from Options.
 //
 // Returns:
@@ -180,7 +180,7 @@ func rsiFromAverages(gain, loss float64) (float64, error) {
 // AI-Hints:
 //   - Never update Count/previous on the destination Stream before this function succeeds.
 //   - Do not add a second seed or recurrence implementation inside the batch facade.
-func stepWilder(current wilderState, close float64, period uint64) (wilderState, float64, bool, error) {
+func stepWilder(current wilderState, price float64, period uint64) (wilderState, float64, bool, error) {
 	// Count counts prices, not changes. Protect the increment before doing any
 	// numerical work so the exhausted checkpoint remains byte-for-byte intact.
 	if current.count == math.MaxUint64 {
@@ -191,14 +191,14 @@ func stepWilder(current wilderState, close float64, period uint64) (wilderState,
 	if current.count == 0 {
 		// No delta exists until two prices have been accepted. This transition is
 		// intentionally an unobserved baseline, irrespective of the period.
-		candidate.previous = close
+		candidate.previous = price
 		candidate.count = 1
 		return candidate, 0, false, nil
 	}
 
 	// Both prices are finite and strictly positive, so their difference cannot
 	// overflow in binary64. A checked guard still catches a broken private state.
-	delta := close - current.previous
+	delta := price - current.previous
 	if !finite(delta) {
 		return current, 0, false, ErrOverflow
 	}
@@ -227,7 +227,7 @@ func stepWilder(current wilderState, close float64, period uint64) (wilderState,
 		return current, 0, false, err
 	}
 	candidate.gain, candidate.loss = nextGain, nextLoss
-	candidate.previous = close
+	candidate.previous = price
 	candidate.count++
 
 	// After exactly P differences the Count becomes P+1 and RSI is published;

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/lvlath/go/macd"
 )
@@ -20,17 +21,18 @@ import (
 // Scenario:
 //   - A nightly research job receives aligned closing bars for three instruments.
 //   - It computes the canonical 12/26/9 feature on each bar history and reports
-//     the final signed histogram as a descriptive momentum-change diagnostic.
+//     both the raw signed histogram and a scale-comparable basis-point measure.
 //   - All fixture values are synthetic, reproducible exchange-like closes.
 //
 // Process:
 //   - Generate complete positive bar series in the same observation cadence.
 //   - Require the latest Signal and Histogram to be ready, not merely nonzero.
-//   - Report the sign and readiness of the latest batch feature per instrument.
+//   - Report signed histogram in price units and relative basis points.
 //
 // AI-Hints:
-//   - This is not a strategy or a comparable risk-adjusted cross-asset score;
-//     histograms are expressed in each instrument's own price units.
+//   - Histograms in price units cannot be directly compared across instruments.
+//     Dividing by close produces a dimensionless quantity, but it is NOT a
+//     volatility- or liquidity-adjusted risk score or a trading instruction.
 func ExampleComputeDefault_crossAssetScreen() {
 	instruments := []struct {
 		name                    string
@@ -61,14 +63,18 @@ func ExampleComputeDefault_crossAssetScreen() {
 		if result.Histogram.Values[last] >= 0 {
 			direction = "rising"
 		}
-		fmt.Printf("%s: %d bars, momentum-change=%s, histogram=%+.3f\n",
-			instrument.name, len(closes), direction, result.Histogram.Values[last])
+		// Express the spread relative to its own closing price before comparing
+		// instruments that trade at different nominal price levels. This remains a
+		// descriptive, non-volatility-adjusted statistic, not a risk-normalized score.
+		histogramBps := 10000 * result.Histogram.Values[last] / closes[last]
+		fmt.Printf("%s: %d bars, momentum-change=%s, histogram=%+.3f (%+.1f bp of close)\n",
+			instrument.name, len(closes), direction, result.Histogram.Values[last], histogramBps)
 	}
 
 	// Output:
-	// infrastructure: 56 bars, momentum-change=rising, histogram=+0.656
-	// utilities: 56 bars, momentum-change=rising, histogram=+0.097
-	// semiconductors: 56 bars, momentum-change=falling, histogram=-0.920
+	// infrastructure: 56 bars, momentum-change=rising, histogram=+0.656 (+43.4 bp of close)
+	// utilities: 56 bars, momentum-change=rising, histogram=+0.097 (+16.9 bp of close)
+	// semiconductors: 56 bars, momentum-change=falling, histogram=-0.920 (-50.5 bp of close)
 }
 
 // ExampleStream_Push_intradayMomentumMonitor demonstrates streaming analytics over
@@ -321,4 +327,185 @@ func ExampleStream_Push_badMarketDataIsolation() {
 
 	// Output:
 	// rejected nonfinite=2 domain=2 unchanged=true resumed-bitwise=true count=11
+}
+
+// ExampleStream_Push_reconciledMinuteBars demonstrates exactly-once feed admission
+// around the MACD recurrence rather than assuming that every received bar is valid.
+// It models a production-style minute-bar inspection gateway with explicit sequence
+// and timestamp identities, OHLC shape validation, and correction-first recovery.
+//
+// Scenario:
+//   - A deterministic, synthetic 42-minute price replay arrives in event order.
+//   - A malformed OHLC record is quarantined and corrected at the same sequence.
+//   - A premature future sequence and a duplicate are independently rejected.
+//   - Only complete admitted bars advance a single-owner MACD(3,8,4) stream.
+//
+// Implementation:
+//   - Stage 1: construct minute bars with monotone identities and valid OHLC bounds.
+//   - Stage 2: classify broken shape and sequence values before Stream.Push.
+//   - Stage 3: replay corrected records without inventing or skipping a time slot.
+//   - Stage 4: verify each published Point against a complete canonical batch.
+//
+// Behavior highlights:
+//   - A rejected record never reaches Push, so the accepted Count remains intact.
+//   - Consecutive minute continuity and duplicate control belong to the feed layer.
+//   - SignalValid is checked explicitly; a zero histogram can still be valid.
+//
+// Determinism:
+//   - The synthetic bar values, UTC event identities, and checking order are fixed.
+//
+// Complexity:
+//   - Time O(n), Space O(n) for this diagnostic replay and stored Point witnesses.
+//   - Each successful Stream.Push is O(1) time and O(1) state in the library.
+//
+// Notes:
+//   - The stream does not validate OHLC, volumes, timestamps or exchange revisions.
+//   - Market signals here are descriptive only and are never used to place orders.
+//
+// AI-Hints:
+//   - Never silently discard an invalid minute and feed the next minute as adjacent:
+//     resolve its sequence first, or explicitly reset/rebuild the downstream stream.
+//   - Keep the provenance of corrected bars outside Snapshot; the config hash
+//     authenticates neither event data nor the checkpoint's external cursor.
+func ExampleStream_Push_reconciledMinuteBars() {
+	// One dedicated accumulator represents one instrument and one fixed bar cadence.
+	stream, err := macd.NewWithPeriods(3, 8, 4)
+	if err != nil {
+		fmt.Println("setup:", err)
+		return
+	}
+
+	// The fixture resembles a one-minute change in short-term order-flow pressure;
+	// it deliberately uses fixed synthetic values rather than mutable exchange data.
+	closes := []float64{
+		102.04, 102.10, 102.16, 102.23, 102.29, 102.36, 102.42, 102.50,
+		102.57, 102.65, 102.69, 102.63, 102.54, 102.42, 102.28, 102.12,
+		101.95, 101.83, 101.74, 101.66, 101.60, 101.62, 101.70, 101.82,
+		101.98, 102.15, 102.32, 102.46, 102.61, 102.72, 102.79, 102.75,
+		102.64, 102.49, 102.31, 102.15, 101.97, 101.85, 101.77, 101.81,
+		101.84, 101.93,
+	}
+	start := time.Date(2026, time.November, 16, 14, 30, 0, 0, time.UTC)
+	type minuteBar struct {
+		sequence          uint64
+		timestamp         time.Time
+		open, high        float64
+		low, closingPrice float64
+		trades            int
+	}
+	badShape := errors.New("invalid OHLC bar")
+	badOrder := errors.New("unexpected bar identity")
+
+	// Admission is a caller-owned transaction: validate the source record before
+	// invoking the kernel and publish the cursor only after a successful Push.
+	var lastSequence uint64
+	points := make([]macd.Point, 0, len(closes))
+	admit := func(bar minuteBar) error {
+		if bar.sequence != lastSequence+1 ||
+			!bar.timestamp.Equal(start.Add(time.Duration(lastSequence)*time.Minute)) {
+			return badOrder
+		}
+		if bar.trades <= 0 || !finitePositiveOHLC(bar.open, bar.high, bar.low, bar.closingPrice) {
+			return badShape
+		}
+		point, pushErr := stream.Push(bar.closingPrice)
+		if pushErr != nil {
+			return pushErr
+		}
+		lastSequence = bar.sequence
+		points = append(points, point)
+		return nil
+	}
+
+	shapeRejected, orderRejected := 0, 0
+	for index, price := range closes {
+		opening := price
+		if index > 0 {
+			opening = closes[index-1]
+		}
+		bar := minuteBar{
+			sequence:     lastSequence + 1,
+			timestamp:    start.Add(time.Duration(index) * time.Minute),
+			open:         opening,
+			high:         math.Max(opening, price) + 0.08,
+			low:          math.Min(opening, price) - 0.07,
+			closingPrice: price,
+			trades:       700 + (index%7)*55,
+		}
+
+		// First try the malformed record. The authoritative correction retains
+		// the SAME sequence and timestamp, so no time slot goes missing.
+		if index == 17 {
+			corrupt := bar
+			corrupt.high = corrupt.low - 0.01
+			if rejectErr := admit(corrupt); !errors.Is(rejectErr, badShape) {
+				fmt.Println("wrong OHLC rejection:", rejectErr)
+				return
+			}
+			shapeRejected++
+		}
+
+		// An early next-minute event is not a license to skip this minute.
+		if index == 24 {
+			premature := bar
+			premature.sequence++
+			if rejectErr := admit(premature); !errors.Is(rejectErr, badOrder) {
+				fmt.Println("wrong order rejection:", rejectErr)
+				return
+			}
+			orderRejected++
+		}
+
+		if applyErr := admit(bar); applyErr != nil {
+			fmt.Println("valid bar rejected:", applyErr)
+			return
+		}
+
+		// A transport retry of an already committed record cannot advance EMA.
+		if index == 30 {
+			if rejectErr := admit(bar); !errors.Is(rejectErr, badOrder) {
+				fmt.Println("duplicate not rejected:", rejectErr)
+				return
+			}
+			orderRejected++
+		}
+	}
+
+	// Batch and streaming go through the same canonical recurrence, but this
+	// comparison additionally checks the end-to-end identity/quality gate's shape.
+	batch, err := macd.ComputeWithPeriods(closes, 3, 8, 4)
+	if err != nil {
+		fmt.Println("batch check:", err)
+		return
+	}
+	bitwise := true
+	ready := 0
+	for index, point := range points {
+		bitwise = bitwise &&
+			point.LineValid == batch.Line.Valid[index] &&
+			point.SignalValid == batch.Signal.Valid[index] &&
+			math.Float64bits(point.Line) == math.Float64bits(batch.Line.Values[index]) &&
+			math.Float64bits(point.Signal) == math.Float64bits(batch.Signal.Values[index]) &&
+			math.Float64bits(point.Histogram) == math.Float64bits(batch.Histogram.Values[index])
+		if point.SignalValid {
+			ready++
+		}
+	}
+	fmt.Printf("accepted=%d signal-ready=%d malformed=%d out-of-order=%d bitwise=%t count=%d\n",
+		len(points), ready, shapeRejected, orderRejected, bitwise, stream.Snapshot().Count)
+
+	// Output:
+	// accepted=42 signal-ready=32 malformed=1 out-of-order=2 bitwise=true count=42
+}
+
+// finitePositiveOHLC validates the candle-level price shape independently
+// of MACD's scalar close validation; it does not repair corrupt market bars.
+// Time O(1), Space O(1), no allocation.
+func finitePositiveOHLC(open, high, low, closePrice float64) bool {
+	return !math.IsNaN(open) && !math.IsInf(open, 0) &&
+		!math.IsNaN(high) && !math.IsInf(high, 0) &&
+		!math.IsNaN(low) && !math.IsInf(low, 0) &&
+		!math.IsNaN(closePrice) && !math.IsInf(closePrice, 0) &&
+		open > 0 && low > 0 && high >= math.Max(open, closePrice) &&
+		low <= math.Min(open, closePrice)
 }

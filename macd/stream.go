@@ -20,7 +20,7 @@ package macd
 //   - No dynamic history and no heap allocation in the hot path after construction.
 //
 // Inputs:
-//   - close: one finite strictly positive price, in the stream's established cadence.
+//   - price: one finite strictly positive price, in the stream's established cadence.
 //
 // Returns:
 //   - Point: finite values plus phase masks for this exact accepted close.
@@ -46,20 +46,20 @@ package macd
 //   - Do not increment Count before signal/histogram overflow checks complete.
 //   - If the feed has missing bars, choose a caller-side resampling policy instead
 //     of silently pushing zeros or inventing gap-filling prices.
-func (s *Stream) Push(close float64) (Point, error) {
+func (s *Stream) Push(price float64) (Point, error) {
 	if s == nil {
 		return Point{}, ErrNilInput
 	}
 	if !s.initialized {
 		return Point{}, ErrStateVersion
 	}
-	if err := validateClose(close); err != nil {
+	if err := validateClose(price); err != nil {
 		return Point{}, err
 	}
 
 	// nextStep receives a value copy of every recurrence field. No partial mutation
 	// reaches this Stream even if its signal or histogram computation fails.
-	candidate, point, err := nextStep(*s, close)
+	candidate, point, err := nextStep(*s, price)
 	if err != nil {
 		return Point{}, err
 	}

@@ -22,7 +22,7 @@ package macd
 //
 // Inputs:
 //   - current: initialized Stream copied by value, with immutable normalized opts.
-//   - close: caller-validated finite positive price.
+//   - price: caller-validated finite positive observation.
 //
 // Returns:
 //   - Stream: candidate recurrence state, ready for one atomic commit.
@@ -41,7 +41,7 @@ package macd
 // AI-Hints:
 //   - Never commit fast before signal/histogram can still fail.
 //   - Do not start the signal mean at close[0] or feed invalid placeholder zeros.
-func nextStep(current Stream, close float64) (Stream, Point, error) {
+func nextStep(current Stream, price float64) (Stream, Point, error) {
 	if current.count == ^uint64(0) {
 		return current, Point{}, ErrOverflow
 	}
@@ -49,18 +49,18 @@ func nextStep(current Stream, close float64) (Stream, Point, error) {
 	// A plain struct copy is the transaction boundary: failures discard all changes.
 	candidate := current
 	var err error
-	candidate.fast, err = advanceEMA(current.fast, close, current.opts.Fast)
+	candidate.fast, err = advanceEMA(current.fast, price, current.opts.Fast)
 	if err != nil {
 		return current, Point{}, err
 	}
-	candidate.slow, err = advanceEMA(current.slow, close, current.opts.Slow)
+	candidate.slow, err = advanceEMA(current.slow, price, current.opts.Slow)
 	if err != nil {
 		return current, Point{}, err
 	}
 	candidate.count++
 
 	var point Point
-	if candidate.slow.seen == uint64(current.opts.Slow) {
+	if candidate.slow.seen == periodCount(current.opts.Slow) {
 		// A line exists only after the slow seed has consumed Slow price samples.
 		line := candidate.fast.mean - candidate.slow.mean
 		if !finite(line) {
@@ -68,12 +68,12 @@ func nextStep(current Stream, close float64) (Stream, Point, error) {
 		}
 		point.Line, point.LineValid = line, true
 
-		// The signed line has its own seed counter, independent of close count.
+		// The signed line has its own seed counter, independent of price count.
 		candidate.signal, err = advanceEMA(current.signal, line, current.opts.Signal)
 		if err != nil {
 			return current, Point{}, err
 		}
-		if candidate.signal.seen == uint64(current.opts.Signal) {
+		if candidate.signal.seen == periodCount(current.opts.Signal) {
 			point.Signal, point.SignalValid = candidate.signal.mean, true
 			point.Histogram = line - point.Signal
 			if !finite(point.Histogram) {

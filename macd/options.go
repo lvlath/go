@@ -44,7 +44,10 @@ func normalizeOptions(opts Options) (Options, error) {
 	if opts.Signal == 0 {
 		opts.Signal = defaultSignalPeriod
 	}
-	if opts.Fast < 1 || opts.Slow < 1 || opts.Signal < 1 || opts.Fast >= opts.Slow {
+	// Apply the same positive-domain admission used by the unsigned counter
+	// encoder. Invalid signed values must not wrap into large seed limits.
+	if periodCount(opts.Fast) == 0 || periodCount(opts.Slow) == 0 ||
+		periodCount(opts.Signal) == 0 || opts.Fast >= opts.Slow {
 		return Options{}, ErrInvalidOption
 	}
 
@@ -55,4 +58,44 @@ func normalizeOptions(opts Options) (Options, error) {
 		return Options{}, ErrInvalidOption
 	}
 	return opts, nil
+}
+
+// periodCount maps a normalized positive EMA horizon into its unsigned counter domain.
+// All public construction paths first enforce Fast>=1, Slow>Fast and Signal>=1;
+// therefore a configured Stream can never contain a nonpositive period.
+//
+// Implementation:
+//   - Stage 1: admit only positive signed periods into the conversion branch.
+//   - Stage 2: convert without narrowing (int is at most 64 bits on supported Go targets).
+//   - Stage 3: return zero as an invalid-period marker for internal misuse.
+//
+// Behavior highlights:
+//   - No valid period is clamped or truncated, including periods above MaxUint32.
+//   - A nonpositive internal value never wraps into a huge unsigned counter.
+//
+// Inputs:
+//   - period: normalized, positive number of EMA observations.
+//
+// Returns:
+//   - uint64: identical nonnegative magnitude, or zero for an invalid internal period.
+//
+// Determinism:
+//   - Preserves the exact integer bytes used by the versioned snapshot Config hash.
+//
+// Complexity:
+//   - Time O(1), Space O(1), no heap allocation.
+//
+// Notes:
+//   - This helper is not an options validator. normalizeOptions rejects bad input
+//     before constructing the Stream, which never uses the zero marker.
+//
+// AI-Hints:
+//   - Do not convert an unvalidated signed period to uint64 directly: negative
+//     values would wrap, corrupting seed limits or checkpoint identity.
+//   - The guard is local so static range checkers can see conversion safety.
+func periodCount(period int) uint64 {
+	if period > 0 {
+		return uint64(period)
+	}
+	return 0
 }

@@ -19,9 +19,9 @@ import (
 func configHash(opts Options) string {
 	var data [len(algorithmID) + snapshotStateSize*encodedPeriodBytes]byte
 	copy(data[:], algorithmID)
-	binary.LittleEndian.PutUint64(data[len(algorithmID):], uint64(opts.Fast))
-	binary.LittleEndian.PutUint64(data[len(algorithmID)+encodedPeriodBytes:], uint64(opts.Slow))
-	binary.LittleEndian.PutUint64(data[len(algorithmID)+2*encodedPeriodBytes:], uint64(opts.Signal))
+	binary.LittleEndian.PutUint64(data[len(algorithmID):], periodCount(opts.Fast))
+	binary.LittleEndian.PutUint64(data[len(algorithmID)+encodedPeriodBytes:], periodCount(opts.Slow))
+	binary.LittleEndian.PutUint64(data[len(algorithmID)+2*encodedPeriodBytes:], periodCount(opts.Signal))
 	sum := sha256.Sum256(data[:])
 	return hex.EncodeToString(sum[:])
 }
@@ -144,11 +144,11 @@ func (s *Stream) Restore(state Snapshot) error {
 	// A signal observation exists at close number Slow and later, so subtraction
 	// is performed only after confirming Count>=Slow.
 	count := state.Count
-	fastExpected := smaller(count, uint64(s.opts.Fast))
-	slowExpected := smaller(count, uint64(s.opts.Slow))
+	fastExpected := smaller(count, periodCount(s.opts.Fast))
+	slowExpected := smaller(count, periodCount(s.opts.Slow))
 	var signalExpected uint64
-	if count >= uint64(s.opts.Slow) {
-		signalExpected = smaller(count-uint64(s.opts.Slow)+1, uint64(s.opts.Signal))
+	if count >= periodCount(s.opts.Slow) {
+		signalExpected = smaller(count-periodCount(s.opts.Slow)+1, periodCount(s.opts.Signal))
 	}
 	if state.IntState[stateFastIndex] != fastExpected ||
 		state.IntState[stateSlowIndex] != slowExpected ||

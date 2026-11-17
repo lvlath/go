@@ -73,7 +73,7 @@ func advanceEMA(state emaState, sample float64, period int) (emaState, error) {
 		return emaState{mean: sample, seen: 1}, nil
 	}
 
-	if state.seen < uint64(period) {
+	if state.seen < periodCount(period) {
 		// Accumulate a bounded mean, not a potentially overflowing sum of closes.
 		nextCount := state.seen + 1
 		state.mean = weightedMean(state.mean, sample, 1/float64(nextCount))

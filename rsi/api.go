@@ -127,14 +127,14 @@ func NewPeriod(period int) (*Stream, error) {
 //   - First valid sample is at zero-based index P; zero RSI with Valid=true is meaningful.
 //
 // Inputs:
-//   - close: non-nil, nonempty, caller-owned read-only slice of strictly positive finite prices.
+//   - closes: non-nil, nonempty, caller-owned read-only slice of strictly positive finite prices.
 //   - opts: value-owned smoothing policy; Period=0 normalizes to 14.
 //
 // Returns:
-//   - *Result: detached Values and Valid slices of exactly len(close), or nil on any error.
+//   - *Result: detached Values and Valid slices of exactly len(closes), or nil on any error.
 //
 // Errors:
-//   - ErrInvalidOption: option validation precedes any access to close.
+//   - ErrInvalidOption: option validation precedes any access to closes.
 //   - ErrNilInput, ErrEmptyInput: missing history or an allocated zero-length history.
 //   - ErrNonFinite, ErrDomain: first invalid price in ascending index order.
 //   - ErrOverflow: unrepresentable transition or output; no partial Result is returned.
@@ -148,27 +148,27 @@ func NewPeriod(period int) (*Stream, error) {
 //   - The complete input scan precedes all result allocations and arithmetic.
 //
 // Notes:
-//   - Concurrent modification of close during this call is unsupported.
+//   - Concurrent modification of closes during this call is unsupported.
 //   - RSI has no timestamp semantics; callers must supply a clean, ordered series.
 //
 // AI-Hints:
 //   - Always check Valid before consuming Values, especially for short histories.
 //   - Never clamp numeric failures or substitute missing closes with fabricated prices.
-func Compute(close []float64, opts Options) (*Result, error) {
+func Compute(closes []float64, opts Options) (*Result, error) {
 	period, err := normalizeOptions(opts)
 	if err != nil {
 		return nil, err
 	}
-	if close == nil {
+	if closes == nil {
 		return nil, ErrNilInput
 	}
-	if len(close) == 0 {
+	if len(closes) == 0 {
 		return nil, ErrEmptyInput
 	}
 
 	// Validate the entire caller-owned history before allocating output. The first
 	// invalid sample wins, irrespective of whether it falls inside warmup.
-	for _, price := range close {
+	for _, price := range closes {
 		if err := validatePrice(price); err != nil {
 			return nil, err
 		}
@@ -176,9 +176,9 @@ func Compute(close []float64, opts Options) (*Result, error) {
 
 	// The shared step kernel owns all numerical decisions. Unlike a streaming
 	// feed, a failed batch computation never publishes its partially filled slices.
-	out := &Result{Values: make([]float64, len(close)), Valid: make([]bool, len(close))}
+	out := &Result{Values: make([]float64, len(closes)), Valid: make([]bool, len(closes))}
 	var state wilderState
-	for i, price := range close {
+	for i, price := range closes {
 		next, value, valid, err := stepWilder(state, price, period)
 		if err != nil {
 			return nil, err
@@ -202,13 +202,13 @@ func Compute(close []float64, opts Options) (*Result, error) {
 //   - Histories of fewer than 15 valid prices return all-invalid masks without error.
 //
 // Inputs:
-//   - close: caller-owned, read-only, finite positive closing prices.
+//   - closes: caller-owned, read-only, finite positive closing prices.
 //
 // Returns:
 //   - *Result: detached aligned RSI and mask, or nil on failure.
 //
 // Errors:
-//   - Identical to Compute(close, Options{}), including the same precedence.
+//   - Identical to Compute(closes, Options{}), including the same precedence.
 //
 // Determinism:
 //   - Exactly the same index order and output bits as the canonical default call.
@@ -221,8 +221,8 @@ func Compute(close []float64, opts Options) (*Result, error) {
 //
 // AI-Hints:
 //   - Do not interpret invalid warmup zeros as actual RSI measurements.
-func ComputeDefault(close []float64) (*Result, error) {
-	return Compute(close, Options{})
+func ComputeDefault(closes []float64) (*Result, error) {
+	return Compute(closes, Options{})
 }
 
 // ComputePeriod computes a complete RSI series with an explicit smoothing period.
@@ -236,14 +236,14 @@ func ComputeDefault(close []float64) (*Result, error) {
 //   - Period=0 still means 14, matching every other entry point.
 //
 // Inputs:
-//   - close: caller-owned, read-only positive finite prices.
+//   - closes: caller-owned, read-only positive finite prices.
 //   - period: requested number of seed changes, subject to canonical validation.
 //
 // Returns:
 //   - *Result: detached value and validity arrays, or nil on any failure.
 //
 // Errors:
-//   - Identical to Compute(close, Options{Period: period}).
+//   - Identical to Compute(closes, Options{Period: period}).
 //
 // Determinism:
 //   - Exactly the same sample order and output bits as Compute with these options.
@@ -256,8 +256,8 @@ func ComputeDefault(close []float64) (*Result, error) {
 //
 // AI-Hints:
 //   - Period counts differences, so P periods need at least P+1 prices.
-func ComputePeriod(close []float64, period int) (*Result, error) {
-	return Compute(close, Options{Period: period})
+func ComputePeriod(closes []float64, period int) (*Result, error) {
+	return Compute(closes, Options{Period: period})
 }
 
 // Latest returns the RSI observation at the last index of a complete price history.
@@ -273,7 +273,7 @@ func ComputePeriod(close []float64, period int) (*Result, error) {
 //   - No earlier samples are skipped or replaced, even when only the last value is requested.
 //
 // Inputs:
-//   - close: caller-owned, read-only, nonempty finite positive closes in temporal order.
+//   - closes: caller-owned, read-only, nonempty finite positive closes in temporal order.
 //   - opts: canonical smoothing period policy.
 //
 // Returns:
@@ -295,10 +295,10 @@ func ComputePeriod(close []float64, period int) (*Result, error) {
 //   - Latest is a convenience projection, not an O(1)-memory historical scanner.
 //
 // AI-Hints:
-//   - Never assume valid=true merely because close is nonempty.
+//   - Never assume valid=true merely because closes is nonempty.
 //   - Use Stream.Push when zero-allocation tick processing is required.
-func Latest(close []float64, opts Options) (value float64, valid bool, err error) {
-	result, err := Compute(close, opts)
+func Latest(closes []float64, opts Options) (value float64, valid bool, err error) {
+	result, err := Compute(closes, opts)
 	if err != nil {
 		return 0, false, err
 	}

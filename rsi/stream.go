@@ -59,7 +59,7 @@ type Stream struct {
 //   - On error returns (0,false,error) and leaves the entire stream untouched.
 //
 // Inputs:
-//   - close: strictly positive finite price; the caller controls its chronological order.
+//   - price: strictly positive finite price; the caller controls its chronological order.
 //
 // Returns:
 //   - float64/bool: new oscillator value and whether it is fully seeded.
@@ -84,20 +84,20 @@ type Stream struct {
 // AI-Hints:
 //   - Do not move s.state=next above the kernel's error check.
 //   - Do not cache the last returned RSI as state: averages alone determine continuation.
-func (s *Stream) Push(close float64) (float64, bool, error) {
+func (s *Stream) Push(price float64) (float64, bool, error) {
 	if s == nil {
 		return 0, false, ErrNilInput
 	}
 	if s.period == 0 {
 		return 0, false, ErrStateVersion
 	}
-	if err := validatePrice(close); err != nil {
+	if err := validatePrice(price); err != nil {
 		return 0, false, err
 	}
 
 	// stepWilder works on a value copy; the destination is unchanged even when
 	// a late numeric check rejects the candidate transition.
-	next, value, valid, err := stepWilder(s.state, close, s.period)
+	next, value, valid, err := stepWilder(s.state, price, s.period)
 	if err != nil {
 		return 0, false, err
 	}

@@ -23,11 +23,11 @@ func finite(value float64) bool {
 //   - Accept every finite strictly positive binary64 price, including subnormals.
 //
 // Time O(1), Space O(1). This helper must not be used for signed Line/Signal/Histogram.
-func validateClose(close float64) error {
-	if !finite(close) {
+func validateClose(price float64) error {
+	if !finite(price) {
 		return ErrNonFinite
 	}
-	if close <= 0 {
+	if price <= 0 {
 		return ErrDomain
 	}
 	return nil
