@@ -192,7 +192,7 @@ func (s *Stream) rebaseVirtual(head, used int, positive, negative float64) (comp
 // soon-to-be-discarded accumulator is close to float64's arithmetic limits.
 //
 // Implementation:
-//   - Stage 1: determine occupancy and the fixed every-Period rebase boundary.
+//   - Stage 1: determine occupancy; head==Period-1 marks the next epoch boundary.
 //   - Stage 2: scheduled: replay candidate ring; otherwise evict then insert locally.
 //   - Stage 3: check effective sums, allowing one negative-drift rebase per epoch.
 //
@@ -210,6 +210,7 @@ func (s *Stream) rebaseVirtual(head, used int, positive, negative float64) (comp
 //   - ErrOverflow: incremental/rebase arithmetic is not representable or drift limit is reached.
 //
 // Determinism:
+//   - With Count>0, head==(Count-1)%Period, so head==Period-1 schedules every Period transitions.
 //   - Eviction precedes insertion; scheduled replay walks oldest-to-newest.
 //
 // Complexity:
@@ -221,14 +222,17 @@ func (s *Stream) rebaseVirtual(head, used int, positive, negative float64) (comp
 // AI-Hints:
 //   - A second unscheduled negative-drift event in one epoch returns ErrOverflow.
 //   - Do not clamp negative sums or commit slots before this projection succeeds.
+//   - Preserve head==(Count-1)%Period in Restore; the schedule relies on that invariant.
 func (s *Stream) projected(posFlow, negFlow float64) (compensated, compensated, bool, error) {
 	used := s.used
 	if used < s.period {
 		used++
 	}
 
-	// Old bar count equals the new transition number because the first bar seeds only.
-	if s.count%uint64(s.period) == 0 {
+	// After the seed bar, head == (count-1) mod period. The next
+	// transition completes a scheduled epoch exactly when head would wrap.
+	// This cursor condition avoids unnecessary wide-integer division in Push.
+	if s.head == s.period-1 {
 		pos, neg, err := s.rebaseVirtual(s.head, used, posFlow, negFlow)
 		return pos, neg, false, err
 	}

@@ -362,7 +362,7 @@ The `Config` SHA-256 covers only a public algorithm name and effective period; i
 
 Also preserve float64 precision through transport. A lossy decimal format, manual rounding of ring contributions or reordering of array slots can spoil exact continuation. The package does not supply its own encoding, storage service or secret management.
 
-For an executable authenticated JSON/HMAC demonstration, see [`../mfi/example_test.go`](../mfi/example_test.go), `ExampleStream_Snapshot_authenticatedFailover`. For a standalone primary/standby scenario, run `go run ./examples/mfi` from the repository root.
+The authenticated failover example signs an envelope containing the **instrument/feed identity**, the **last committed source sequence**, and the **entire MFI Snapshot**. The standby checks the next event against that saved sequence. The numerical state alone cannot prevent replaying a candle after a service restart. See [`../mfi/example_test.go`](../mfi/example_test.go), `ExampleStream_Snapshot_authenticatedFailover`. For a standalone primary/standby scenario, run `go run ./examples/mfi` from the repository root.
 
 ---
 
@@ -426,13 +426,13 @@ This is **pseudocode showing an adapter boundary** (`events`, `consumeFeature` a
 
 The external `package mfi_test` examples use deterministic synthetic OHLCV fixtures with coherent candle geometry and meaningful volume magnitudes. The data are illustrative, not authenticated live exchange records, and no performance or profit claim is implied.
 
-| Example                                        | Engineering question answered                                                                                                    |
-|------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------|
-| `ExampleCompute_crossAssetLiquidityReport`     | Can 50 separate instrument histories be screened with independent states and explicit readiness masks?                           |
-| `ExampleStream_Push_tightRangePressure`        | Can a live feature be combined with an externally defined price-range review condition without contaminating the library's math? |
-| `ExampleStream_Snapshot_authenticatedFailover` | Can a standby authenticate, restore and continue a compensated rolling state bit-for-bit?                                        |
-| `ExampleStream_Reset_marketDataGap`            | How does a missing-minute interval trigger an explicit reset and fresh warmup?                                                   |
-| `ExampleComputeCandles_replayReconciliation`   | Can a batch replay detect ingestion divergence caused by incorrectly discarding a valid zero-volume bar?                         |
+| Example                                        | Engineering question answered                                                                                                                          |
+|------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `ExampleCompute_crossAssetLiquidityReport`     | Can 50 independent assets be screened for opposing ten-bar price/MFI changes and ranked deterministically, after checking both readiness masks?        |
+| `ExampleStream_Push_tightRangePressure`        | Can live MFI and a separately evaluated eight-candle price range be audited against bitwise-equivalent archival features?                              |
+| `ExampleStream_Snapshot_authenticatedFailover` | Can a standby authenticate feed identity, committed offset and the full ring before exact continuation without duplicate bar consumption?              |
+| `ExampleStream_Reset_marketDataGap`            | How does a missing-minute interval trigger fresh warmup, and why would a naive stream falsely appear ready across the gap?                             |
+| `ExampleComputeCandles_replayReconciliation`   | Can a sequence-aware ETL audit detect a dropped zero-volume candle and compare MFI at matching event identities rather than different array endpoints? |
 
 Run with `go test ./mfi -run '^Example' -count=1 -v`. The canonical source is [`../mfi/example_test.go`](../mfi/example_test.go).
 

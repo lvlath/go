@@ -31,6 +31,48 @@ const (
 	snapshotExtraRebase = 2
 )
 
+// snapshotWord encodes a nonnegative native ring coordinate as an unsigned ABI word.
+// The caller supplies a validated period, occupancy or head index; reconstructing
+// the value from its set bits gives an identical wire value on 32- and 64-bit Go.
+//
+// Implementation:
+//   - Stage 1: start with an empty unsigned word and the least-significant bit.
+//   - Stage 2: copy each set bit of the native nonnegative integer into that word.
+//   - Stage 3: return the exact unsigned magnitude without signed narrowing.
+//
+// Behavior highlights:
+//   - All actual callers provide values within [0, MaxPeriod], so at most 21 bits are read.
+//
+// Inputs:
+//   - value: nonnegative, validated native ring coordinate or effective period.
+//
+// Returns:
+//   - uint64: exact nonnegative integer value in the snapshot's fixed-width domain.
+//
+// Determinism:
+//   - Bit weights are visited from least significant to most significant.
+//
+// Complexity:
+//   - Time O(log(value+1)), bounded by 21 steps; Space O(1), no allocations.
+//
+// Notes:
+//   - Call only with validated nonnegative values; this is an internal ABI encoder.
+//
+// AI-Hints:
+//   - Preserve the numeric value and LE64 configuration encoding across architectures.
+func snapshotWord(value int) uint64 {
+	var word uint64
+	weight := uint64(1)
+	for value > 0 {
+		if value&1 != 0 {
+			word |= weight
+		}
+		value >>= 1
+		weight <<= 1
+	}
+	return word
+}
+
 // configHash identifies one exact MFI algorithm and window configuration.
 // The SHA-256 digest is a compatibility fingerprint, not message authentication.
 //
@@ -61,7 +103,7 @@ const (
 //   - Never accept this compatibility hash as evidence of unmodified Snapshot payload.
 func configHash(period int) string {
 	var suffix [8]byte
-	binary.LittleEndian.PutUint64(suffix[:], uint64(period))
+	binary.LittleEndian.PutUint64(suffix[:], snapshotWord(period))
 	hash := sha256.New()
 	_, _ = hash.Write([]byte(snapshotAlgorithm))
 	_, _ = hash.Write(suffix[:])
@@ -123,7 +165,7 @@ func (s *Stream) Snapshot() Snapshot {
 		Config:     configHash(s.period),
 		Count:      s.count,
 		FloatState: floats,
-		IntState:   []uint64{uint64(s.used), uint64(s.head), extra},
+		IntState:   []uint64{snapshotWord(s.used), snapshotWord(s.head), extra},
 	}
 }
 
@@ -210,7 +252,7 @@ func checkedSnapshotIndex(value uint64) (int, error) {
 // AI-Hints:
 //   - Do not trust head independently of Count or accept an extra rebase on a scheduled boundary.
 func (s *Stream) snapshotCursor(state Snapshot) (used, head int, extra bool, err error) {
-	period := uint64(s.period)
+	period := snapshotWord(s.period)
 	if state.Algorithm != snapshotAlgorithm || state.Config != configHash(s.period) ||
 		len(state.FloatState) != snapshotFloatHeader+2*s.period || len(state.IntState) != snapshotIntLength {
 		return 0, 0, false, ErrStateVersion
