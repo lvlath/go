@@ -3,7 +3,7 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/FAQ_&_TIPS.md
-  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd and the wider lvlath package family
+  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd, mfi and the wider lvlath package family
   lvlath - FAQ & Tips
 
   Purpose:
@@ -31,6 +31,7 @@
     - Reproducible block-bootstrap indices, unbiased random integers, partial row publication, and resource admission.
     - Wilder RSI warmup masks, deterministic batch/stream semantics, state rollback and checkpoint boundaries.
     - MACD SMA-seeded EMAs, signed features, three readiness masks, checkpoint identity and hot-path ownership.
+    - MFI fixed-transition OHLCV windows, zero-volume retention, compensated rebasing and checkpoint authentication.
 
   License:
     lvlath is licensed under AGPL-3.0-only. See ../LICENSE.
@@ -72,6 +73,7 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
     13h. [RNG FAQ](#13h-rng-faq-replay-ownership-and-numeric-safety)
     13i. [RSI FAQ](#13i-rsi-faq-wilder-streaming-readiness-and-checkpoints)
     13j. [MACD FAQ](#13j-macd-faq--sma-seeding-signed-values-batchstream-replay-and-feature-safety)
+    13k. [MFI FAQ](#13k-mfi-faq-volume-weighted-transitions-compensated-windows-and-authenticated-replay)
 14. [Builder and gridgraph tips](#14-builder-and-gridgraph-tips)
 15. [Errors and diagnostics](#15-errors-and-diagnostics)
 16. [Determinism and concurrency](#16-determinism-and-concurrency)
@@ -88,34 +90,35 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
 
 Start with the question, not the algorithm name.
 
-| Question                                                                         | Use                                  | Reason                                                                                          |
-|:---------------------------------------------------------------------------------|:-------------------------------------|:------------------------------------------------------------------------------------------------|
-| “How many hops away is this vertex?”                                             | `bfs`                                | BFS minimizes edge count.                                                                       |
-| “Which vertices are in the same weak island?”                                    | `bfs.Components`                     | Weak membership ignores direction for component grouping.                                       |
-| “What is a deterministic deep traversal?”                                        | `dfs`                                | DFS gives post-order and forest-style structure.                                                |
-| “Does this graph contain a cycle?”                                               | `dfs.DetectCycles`                   | Returns deterministic witness cycles.                                                           |
-| “What order can I execute a DAG?”                                                | `dfs.TopologicalSort`                | Topological order is a directed acyclic graph contract.                                         |
-| “What is the cheapest route by weight?”                                          | `dijkstra`                           | Dijkstra minimizes non-negative total cost.                                                     |
-| “What is the cheapest connected backbone?”                                       | `mst`                                | MST solves minimum connected spanning structure.                                                |
-| “What is the maximum throughput?”                                                | `flow`                               | Flow solves capacity-constrained source-to-sink movement.                                       |
-| “How do I turn graph topology into numeric features?”                            | `matrix`                             | Adjacency, incidence, degree vector, metric closure, algebra.                                   |
-| “How do I model a grid map?”                                                     | `gridgraph`                          | Generates lattice topology instead of manual wiring.                                            |
-| “How do I build repeatable fixtures?”                                            | `builder`                            | Deterministic graph/data generation.                                                            |
-| “How do I compress a fixed-size scalar time-series window?”                      | `paa`                                | Exact fractional PAA averages with rational boundaries and no dropped tail.                     |
-| “How do I encode a fixed-length symbolic signature?”                             | `sax`                                | Fractional PAA + right-bin quantization, compatible Euclidean MINDIST.                          |
-| “How do I align two time series?”                                                | `dtw`                                | Dynamic Time Warping handles local timing drift.                                                |
-| “How do I compute robust moments or merge workers?”                              | `stats`                              | Welford/Chan moments, exact mean sum, scaled M2.                                                |
-| “How do I normalize heldout features without refit?”                             | `stats`                              | Immutable fitted model over matrix columns.                                                     |
-| “How do I estimate linear factor coefficients and reuse them?”                   | `ols`                                | Full-rank QR, original-unit beta/intercept, immutable prediction.                               |
-| “How do I fit correlated or wide linear factors with explicit L2 shrinkage?”     | `ridge`                              | Augmented QR, positive Lambda, unpenalized intercept and frozen physical predictions.           |
-| “What serial dependence or cycle repeats at a fixed sample-index lag?”           | `acf`                                | One full-window mean, explicit denominator, exact pair counts.                                  |
-| “How strong are smoothed up/down changes in an ordered positive price feed?”     | `rsi.ComputePeriod` / `Stream.Push`  | Wilder oscillator with a validity mask or zero-allocation, single-owner recurrence.             |
-| “How do fast and slow price trends diverge and how does that separation change?” | `macd.ComputeDefault` / `NewDefault` | SMA-seeded EMA, three signed aligned series, independent readiness masks and replayable Stream. |
-| “How do I build deterministic Monte Carlo, GBM or sensor-noise paths?”           | `rng.Factory.Stream`                 | Pinned PCG-DXSM, logical path IDs and cached normals; not a cryptographic PRNG.                 |
-| “How do I build dependent-data bootstrap index ensembles?”                       | `bootstrap.SampleIndices`            | Moving/Circular/Stationary blocks, replay ID and only complete rows.                            |
-| “How do I infer a hidden operating regime from time-ordered observations?”       | `hmm`                                | Typed causal filtering, smoothing, Viterbi, and independent-sequence EM.                        |
-| “How do I reduce multivariate dimensions without a response variable?”           | `pca`                                | Validated covariance spectrum and a frozen loadings model for holdout inference.                |
-| “How do I visit all cities in a route?”                                          | `tsp`                                | Tour construction/improvement/exact-small-instance routing.                                     |
+| Question                                                                                   | Use                                  | Reason                                                                                                |
+|:-------------------------------------------------------------------------------------------|:-------------------------------------|:------------------------------------------------------------------------------------------------------|
+| “How many hops away is this vertex?”                                                       | `bfs`                                | BFS minimizes edge count.                                                                             |
+| “Which vertices are in the same weak island?”                                              | `bfs.Components`                     | Weak membership ignores direction for component grouping.                                             |
+| “What is a deterministic deep traversal?”                                                  | `dfs`                                | DFS gives post-order and forest-style structure.                                                      |
+| “Does this graph contain a cycle?”                                                         | `dfs.DetectCycles`                   | Returns deterministic witness cycles.                                                                 |
+| “What order can I execute a DAG?”                                                          | `dfs.TopologicalSort`                | Topological order is a directed acyclic graph contract.                                               |
+| “What is the cheapest route by weight?”                                                    | `dijkstra`                           | Dijkstra minimizes non-negative total cost.                                                           |
+| “What is the cheapest connected backbone?”                                                 | `mst`                                | MST solves minimum connected spanning structure.                                                      |
+| “What is the maximum throughput?”                                                          | `flow`                               | Flow solves capacity-constrained source-to-sink movement.                                             |
+| “How do I turn graph topology into numeric features?”                                      | `matrix`                             | Adjacency, incidence, degree vector, metric closure, algebra.                                         |
+| “How do I model a grid map?”                                                               | `gridgraph`                          | Generates lattice topology instead of manual wiring.                                                  |
+| “How do I build repeatable fixtures?”                                                      | `builder`                            | Deterministic graph/data generation.                                                                  |
+| “How do I compress a fixed-size scalar time-series window?”                                | `paa`                                | Exact fractional PAA averages with rational boundaries and no dropped tail.                           |
+| “How do I encode a fixed-length symbolic signature?”                                       | `sax`                                | Fractional PAA + right-bin quantization, compatible Euclidean MINDIST.                                |
+| “How do I align two time series?”                                                          | `dtw`                                | Dynamic Time Warping handles local timing drift.                                                      |
+| “How do I compute robust moments or merge workers?”                                        | `stats`                              | Welford/Chan moments, exact mean sum, scaled M2.                                                      |
+| “How do I normalize heldout features without refit?”                                       | `stats`                              | Immutable fitted model over matrix columns.                                                           |
+| “How do I estimate linear factor coefficients and reuse them?”                             | `ols`                                | Full-rank QR, original-unit beta/intercept, immutable prediction.                                     |
+| “How do I fit correlated or wide linear factors with explicit L2 shrinkage?”               | `ridge`                              | Augmented QR, positive Lambda, unpenalized intercept and frozen physical predictions.                 |
+| “What serial dependence or cycle repeats at a fixed sample-index lag?”                     | `acf`                                | One full-window mean, explicit denominator, exact pair counts.                                        |
+| “How strong are smoothed up/down changes in an ordered positive price feed?”               | `rsi.ComputePeriod` / `Stream.Push`  | Wilder oscillator with a validity mask or zero-allocation, single-owner recurrence.                   |
+| “How do fast and slow price trends diverge and how does that separation change?”           | `macd.ComputeDefault` / `NewDefault` | SMA-seeded EMA, three signed aligned series, independent readiness masks and replayable Stream.       |
+| “How much rising versus falling typical-price flow occurred over the most recent candles?” | `mfi.ComputeDefault` / `NewDefault`  | Volume-weighted last-P-transition MFI, warmup mask, compensated rolling ring and detached checkpoint. |
+| “How do I build deterministic Monte Carlo, GBM or sensor-noise paths?”                     | `rng.Factory.Stream`                 | Pinned PCG-DXSM, logical path IDs and cached normals; not a cryptographic PRNG.                       |
+| “How do I build dependent-data bootstrap index ensembles?”                                 | `bootstrap.SampleIndices`            | Moving/Circular/Stationary blocks, replay ID and only complete rows.                                  |
+| “How do I infer a hidden operating regime from time-ordered observations?”                 | `hmm`                                | Typed causal filtering, smoothing, Viterbi, and independent-sequence EM.                              |
+| “How do I reduce multivariate dimensions without a response variable?”                     | `pca`                                | Validated covariance spectrum and a frozen loadings model for holdout inference.                      |
+| “How do I visit all cities in a route?”                                                    | `tsp`                                | Tour construction/improvement/exact-small-instance routing.                                           |
 
 ### Q1.2. How do I avoid using the wrong algorithm?
 
@@ -140,6 +143,7 @@ infer hidden temporal regime           -> HMM FilterStep (causal; no future obse
 detect fixed-window serial dependence  -> ACF ComputeDefault (not causal)
 compute causal Wilder price strength   -> RSI ComputePeriod / Stream.Push
 compute signed trend-separation factor -> MACD ComputeDefault / Stream.Push
+compute volume-weighted OHLCV flow     -> MFI ComputeDefault / Stream.Push
 draw dependent-data index replicates   -> BOOTSTRAP SampleIndices (no statistic or CI)
 retrospective regime audit             -> HMM Smooth / Decode (future-conditioned)
 encode symbolic SAX words              -> SAX
@@ -3012,6 +3016,203 @@ golangci-lint run
 The full mathematical contract and operational workflows are in
 [`MACD.md`](MACD.md), [`../macd/doc.go`](../macd/doc.go), and
 [`../macd/example_test.go`](../macd/example_test.go).
+
+---
+
+## 13k. MFI FAQ: Volume-weighted transitions, compensated windows and authenticated replay
+
+### Q13k.1. What problem does MFI solve that RSI and MACD do not?
+
+`mfi` measures the proportion of recent **volume-weighted typical-price flow**
+attached to rising rather than falling typical prices. RSI smooths closing-price
+gains/losses without volume; MACD compares price EMAs and publishes three signed
+series. These indicators answer different numerical questions and are not substitutes.
+MFI neither classifies buy/sell-initiated orders nor identifies institutional actors.
+
+| Feature | Public surface                                   | Crucial difference                                                                  |
+|---------|--------------------------------------------------|-------------------------------------------------------------------------------------|
+| MFI     | `mfi.ComputeDefault`, `mfi.Stream.Push(Bar)`     | Positive/negative current `Typical*Volume` over the most recent `P` **transitions** |
+| RSI     | `rsi.ComputeDefault`, `rsi.Stream.Push(close)`   | Wilder smoothing of closing-price gains and losses                                  |
+| MACD    | `macd.ComputeDefault`, `macd.Stream.Push(close)` | SMA-seeded fast/slow price EMAs and a separate Signal EMA                           |
+| ACF     | `acf.ComputeDefault`                             | Noncausal, whole-window lag correlation; not an online momentum oscillator          |
+
+### Q13k.2. Why does MFI(14) need **15** bars?
+
+The first valid bar establishes a previous typical price but creates no transition.
+Each subsequent bar contributes exactly one positive, negative or zero pair. The
+first valid output occurs at **index `P`**, after `P+1` accepted bars, and not at
+`P-1`. Before that point `Values` are exactly zero and `Valid` is false.
+A batch shorter than the warmup is still successful; it is not `ErrEmptyInput`.
+
+### Q13k.3. Are unchanged-price and zero-volume candles dropped from the ring?
+
+**Never.** Both create a `(0,0)` pair, consume one ring slot and expire the correct
+old transition. A zero-volume candle with a changed typical price also updates
+`previousTypical`, so the *next* bar is compared with the correct price.
+Filtering these observations changes the clock of the rolling window.
+
+For `P=2`, typical prices `[1,2,1]` with unit volumes yield MFI `200/3`
+at index 2. Appending another price `1` with volume `100` creates an unchanged
+transition, evicts the old positive flow `2` and produces MFI **0**. The reported
+zero is a valid negative-only window, not a warmup placeholder.
+
+### Q13k.4. Why can MFI return exactly 50, 0 or 100?
+
+- **50:** both effective rolling sums are zero (flat prices, no volume or a mixture of zero contributions).
+- **100:** positive flow is nonzero and negative flow is zero.
+- **0:** negative flow is nonzero and positive flow is zero.
+
+A valid 0 must not be confused with a warmup 0. Always check the `Valid` mask or
+the `valid` return from `Push`. The package does not clip an invalid sum into
+`[0,100]`, nor does it add an arbitrary epsilon to force a ratio.
+
+### Q13k.5. Why does the package validate `Open` if it is not in Typical Price?
+
+Because `Bar` is an OHLCV candle, not merely a HLC triple. The contract requires
+finite positive `Open`, `High`, `Low` and `Close`, with
+`Low <= Open,Close <= High`; `Volume` must be finite and nonnegative.
+Rejecting impossible candle geometry prevents a malformed upstream record from
+silently participating in a mathematically valid-looking feature.
+
+### Q13k.6. How do the volume units affect an MFI value?
+
+Use the same **base-asset quantity unit** for all bars of one instrument.
+A positive uniform scaling of volume preserves the *real-arithmetic* ratio as
+long as flows/sums remain representable; it need not preserve all float64 bits.
+Do not mix base-asset quantity, quote-currency notional or contract counts in one
+window without an explicit caller-side normalization. `mfi` does not perform
+instrument metadata lookup, multi-exchange aggregation or currency conversion.
+
+### Q13k.7. Why avoid `(High+Low+Close)/3`?
+
+The intermediate three-price sum can overflow even when its mean is finite.
+The kernel uses the High-anchored convex expression:
+
+![Stable MFI typical price](https://latex.codecogs.com/svg.image?TP%3DH%2B%5Cfrac%7BL-H%7D%7B3%7D%2B%5Cfrac%7BC-H%7D%7B3%7D)
+
+Both offsets are nonpositive for a valid candle, avoiding this avoidable
+positive overflow. It remains binary64 arithmetic, not an exact-rational
+average. If a required output is unrepresentable, `ErrOverflow` is returned.
+
+### Q13k.8. Why not calculate `positiveSum/negativeSum` first?
+
+That money-flow ratio becomes unbounded when the negative sum approaches zero.
+Even `positiveSum + negativeSum` can overflow despite each signed sum being
+finite. The implementation divides the **smaller** sum by the **larger** and
+uses a denominator between 1 and 2; it handles all zero cases explicitly.
+This does not extend the numeric domain to arbitrary-precision money flows:
+every individual flow and both rolling sums must still be representable.
+
+### Q13k.9. Why use Neumaier compensation and a full-ring rebase?
+
+Repeated subtraction of expired contributions can make a naïve floating sum
+drift away from a sum of nonnegative ring entries. Two compensated accumulators
+reduce that loss. Every `P` successful transitions a deterministic `O(P)` scan
+rebuilds the candidate sums from the oldest slot to the newest.
+One extra scan is permitted on negative drift between scheduled boundaries;
+a second such incident returns `ErrOverflow` rather than silently clamping
+or performing unlimited rescans.
+
+A single `Push` therefore has **worst-case `O(P)` time**, although the bounded
+number of rebase scans makes its amortized time `O(1)`. A zero-allocation hot
+loop is not a worst-case latency guarantee.
+
+### Q13k.10. What is the maximum period and memory cost?
+
+`Period=0` selects `DefaultPeriod=14`; explicit periods from 1 through
+`MaxPeriod=1<<20` (1,048,576) are allowed. A larger or negative period
+returns `ErrInvalidOption` **before** ring allocation. Two rings at the maximum
+contain 2,097,152 float64 cells, or 16 MiB without structure overhead.
+The limit cannot guarantee that the operating system has memory available.
+
+### Q13k.11. In what order are invalid inputs rejected?
+
+For `Compute`: **period -> nil columns -> empty Open -> mismatched lengths**,
+all before any element read. Then bars are inspected in increasing index order.
+Within **one** bar, `ErrNonFinite` has precedence over `ErrDomain`.
+An `ErrDomain` in an earlier bar can therefore precede an `ErrNonFinite` in a
+later bar; do **not** assume the package performs a whole-batch nonfinite scan.
+
+For `Push`, nil/uninitialized receivers take precedence; after that the current
+bar is validated before count saturation or arithmetic. On failure, `Push`
+returns `(0,false,error)` and leaves all state unchanged. Classify with
+`errors.Is`, never by inspecting error strings.
+
+### Q13k.12. Is `Restore` safe against corrupted or forged checkpoints?
+
+`Restore` checks algorithm/config ID, array shapes, Count-dependent head/used,
+rebase-epoch flag, finite and nonnegative slot pairs, unused zeros and effective
+sum consistency. The receiver is unchanged on rejection. The public wire fields
+are `uint64`, but they must fit native `int` indexes before accessing a Go slice;
+external coordinates cannot be wrapped or reduced modulo the period.
+
+**This is a mathematical format validator, not authentication.** `Config` is
+SHA-256 of the public algorithm ID concatenated with LE64(period); it does not
+hash `FloatState`, `IntState` or `Count`. Authenticate the **entire** canonical
+serialized checkpoint with a key or signature before `Restore`, and record the
+exchange source offset independently to prevent duplicate-bar replay.
+
+### Q13k.13. Will an accepted restored stream produce identical future values?
+
+Under the same package build, floating-point environment and future input
+sequence, yes: `Snapshot` retains physical ring order, stored sums,
+compensations, previous typical price, head, occupancy, epoch flag and Count.
+`Restore` checks a recomputed ring sum but installs the **saved** recurrence
+state rather than replacing it with a newly rounded accumulator.
+Do not round the exported floating fields, reorder arrays or discard the
+compensation terms in checkpoint storage.
+
+### Q13k.14. How does a real timestamp gap differ from a zero-volume bar?
+
+A real zero-volume bar is an observed candle with a known time slot; it is a
+valid transition. A missing bar is absent input, and `mfi` cannot detect it
+from OHLCV alone. Validate cadence/sequence outside the package (for example
+using `series.Validate` on a known time grid). On a genuine discontinuity, call
+`stream.Reset()` and require a new `P+1`-bar warmup. A snapshot does not include
+exchange timestamps or guarantee that the source replay position is correct.
+
+### Q13k.15. Which API should a market-data service use?
+
+| Source/request            | Prefer                                             | Reason                                                                |
+|---------------------------|----------------------------------------------------|-----------------------------------------------------------------------|
+| Existing five columns     | `mfi.Compute` or `mfi.ComputeDefault`              | No row-to-column transposition                                        |
+| Existing decoder `[]Bar`  | `mfi.ComputeCandles`                               | Clear adapter; uses `O(n)` additional temporary columns               |
+| One last historical value | `mfi.Latest`                                       | Convenience projection, but still a full `O(n+P)` batch computation   |
+| High-rate ongoing feed    | `mfi.NewPeriod` + `Push`                           | Retains a bounded ring, no heap allocation per successful steady Push |
+| Primary/standby replay    | `Snapshot` + authenticated persistence + `Restore` | Preserves compensation and ring topology                              |
+
+Run one independent stream per instrument and coherent volume unit. The mutable
+`Stream` does not support unsynchronized operations from multiple goroutines;
+return slices and detached snapshots are caller-owned.
+
+### Q13k.16. What does `IsNil()` mean for `mfi.Result`?
+
+`var r *mfi.Result` has `r.IsNil()==true`, including when stored as an
+`interface{ IsNil() bool }`. An allocated `&mfi.Result{}` has `IsNil()==false`
+even if its slices are nil. A successful short Compute returns a **non-nil**
+Result whose `Valid` entries may all be false. Never infer pointer nilness
+from the length or content of the output arrays.
+
+### Q13k.17. Which tests are required before production integration?
+
+Independent analytic fixtures and exact-rational oracles must validate the
+math, not just a batch/stream comparison through one kernel. Verify `P+1`
+warmup, zero-volume and equal-price expiration, volume scaling within finite
+range, overflow atomicity, invalid Snapshot state, every prefix split,
+no allocation in steady Push and worst-case rebase cost. All package tests
+are external (`package mfi_test`).
+
+```bash
+go test ./mfi -count=1 -cover
+go test -race ./mfi -count=1
+go test ./mfi -run '^Example' -count=1 -v
+go test ./mfi -run '^$' -bench . -benchmem
+go vet ./...
+golangci-lint run
+```
+
+See [`MFI.md`](MFI.md), [`../mfi/doc.go`](../mfi/doc.go), and the five
+execution-checked scenarios in [`../mfi/example_test.go`](../mfi/example_test.go).
 
 ---
 

@@ -3,9 +3,9 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/TUTORIAL.md
-  Package reference: matrix, stats, ols, ridge, series, rsi, macd and the wider lvlath package family
+  Package reference: matrix, stats, ols, ridge, series, rsi, macd, mfi and the wider lvlath package family
   Contract status: learning guide; package doc.go and source define the public API.
-  Scope: graph, matrix, factorization, statistical and temporal workflows, including causal MACD.
+  Scope: graph, matrix, factorization, statistical and temporal workflows, including causal MACD and volume-weighted MFI.
   lvlath - Repository Tutorial
 
   Purpose:
@@ -25,7 +25,7 @@
 
 > **hard math on an easy level**
 
-Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fitted feature scaling, covariance PCA, causal Wilder RSI, SMA-seeded MACD and time-series alignment.
+Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fitted feature scaling, covariance PCA, causal Wilder RSI, SMA-seeded MACD, rolling Money Flow Index and time-series alignment.
 
 This tutorial is the beginning of the learning path. It introduces the objects and ideas that most packages share: graphs, matrices, options, result artifacts, error contracts, and deterministic algorithm execution.
 
@@ -56,6 +56,7 @@ This tutorial is the beginning of the learning path. It introduces the objects a
     11i. [RNG Foundations: Version-Pinned Stochastic Streams](#11i-rng-foundations-version-pinned-stochastic-streams)
     11j. [RSI Foundations: Causal Wilder Momentum and Recoverable Streaming](#11j-rsi-foundations-causal-wilder-momentum-and-recoverable-streaming)
     11k. [MACD Foundations: SMA-Seeded EMA, Signed Momentum and Checkpoint Replay](#11k-macd-foundations-sma-seeded-ema-signed-momentum-and-checkpoint-replay)
+    11l. [MFI Foundations: Volume-Weighted Typical Price, Compensated Windows and Recoverable Streams](#11l-mfi-foundations-volume-weighted-typical-price-compensated-windows-and-recoverable-streams)
 12. [Algorithm Selection Guide](#12-algorithm-selection-guide)
 13. [Professional Best Practices](#13-professional-best-practices)
 14. [Where To Go Next](#14-where-to-go-next)
@@ -91,6 +92,7 @@ The library covers:
 * `acf` scaled direct sample autocorrelation, explicit common versus pair-adjusted denominators, and detached per-lag pair counts;
 * `rsi` causal Wilder gain/loss smoothing, index-aligned readiness masks, zero-allocation streaming and versioned scalar checkpoints;
 * `macd` SMA-seeded Appel EMAs with signed Line/Signal/Histogram, separate readiness masks, transactional streaming and detached restart state;
+* `mfi` compensated rolling typical-price money flow over OHLCV, transition-counted zero volumes, batch/stream parity and detached replay state;
 * `bootstrap` reproducible Moving, Circular and Stationary block-index ensembles with per-replicate RNG streams and atomic row publication;
 * `rng` local pinned PCG-DXSM streams with SHA-256 seed derivation, strictly open uniforms and cached Box-Muller normals;
 * `paa` exact fractional time-series compression, rational segment boundaries and value-only feature projection;
@@ -116,10 +118,11 @@ warping alignment          *dtw.Result                 distance, reachability, p
 causal sample transform    *series.TransformResult     detached Values + Valid mask
 timestamp-grid inspection  *series.ValidationResult    exact cadence / missing slots
 dependent index ensembles  *bootstrap.Result           detached complete rows / RNG replay revision
-versioned stochastic path  rng.RNG                    mutable PCG-DXSM draw stream, owned by one goroutine
+versioned stochastic path  rng.RNG                     mutable PCG-DXSM draw stream, owned by one goroutine
 sample autocorrelation     *acf.Result                 fixed-window lag coefficients / pair counts
 Wilder RSI factor          *rsi.Result                 aligned oscillator / Valid mask
 MACD trend difference      *macd.Result                aligned Line / Signal / Histogram masks
+MFI volume-weighted flow   *mfi.Result                 aligned Values / Valid with compensated rolling window
 streaming statistics       *stats.Summary              exact-binary-input mean / scaled variance
 train-only scaling         *stats.ScaleFitResult       detached fit metadata / immutable model
 full-rank regression       *ols.FitResult              physical beta / intercept / rank / SSE / QR condition
@@ -128,9 +131,9 @@ fitted PCA subspace        *pca.FitResult              verified covariance rank 
 causal regime              *hmm.FilterResult           current log posterior / optional causal history
 retrospective regime       *hmm.SmoothResult           future-conditioned posterior
 joint regime trajectory    *hmm.DecodeResult           optimal path / joint log probability
-fractional PAA             *paa.Result                detached means / exact rational segments
-SAX symbolic word          *sax.Result                detached symbols / policy identity / optional PAA
-closed tour                *tsp.Result                cost, exactness, timeout, ratio
+fractional PAA             *paa.Result                 detached means / exact rational segments
+SAX symbolic word          *sax.Result                 detached symbols / policy identity / optional PAA
+closed tour                *tsp.Result                 cost, exactness, timeout, ratio
 ```
 
 ### Why lvlath?
@@ -156,6 +159,8 @@ A shortest-path formula is easy. A reliable Go package must also answer:
 * Are inference features normalized with fixed training parameters, or was the model accidentally refitted?
 * Did a live hidden-state decision accidentally use future-conditioned smoothing instead of filtering?
 * Were independent HMM training sequences illegally concatenated into fabricated transitions?
+* Did a market-data loader drop a legitimate zero-volume candle and change the MFI rolling window?
+* Was a public Snapshot configuration digest mistaken for state authentication?
 
 `lvlath` treats those questions as the API, not as afterthoughts.
 
@@ -212,6 +217,7 @@ Read these files as a learning path. `doc.go` files define implemented package c
 | 8j   | [`RNG.md`](RNG.md)                         | PCG-DXSM128/64 streams, open uniforms, Box-Muller spare protocol, logical paths and replay.                                 |
 | 8k   | [`RSI.md`](RSI.md)                         | Wilder seed and smoothing, readiness masks, snapshot ABI, price domain, batch/stream parity.                                |
 | 8l   | [`MACD.md`](MACD.md)                       | Appel EMA with SMA seed, three signed outputs, exact warmup, bitwise batch/stream parity and checkpoint trust.              |
+| 8m   | [`MFI.md`](MFI.md)                         | Compensated rolling MFI, zero-volume slots, canonical batch/stream parity and checkpoint integrity boundaries.              |
 | 9    | [`DTW.md`](DTW.md)                         | `Align`, `AlignCostMatrix`, `AlignMatrix`, `AlignBounded`, exact `Search`, numeric and path artifacts.                      |
 | 9a   | [`DTW_SEARCH.md`](DTW_SEARCH.md)           | Fixed-length exact top-K, certified LB_Keogh, workers, budgets, and partial-result law.                                     |
 | 10   | [`TSP.md`](TSP.md)                         | Matrix-backed tours, exact regimes, Christofides, Blossom matching, local search, timeouts.                                 |
@@ -240,6 +246,7 @@ Working on numeric/time-series workflows:
   SERIES -> ACF.ComputeDefault -> fixed-window lag diagnostics (NOT causal)
   SERIES -> RSI.ComputePeriod / Stream.Push -> causal price-strength factors
   SERIES -> MACD.Compute / Stream.Push -> signed trend-separation features and masks
+  SERIES -> MFI.Compute / Stream.Push -> OHLCV volume-weighted transition factor and validity mask
   SERIES -> BOOTSTRAP.SampleIndices -> paired matrix/return/sensor resamples -> caller estimators
   RNG.Stream(seed, logicalPath) -> Monte Carlo / fault injection -> indexed reduction
   OLS/RIDGE residual window -> ACF -> investigate serial dependence (NOT a p-value)
@@ -323,6 +330,12 @@ Think of `lvlath` as a contract stack.
                          │ macd                                          │
                          │ SMA-seeded price EMAs, signed signal/histogram│
                          │ aligned masks / atomic Push / checkpoint      │
+                         └───────────────────────────────────────────────┘
+
+                         ┌───────────────────────────────────────────────┐
+                         │ mfi                                           │
+                         │ volume-weighted typical-price transitions     │
+                         │ compensated ring / valid mask / replay        │
                          └───────────────────────────────────────────────┘
 
                          ┌───────────────────────────────────────────────┐
@@ -3166,6 +3179,216 @@ are in [`macd/example_test.go`](../macd/example_test.go).
 
 ---
 
+## 11l. MFI Foundations: Volume-Weighted Typical Price, Compensated Windows and Recoverable Streams
+
+`mfi` converts one instrument's aligned OHLCV candles into a **causal,
+volume-weighted directional money-flow feature**. Its mathematical purpose is
+narrow: measure the recent share of money flow assigned to rising versus falling
+**typical prices**. It does not estimate aggressive orders, identify investors,
+model market impact or issue trading recommendations.
+
+### 11l.1. MFI, RSI and MACD answer different questions
+
+| Question                                                                  | Indicator and input                             | Numerical output                                      |
+|---------------------------------------------------------------------------|-------------------------------------------------|-------------------------------------------------------|
+| How do recent positive/negative **closing-price changes** compare?        | `rsi`, positive finite closes                   | Wilder-smoothed oscillator plus one readiness mask    |
+| How far apart are two smoothed **price trends**?                          | `macd`, positive finite closes                  | Signed Line, Signal and Histogram with distinct masks |
+| Which **typical-price directions** received more *current traded volume*? | `mfi`, valid positive OHLC + nonnegative Volume | Bounded MFI `[0,100]` plus one readiness mask         |
+
+Different inputs imply different meaning. The volume unit must stay coherent
+inside one instrument's MFI history. The library never infers whether a trade
+was buyer- or seller-initiated from an OHLCV candle.
+
+### 11l.2. A candle is not a transition
+
+For `t >= 1`, define the typical price and two directional contributions:
+
+![MFI typical price](https://latex.codecogs.com/svg.image?TP_t%3D%5Cfrac%7BH_t%2BL_t%2BC_t%7D%7B3%7D)
+
+![MFI positive flow](https://latex.codecogs.com/svg.image?F_t%5E%7B%2B%7D%3DTP_tV_t%5Ccdot%5Cmathbf%7B1%7D%5Cleft%5BTP_t%3ETP_%7Bt-1%7D%5Cright%5D)
+
+![MFI negative flow](https://latex.codecogs.com/svg.image?F_t%5E%7B-%7D%3DTP_tV_t%5Ccdot%5Cmathbf%7B1%7D%5Cleft%5BTP_t%3CTP_%7Bt-1%7D%5Cright%5D)
+
+The first candle only initializes `previousTypical`. From bar 1 onward,
+every accepted candle creates **one slot**: positive flow, negative flow, or
+zero on both sides. Even an authentic zero-volume candle or an unchanged
+price occupies a slot and updates the previous typical price.
+
+For an explicit period `P`, the output is valid after **P transitions**, at
+zero-based bar index `P`:
+
+![MFI formula](https://latex.codecogs.com/svg.image?MFI_t%3D100%5Cfrac%7BP_t%7D%7BP_t%2BN_t%7D)
+
+```text
+P=2; typical prices 1, 2, 1, 3; volume=1 throughout
+
+bar index:      0           1            2            3
+transition:    seed        +2           -1           +3
+ring:          empty       [+2]         [+2,-1]      [-1,+3]
+Valid:         false       false        true         true
+Values:        0           0            66.666...    75
+```
+
+When both rolling sums are zero, MFI is exactly 50; positive-only is 100,
+negative-only is 0. Validity and the numeric value are separate axes. A genuine
+zero MFI is possible; a zero during warmup is a placeholder, not a signal.
+
+### 11l.3. One computation for batch and stream
+
+`Compute(Bars,Options)` validates the five-column shape before any element read,
+creates one `Stream` and calls `Push` in ascending bar order. `ComputeCandles`
+adapts existing `[]Bar` rows into five columns, then uses exactly the same
+facade. `ComputeDefault` and `ComputePeriod` select a period; `Latest` returns
+the last value and validity bit from a **full** batch evaluation.
+
+A simple end-to-end example uses an ordered series of eight realistic synthetic
+candles. It explicitly verifies batch/stream parity and the warmup boundary:
+
+```go
+package main
+
+import (
+    "fmt"
+    "math"
+
+    "github.com/lvlath/go/mfi"
+)
+
+func main() {
+    rows := []mfi.Bar{
+        {Open: 100, High: 101, Low: 99, Close: 100, Volume: 120},
+        {Open: 100, High: 103, Low: 99.5, Close: 102, Volume: 170},
+        {Open: 102, High: 102, Low: 99, Close: 100, Volume: 0},
+        {Open: 100, High: 100.5, Low: 97, Close: 98, Volume: 200},
+        {Open: 98, High: 101, Low: 97.5, Close: 100, Volume: 150},
+        {Open: 100, High: 104, Low: 99, Close: 103, Volume: 240},
+        {Open: 103, High: 103, Low: 101, Close: 102, Volume: 0},
+        {Open: 102, High: 105, Low: 101, Close: 104, Volume: 180},
+    }
+
+    const period = 3
+    batch, err := mfi.ComputeCandles(rows, mfi.Options{Period: period})
+    if err != nil {
+        fmt.Println("batch:", err)
+        return
+    }
+    stream, err := mfi.NewPeriod(period)
+    if err != nil {
+        fmt.Println("stream:", err)
+        return
+    }
+    same := true
+    ready := 0
+    for i, bar := range rows {
+        value, valid, pushErr := stream.Push(bar)
+        if pushErr != nil {
+            fmt.Println("push:", pushErr)
+            return
+        }
+        same = same && valid == batch.Valid[i] &&
+            math.Float64bits(value) == math.Float64bits(batch.Values[i])
+        if valid {
+            ready++
+        }
+    }
+    fmt.Printf("bars=%d ready=%d first-valid=%t parity=%t last=%.2f\n",
+        len(rows), ready, batch.Valid[period], same, batch.Values[len(rows)-1])
+    // Output: bars=8 ready=5 first-valid=true parity=true last=100.00
+}
+```
+
+This data has two **observed** zero-volume candles. They are not missing
+records. The complete pipeline and fixed `// Output:` expected text are
+maintained by the package examples in [`../mfi/example_test.go`](../mfi/example_test.go).
+
+### 11l.4. How numerical stability affects operational behavior
+
+Avoid calculating `(High+Low+Close)/3` by first adding three near-maximum
+float64 prices: their total can overflow even though their average is finite.
+The kernel uses a High-anchored convex mean. It also avoids dividing a large
+positive total by an almost-zero negative total to form a money ratio; the
+smaller effective sum is divided by the larger before computing a bounded
+percentage. **Raw money flow and each signed rolling sum must remain finite**.
+
+The ring retains separate positive and negative contributions and Neumaier
+compensated accumulators. Every `P` classified transitions, sums are replayed
+from the candidate ring in oldest-to-newest order. Negative incremental drift
+permits one emergency replay per epoch, not arbitrary clipping. Hence `Push`
+has amortized `O(1)` time and no successful hot-path allocation, but a
+**scheduled rebase is `O(P)`** and may affect gateway tail latency.
+
+`DefaultPeriod=14` and `MaxPeriod=1<<20` bound memory. The two float64 rings
+consume 16 MiB at the maximum period, excluding metadata. Values outside the
+limit return `ErrInvalidOption` before allocating the rings.
+
+### 11l.5. Separate feed integrity, numeric state and checkpoint trust
+
+```text
+Exchange candle + source offset + timestamp
+              |
+     timestamp/sequence validation (caller or series)
+              |
+      mfi.Stream.Push (only complete observed candles)
+              |
+      value + valid             Snapshot
+              |                     |
+      feature store         external MAC/signature
+                                    |
+                          persistent checkpoint + feed offset
+                                    |
+                         standby Verify -> Restore -> resume
+```
+
+An authentic zero-volume bar must be pushed; a *missing* candle must be
+handled as a feed gap. If continuity is required, call `Reset` and begin a new
+`P+1`-bar warmup. The `mfi` package does not create missing bars, resample a
+calendar or store the original market-data timestamp.
+
+`Snapshot` returns detached copies of physical ring slots, the previous
+typical price, both Neumaier sums/corrections, cursor, epoch flag and Count.
+`Restore` validates all of them before committing. `Snapshot.Config` is only
+SHA-256 of public algorithm identity and period: **it is not a signature of
+the checkpoint state**. Authenticate the full serialized checkpoint and track
+the exchange offset externally to prevent replaying a bar twice after failover.
+
+A `Stream` is mutable and single-owner, with no implicit locks. A failed `Push`
+returns `(0,false,error)` and leaves state unchanged; on batch failure,
+`Compute` returns a nil `*Result`. `Result.IsNil()` checks pointer presence,
+not whether all warmup flags are false.
+
+### 11l.6. Choosing features without leakage
+
+A safe MFI research pipeline preserves index alignment and source provenance:
+
+```text
+    OHLCV + timestamps (one coherent volume unit)
+                |
+      validate known grid and source sequence
+                |
+  MFI(14)    RSI(14)    MACD(12,26,9)
+    |           |             |
+ Values+Valid  Values+Valid  three Values+Valid pairs
+    +-----------+-------------+
+                |
+       caller selects only fully valid timestamps
+                |
+         chronological train/holdout split
+                |
+        optional stats / OLS / ridge / PCA work
+```
+
+No package automatically fills time gaps or transforms an unready feature
+value into a real zero. Policies for portfolio screening, thresholds, model
+training and trade decisions remain external to `mfi`.
+
+For rigorous equations, validation precedence (including the first failing
+bar), numeric bounds, restore ABI and independent oracle tests, continue to
+[`MFI.md`](MFI.md) and [`../mfi/doc.go`](../mfi/doc.go). For five runnable
+operational stories see [`../mfi/example_test.go`](../mfi/example_test.go)
+and `go run ./examples/mfi`.
+
+---
+
 ## 12. Algorithm Selection Guide
 
 ### If the input is a graph
@@ -3192,42 +3415,43 @@ are in [`macd/example_test.go`](../macd/example_test.go).
 
 ### If the input is numeric data
 
-| Problem                                            | Package                                       | Main output                                                                                        |
-|:---------------------------------------------------|:----------------------------------------------|:---------------------------------------------------------------------------------------------------|
-| Dense algebra                                      | `matrix`                                      | matrix result with shape/error policy.                                                             |
-| Stable mean and population/sample variance         | `stats.Summarize`                             | detached `Summary`, exact binary-input mean and scaled variance.                                   |
-| Streaming/partitioned moments                      | `stats.Moments`                               | error-atomic Welford updates and Chan merges.                                                      |
-| Training-only feature scaling                      | `stats.FitStandardizer`                       | immutable model and detached fit metadata.                                                         |
-| Numeric cleaning                                   | `matrix`                                      | sanitized matrix.                                                                                  |
-| Matrix-native normalization                        | `matrix`                                      | matrix-specific transforms under their own contract.                                               |
-| Covariance/correlation                             | `matrix`                                      | stable sample moments and direct Pearson coefficients.                                             |
-| Fitted PCA subspace and reconstruction             | `pca.FitWithComponents` / `Model.Reconstruct` | Frozen orthogonal basis, strict eigenpair gate, original-unit reconstruction.                      |
-| Square linear solve with pivoting                  | `matrix.FactorLU`                             | reusable factor, `P*A=L*U`, exact residual diagnostics.                                            |
-| Tall full-column-rank least squares                | `matrix.SolveLeastSquares` / `FactorQR`       | Householder QR; numerical rank and `kappa_1(R)` measurement.                                       |
-| Regularized regression for collinear/wide features | `ridge.Fit` / `ridge.FitStandardized`         | Positive-Lambda slope shrinkage, unpenalized intercept, frozen original-unit coefficients.         |
-| Fitted regression for future physical inputs       | `ols.Fit` / `ols.FitStandardized`             | Immutable Model, original-unit coefficients, training SSE, no refit.                               |
-| Symmetric positive-definite system                 | `matrix.FactorCholesky`                       | accepted symmetric midpoint, SPD check, reusable solves.                                           |
-| Symmetric spectral analysis                        | `matrix`                                      | eigenvalues/eigenvectors.                                                                          |
-| Exact nanosecond cadence checks                    | `series.Validate`                             | sample count + ordered gap metadata.                                                               |
-| Dependent-data resampling index ensembles          | `bootstrap.SampleIndices`                     | Detached Moving/Circular/Stationary `[][]int`, replay ID, partial completion law.                  |
-| Causal lag/difference/returns                      | `series`                                      | length-preserving values + validity mask.                                                          |
-| Fractional equal-duration scalar compression       | `paa.Transform` / `paa.TransformRange`        | Detached PAA means, exact rational intervals, original window length.                              |
-| Fixed-alphabet symbolic window encoding            | `sax.Encode` / `sax.Encoder.Encode`           | Detached symbol word, policy identity and optional transformed PAA.                                |
-| Compatible Euclidean symbolic lower bound          | `sax.Encoder.Mindist` / `sax.MindistValues`   | Lower-bound dissimilarity in the selected transformed space, never a general DTW bound.            |
-| Direct sample ACF by integer lag                   | `acf.ComputeDefault` / `acf.Compute`          | One fitted window, explicit denominator convention and pair counts; not causal streaming.          |
-| Causal Wilder price-strength oscillator            | `rsi.ComputePeriod` / `rsi.NewPeriod`         | Aligned Values+Valid or single-owner zero-allocation stream with explicit Reset.                   |
-| SMA-seeded MACD and trend separation               | `macd.ComputeDefault` / `macd.NewDefault`     | Three aligned signed outputs; independently gated Line and Signal/Histogram; zero-allocation Push. |
-| Reproducible stochastic simulation paths           | `rng.NewFactory().Stream` / `rng.NewStream`   | Pinned PCG-DXSM, logical path IDs, one goroutine owner per stream.                                 |
-| Complete fixed index windows                       | `series.WindowRanges`                         | ordered half-open sample-index intervals.                                                          |
-| Hidden-state streaming causal filtering            | `hmm.FilterStep` / `FilterDefault`            | P(z_t given observations through t), no future-sample leakage.                                     |
-| Retrospective hidden-state attribution             | `hmm.Smooth` / `hmm.Decode`                   | Full-sequence state marginals vs one optimal joint path; different contracts.                      |
-| Independent categorical/Gaussian sequence training | `hmm.FitCategorical` / `hmm.FitGaussian`      | MAP Baum-Welch with no cross-sequence transitions and explicit convergence diagnostics.            |
-| Scalar sequence alignment                          | `dtw.Align`                                   | DTW `Result` with distance/reachability.                                                           |
-| Inclusive-limit scalar alignment                   | `dtw.AlignBounded`                            | Exact/above-limit/unreachable status.                                                              |
-| Globally exact window top-K                        | `dtw.Search`                                  | Sorted fixed-length squared-DTW matches.                                                           |
-| Precomputed local-cost alignment                   | `dtw.AlignCostMatrix`                         | DTW over caller-owned finite cost surface.                                                         |
-| Multivariate time-series alignment                 | `dtw.AlignMatrix`                             | squared-L2 row-cost alignment result.                                                              |
-| Complete route matrix optimization                 | `tsp.SolveMatrix`                             | tour, cost, exactness/timeout/ratio metadata.                                                      |
+| Problem                                               | Package                                       | Main output                                                                                        |
+|:------------------------------------------------------|:----------------------------------------------|:---------------------------------------------------------------------------------------------------|
+| Dense algebra                                         | `matrix`                                      | matrix result with shape/error policy.                                                             |
+| Stable mean and population/sample variance            | `stats.Summarize`                             | detached `Summary`, exact binary-input mean and scaled variance.                                   |
+| Streaming/partitioned moments                         | `stats.Moments`                               | error-atomic Welford updates and Chan merges.                                                      |
+| Training-only feature scaling                         | `stats.FitStandardizer`                       | immutable model and detached fit metadata.                                                         |
+| Numeric cleaning                                      | `matrix`                                      | sanitized matrix.                                                                                  |
+| Matrix-native normalization                           | `matrix`                                      | matrix-specific transforms under their own contract.                                               |
+| Covariance/correlation                                | `matrix`                                      | stable sample moments and direct Pearson coefficients.                                             |
+| Fitted PCA subspace and reconstruction                | `pca.FitWithComponents` / `Model.Reconstruct` | Frozen orthogonal basis, strict eigenpair gate, original-unit reconstruction.                      |
+| Square linear solve with pivoting                     | `matrix.FactorLU`                             | reusable factor, `P*A=L*U`, exact residual diagnostics.                                            |
+| Tall full-column-rank least squares                   | `matrix.SolveLeastSquares` / `FactorQR`       | Householder QR; numerical rank and `kappa_1(R)` measurement.                                       |
+| Regularized regression for collinear/wide features    | `ridge.Fit` / `ridge.FitStandardized`         | Positive-Lambda slope shrinkage, unpenalized intercept, frozen original-unit coefficients.         |
+| Fitted regression for future physical inputs          | `ols.Fit` / `ols.FitStandardized`             | Immutable Model, original-unit coefficients, training SSE, no refit.                               |
+| Symmetric positive-definite system                    | `matrix.FactorCholesky`                       | accepted symmetric midpoint, SPD check, reusable solves.                                           |
+| Symmetric spectral analysis                           | `matrix`                                      | eigenvalues/eigenvectors.                                                                          |
+| Exact nanosecond cadence checks                       | `series.Validate`                             | sample count + ordered gap metadata.                                                               |
+| Dependent-data resampling index ensembles             | `bootstrap.SampleIndices`                     | Detached Moving/Circular/Stationary `[][]int`, replay ID, partial completion law.                  |
+| Causal lag/difference/returns                         | `series`                                      | length-preserving values + validity mask.                                                          |
+| Fractional equal-duration scalar compression          | `paa.Transform` / `paa.TransformRange`        | Detached PAA means, exact rational intervals, original window length.                              |
+| Fixed-alphabet symbolic window encoding               | `sax.Encode` / `sax.Encoder.Encode`           | Detached symbol word, policy identity and optional transformed PAA.                                |
+| Compatible Euclidean symbolic lower bound             | `sax.Encoder.Mindist` / `sax.MindistValues`   | Lower-bound dissimilarity in the selected transformed space, never a general DTW bound.            |
+| Direct sample ACF by integer lag                      | `acf.ComputeDefault` / `acf.Compute`          | One fitted window, explicit denominator convention and pair counts; not causal streaming.          |
+| Causal Wilder price-strength oscillator               | `rsi.ComputePeriod` / `rsi.NewPeriod`         | Aligned Values+Valid or single-owner zero-allocation stream with explicit Reset.                   |
+| SMA-seeded MACD and trend separation                  | `macd.ComputeDefault` / `macd.NewDefault`     | Three aligned signed outputs; independently gated Line and Signal/Histogram; zero-allocation Push. |
+| Volume-weighted OHLCV price direction and rolling MFI | `mfi.ComputeDefault` / `mfi.NewDefault`       | Finite `[0,100]` feature, one Valid mask, compensated ring and versioned snapshots.                |
+| Reproducible stochastic simulation paths              | `rng.NewFactory().Stream` / `rng.NewStream`   | Pinned PCG-DXSM, logical path IDs, one goroutine owner per stream.                                 |
+| Complete fixed index windows                          | `series.WindowRanges`                         | ordered half-open sample-index intervals.                                                          |
+| Hidden-state streaming causal filtering               | `hmm.FilterStep` / `FilterDefault`            | P(z_t given observations through t), no future-sample leakage.                                     |
+| Retrospective hidden-state attribution                | `hmm.Smooth` / `hmm.Decode`                   | Full-sequence state marginals vs one optimal joint path; different contracts.                      |
+| Independent categorical/Gaussian sequence training    | `hmm.FitCategorical` / `hmm.FitGaussian`      | MAP Baum-Welch with no cross-sequence transitions and explicit convergence diagnostics.            |
+| Scalar sequence alignment                             | `dtw.Align`                                   | DTW `Result` with distance/reachability.                                                           |
+| Inclusive-limit scalar alignment                      | `dtw.AlignBounded`                            | Exact/above-limit/unreachable status.                                                              |
+| Globally exact window top-K                           | `dtw.Search`                                  | Sorted fixed-length squared-DTW matches.                                                           |
+| Precomputed local-cost alignment                      | `dtw.AlignCostMatrix`                         | DTW over caller-owned finite cost surface.                                                         |
+| Multivariate time-series alignment                    | `dtw.AlignMatrix`                             | squared-L2 row-cost alignment result.                                                              |
+| Complete route matrix optimization                    | `tsp.SolveMatrix`                             | tour, cost, exactness/timeout/ratio metadata.                                                      |
 
 ### If the goal is documentation or testing
 
@@ -3262,6 +3486,7 @@ frozen orthogonal compression        -> pca.FitWithComponents
 exact timestamp grid / causal arrays -> series
 symbolic Euclidean screening         -> sax
 fixed-window sample autocorrelation  -> acf.ComputeDefault / acf.Compute
+causal volume-weighted OHLCV flow    -> mfi.ComputeDefault / mfi.NewDefault
 time-warped sequence similarity      -> dtw
 closed tour cost                     -> tsp
 ```
