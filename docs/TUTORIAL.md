@@ -3,9 +3,9 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/TUTORIAL.md
-  Package reference: matrix, stats, ols, ridge, series, rsi, macd, mfi and the wider lvlath package family
+  Package reference: matrix, stats, ols, ridge, series, rsi, macd, mfi, obv and the wider lvlath package family
   Contract status: learning guide; package doc.go and source define the public API.
-  Scope: graph, matrix, factorization, statistical and temporal workflows, including causal MACD and volume-weighted MFI.
+  Scope: graph, matrix, factorization, statistical and temporal workflows, including causal MACD, rolling MFI and cumulative OBV.
   lvlath - Repository Tutorial
 
   Purpose:
@@ -25,7 +25,7 @@
 
 > **hard math on an easy level**
 
-Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fitted feature scaling, covariance PCA, causal Wilder RSI, SMA-seeded MACD, rolling Money Flow Index and time-series alignment.
+Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fitted feature scaling, covariance PCA, causal Wilder RSI, SMA-seeded MACD, rolling Money Flow Index, compensated On-Balance Volume and time-series alignment.
 
 This tutorial is the beginning of the learning path. It introduces the objects and ideas that most packages share: graphs, matrices, options, result artifacts, error contracts, and deterministic algorithm execution.
 
@@ -57,6 +57,7 @@ This tutorial is the beginning of the learning path. It introduces the objects a
     11j. [RSI Foundations: Causal Wilder Momentum and Recoverable Streaming](#11j-rsi-foundations-causal-wilder-momentum-and-recoverable-streaming)
     11k. [MACD Foundations: SMA-Seeded EMA, Signed Momentum and Checkpoint Replay](#11k-macd-foundations-sma-seeded-ema-signed-momentum-and-checkpoint-replay)
     11l. [MFI Foundations: Volume-Weighted Typical Price, Compensated Windows and Recoverable Streams](#11l-mfi-foundations-volume-weighted-typical-price-compensated-windows-and-recoverable-streams)
+    11m. [OBV Foundations: Cumulative Signed Volume and Checkpointed Streams](#11m-obv-foundations-cumulative-signed-volume-and-checkpointed-streams)
 12. [Algorithm Selection Guide](#12-algorithm-selection-guide)
 13. [Professional Best Practices](#13-professional-best-practices)
 14. [Where To Go Next](#14-where-to-go-next)
@@ -93,6 +94,7 @@ The library covers:
 * `rsi` causal Wilder gain/loss smoothing, index-aligned readiness masks, zero-allocation streaming and versioned scalar checkpoints;
 * `macd` SMA-seeded Appel EMAs with signed Line/Signal/Histogram, separate readiness masks, transactional streaming and detached restart state;
 * `mfi` compensated rolling typical-price money flow over OHLCV, transition-counted zero volumes, batch/stream parity and detached replay state;
+* `obv` compensated cumulative signed current-candle volume, exact first-bar zero, valid-all-bars masks and checkpointed streaming;
 * `bootstrap` reproducible Moving, Circular and Stationary block-index ensembles with per-replicate RNG streams and atomic row publication;
 * `rng` local pinned PCG-DXSM streams with SHA-256 seed derivation, strictly open uniforms and cached Box-Muller normals;
 * `paa` exact fractional time-series compression, rational segment boundaries and value-only feature projection;
@@ -123,6 +125,7 @@ sample autocorrelation     *acf.Result                 fixed-window lag coeffici
 Wilder RSI factor          *rsi.Result                 aligned oscillator / Valid mask
 MACD trend difference      *macd.Result                aligned Line / Signal / Histogram masks
 MFI volume-weighted flow   *mfi.Result                 aligned Values / Valid with compensated rolling window
+OBV cumulative flow        *obv.Result                 aligned valid Values / Valid with compensated cumulative sum
 streaming statistics       *stats.Summary              exact-binary-input mean / scaled variance
 train-only scaling         *stats.ScaleFitResult       detached fit metadata / immutable model
 full-rank regression       *ols.FitResult              physical beta / intercept / rank / SSE / QR condition
@@ -160,6 +163,7 @@ A shortest-path formula is easy. A reliable Go package must also answer:
 * Did a live hidden-state decision accidentally use future-conditioned smoothing instead of filtering?
 * Were independent HMM training sequences illegally concatenated into fabricated transitions?
 * Did a market-data loader drop a legitimate zero-volume candle and change the MFI rolling window?
+* Did an OBV calculation add the very first candle's volume, lose Neumaier correction, or reuse a mismatched feed cursor after Restore?
 * Was a public Snapshot configuration digest mistaken for state authentication?
 
 `lvlath` treats those questions as the API, not as afterthoughts.
@@ -218,6 +222,7 @@ Read these files as a learning path. `doc.go` files define implemented package c
 | 8k   | [`RSI.md`](RSI.md)                         | Wilder seed and smoothing, readiness masks, snapshot ABI, price domain, batch/stream parity.                                |
 | 8l   | [`MACD.md`](MACD.md)                       | Appel EMA with SMA seed, three signed outputs, exact warmup, bitwise batch/stream parity and checkpoint trust.              |
 | 8m   | [`MFI.md`](MFI.md)                         | Compensated rolling MFI, zero-volume slots, canonical batch/stream parity and checkpoint integrity boundaries.              |
+| 8n   | [`OBV.md`](OBV.md)                         | Cumulative signed volume, first-bar zero, Neumaier accumulation, stream rollback and externally authenticated replay.       |
 | 9    | [`DTW.md`](DTW.md)                         | `Align`, `AlignCostMatrix`, `AlignMatrix`, `AlignBounded`, exact `Search`, numeric and path artifacts.                      |
 | 9a   | [`DTW_SEARCH.md`](DTW_SEARCH.md)           | Fixed-length exact top-K, certified LB_Keogh, workers, budgets, and partial-result law.                                     |
 | 10   | [`TSP.md`](TSP.md)                         | Matrix-backed tours, exact regimes, Christofides, Blossom matching, local search, timeouts.                                 |
@@ -247,6 +252,7 @@ Working on numeric/time-series workflows:
   SERIES -> RSI.ComputePeriod / Stream.Push -> causal price-strength factors
   SERIES -> MACD.Compute / Stream.Push -> signed trend-separation features and masks
   SERIES -> MFI.Compute / Stream.Push -> OHLCV volume-weighted transition factor and validity mask
+  SERIES -> OBV.ComputeCandles / Stream.Push -> cumulative signed volume, valid from first candle
   SERIES -> BOOTSTRAP.SampleIndices -> paired matrix/return/sensor resamples -> caller estimators
   RNG.Stream(seed, logicalPath) -> Monte Carlo / fault injection -> indexed reduction
   OLS/RIDGE residual window -> ACF -> investigate serial dependence (NOT a p-value)
@@ -336,6 +342,12 @@ Think of `lvlath` as a contract stack.
                          │ mfi                                           │
                          │ volume-weighted typical-price transitions     │
                          │ compensated ring / valid mask / replay        │
+                         └───────────────────────────────────────────────┘
+
+                         ┌───────────────────────────────────────────────┐
+                         │ obv                                           │
+                         │ causal signed close-to-close traded volume    │
+                         │ no warmup / Neumaier / checkpoint             │
                          └───────────────────────────────────────────────┘
 
                          ┌───────────────────────────────────────────────┐
@@ -3389,6 +3401,168 @@ and `go run ./examples/mfi`.
 
 ---
 
+## 11m. OBV Foundations: Cumulative Signed Volume and Checkpointed Streams
+
+**On-Balance Volume (OBV)** answers a narrower question than the neighboring
+price/volume indicators: *what is the cumulative amount of volume attached
+to upward closing-price transitions, minus the volume attached to downward
+transitions, since the selected series origin?* It does not use an EMA, moving
+window, typical-price average, or a buyer/seller identity model.
+
+### 11m.1. An observation is not an automatically signed trade
+
+Given accepted closes `C[i]` and contemporaneous base volumes `V[i]`, the
+first output is always positive zero. Only later bars are classified:
+
+![OBV signed contribution](https://latex.codecogs.com/svg.image?OBV_0%3D0%2C%5Cqquad%20OBV_t%3DOBV_%7Bt-1%7D%2B%5Cbegin%7Bcases%7D%2BV_t%26C_t%3EC_%7Bt-1%7D%5C%5C-V_t%26C_t%3CC_%7Bt-1%7D%5C%5C0%26C_t%3DC_%7Bt-1%7D%5Cend%7Bcases%7D)
+
+The very first candle has no previous close. Its volume is validated but
+**never added**. There is no warmup mask: every successful `Valid[i]` is true.
+A zero at index zero is a legitimate cumulative origin, and another zero may
+reflect perfectly balanced contributions after cancellation.
+
+| Close | Current volume | State transition                     | Output |
+|------:|---------------:|--------------------------------------|-------:|
+|   100 |            700 | Seed only                            |      0 |
+|   102 |            400 | Add +400                             |    400 |
+|   102 |            900 | Equal close: add zero, advance Count |    400 |
+|   101 |            120 | Subtract -120                        |    280 |
+|   103 |              0 | Zero volume, update previous close   |    280 |
+
+The final example is subtle: after the last zero-volume candle, the next
+close must be compared against `103`, not `101`. Dropping a real candle would
+change future signs. The package compares closes as `float64` with **no
+price epsilon**; upstream exchange metadata must determine whether a tick
+really occurred or a data feed contains a gap.
+
+### 11m.2. The strict OHLCV boundary still matters
+
+`obv.Compute(obv.Bars)` consumes five non-nil, positive-length, equal-length
+columns and validates every Open/High/Low/Close/Volume field before calculating.
+`obv.ComputeCandles([]obv.Bar)` accepts a non-nil row-oriented feed without
+transposing it. Both require finite, strictly positive prices, finite
+nonnegative volume, and `Low <= Open,Close <= High`. A malformed Open is
+rejected even though the recurrence only reads Close and Volume.
+
+Validation precedes arithmetic: Nil → Empty → Shape → earliest bad candle
+(NonFinite before Domain within that candle) → Overflow. A failing batch
+returns a **nil** result with a sentinel that callers classify using
+`errors.Is`. The result arrays are detached and are not retained as views
+into input columns. Do not mutate input buffers concurrently with either
+batch facade.
+
+### 11m.3. Why an ordinary running float64 sum loses information
+
+Suppose the accepted signed contributions are `+1e16`, `+1`, `-1e16`.
+Ordinary `float64` accumulation loses the `+1` when the high component is
+`1e16`, so the final value becomes zero. The `obv` engine retains a
+Neumaier low-order **compensation** and publishes `sum+compensation`.
+The mathematically expected result is `1` and the test verifies it against
+an independent oracle.
+
+This is improved binary64 arithmetic, **not** exact decimal or big-number
+arithmetic. An unrepresentable accepted total or an exhausted observation
+counter returns `ErrOverflow`. `Push` first computes the entire candidate
+locally and leaves all prior state unchanged on any error, including a late
+OHLCV validation failure. The exceptional cancellation-first rebase attempts
+to avoid declaring overflow solely because an intermediate addition was too
+large; it does not make the total unbounded.
+
+### 11m.4. A feed-monitoring pipeline with explicit consumers
+
+The sample below calculates a fixed four-bar market record and validates the
+same observation order through streaming. The consumer can use a positive OBV
+as an **investigation feature**, but neither this example nor the package
+claims predictive accuracy or institutional participant identification.
+
+```go
+package main
+
+import (
+    "fmt"
+    "math"
+
+    "github.com/lvlath/go/obv"
+)
+
+func main() {
+    session := []obv.Bar{
+        {Open: 100, High: 101, Low: 99, Close: 100, Volume: 700},
+        {Open: 100, High: 103, Low: 100, Close: 102, Volume: 400},
+        {Open: 102, High: 102, Low: 101, Close: 102, Volume: 900},
+        {Open: 102, High: 102, Low: 100, Close: 101, Volume: 120},
+    }
+    result, err := obv.ComputeCandles(session)
+    if err != nil {
+        fmt.Println("invalid input:", err)
+        return
+    }
+    stream := obv.New()
+    exactParity := true
+    for index, candle := range session {
+        value, valid, pushErr := stream.Push(candle)
+        if pushErr != nil {
+            fmt.Println("stream rejected candle:", pushErr)
+            return
+        }
+        exactParity = exactParity && valid == result.Valid[index] &&
+            math.Float64bits(value) == math.Float64bits(result.Values[index])
+    }
+    fmt.Printf("values=%v parity=%t\n", result.Values, exactParity)
+    // Output: values=[0 400 400 280] parity=true
+}
+```
+
+This is an independently checkable fixture; for production, upstream services
+must establish contiguous source offsets, trustworthy OHLC geometry and a
+stable volume unit. Positive affine transforms of prices preserve OBV only
+when float64 rounding preserves all close comparisons.
+
+### 11m.5. Handoff without inventing checkpoint authentication
+
+`Stream` contains last accepted close, sum, compensation and accepted Count.
+`Snapshot` exposes `FloatState=[previousClose,sum,compensation]`, an empty
+`IntState`, `Algorithm="obv/neumaier/v1"` and a `Config` SHA-256 of that
+**fixed public algorithm string**. `Restore` validates schema and numeric
+relations before atomically replacing the destination. This preserves
+bit-equivalent continuation after an accepted snapshot.
+
+However, a fixed public hash cannot authenticate mutable state. Your service
+must authenticate the full checkpoint-plus-source-offset payload, enforce
+replay protection, and resume at the next *unprocessed* bar. If the data feed
+has a verified gap, explicitly `Reset()` and start a new epoch; do not fake
+a zero-volume observation. One stream belongs to one goroutine, so detached
+checkpoints rather than shared pointer mutation are the handoff boundary.
+
+```text
+upstream OHLCV feed --validate timestamps and units--> OBV Stream.Push
+       |                                                  |
+       | explicit gap policy                              +--> Values/Valid
+       +--> Reset/new epoch                               |
+                                                          +--> Snapshot
+                                                               + external feed cursor
+                                                               + application MAC/signature
+                                                               --> standby Restore
+```
+
+### 11m.6. Combine factors without leaking future observations
+
+Use the same **explicitly aligned chronological index** if pairing OBV with
+`rsi`, `macd`, `mfi`, `series` or fitted models. Do not treat an invalid
+RSI/MACD/MFI warmup placeholder as a real zero simply because OBV is valid
+from index zero. Define split boundaries before training, and derive any
+future label only from a historical training region where that label truly
+exists. Indicator packages never make the prediction or trading decision.
+
+For the detailed number model, error table, ABI, trust boundary and independent
+oracles, continue to [`OBV.md`](OBV.md) and [`../obv/doc.go`](../obv/doc.go).
+The five operational examples in [`../obv/example_test.go`](../obv/example_test.go)
+cover a bounded price corridor, 100-instrument screening, resumed processing,
+corrupt candle rejection and an explicit session reset. Run the independent
+feed-offset illustration using `go run ./examples/obv`.
+
+---
+
 ## 12. Algorithm Selection Guide
 
 ### If the input is a graph
@@ -3441,6 +3615,7 @@ and `go run ./examples/mfi`.
 | Causal Wilder price-strength oscillator               | `rsi.ComputePeriod` / `rsi.NewPeriod`         | Aligned Values+Valid or single-owner zero-allocation stream with explicit Reset.                   |
 | SMA-seeded MACD and trend separation                  | `macd.ComputeDefault` / `macd.NewDefault`     | Three aligned signed outputs; independently gated Line and Signal/Histogram; zero-allocation Push. |
 | Volume-weighted OHLCV price direction and rolling MFI | `mfi.ComputeDefault` / `mfi.NewDefault`       | Finite `[0,100]` feature, one Valid mask, compensated ring and versioned snapshots.                |
+| Cumulative volume signed by close direction           | `obv.ComputeCandles` / `obv.New`              | Valid-first-bar zero, Neumaier state, unbounded finite balance and externally protected snapshots. |
 | Reproducible stochastic simulation paths              | `rng.NewFactory().Stream` / `rng.NewStream`   | Pinned PCG-DXSM, logical path IDs, one goroutine owner per stream.                                 |
 | Complete fixed index windows                          | `series.WindowRanges`                         | ordered half-open sample-index intervals.                                                          |
 | Hidden-state streaming causal filtering               | `hmm.FilterStep` / `FilterDefault`            | P(z_t given observations through t), no future-sample leakage.                                     |

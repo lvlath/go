@@ -61,6 +61,9 @@
 //     ErrNonFinite, ErrDomain, ErrOverflow and ErrStateVersion; use errors.Is.
 //   - Push and Restore on a nil *Stream return ErrNilInput; Reset(nil) is a
 //     no-op and Snapshot(nil) returns the zero Snapshot{}.
+//   - Snapshot on a real, zero-count Stream{} is different: it is a versioned
+//     Count=0 snapshot with three zero coordinates, suitable for Restore.
+//     A snapshot whose Count is MaxUint64 can be restored but cannot be advanced.
 //   - (*Result).IsNil reports pointer nilness, not missing output data.
 //   - Compute and ComputeCandles cost O(n) time and O(n) detached output space.
 //     Stream.Push, Reset, Snapshot and Restore are O(1); Push allocates no heap

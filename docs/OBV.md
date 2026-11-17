@@ -36,6 +36,7 @@ institutional participants, a predictive probability or a trading instruction.
 8. [Operational patterns and independent checks](#8-operational-patterns-and-independent-checks)
 9. [FAQ and failure modes](#9-faq-and-failure-modes)
 10. [Verification and related documentation](#10-verification-and-related-documentation)
+11. [Cross-package integration without data leakage](#11-cross-package-integration-without-data-leakage)
 
 ---
 
@@ -73,7 +74,8 @@ For every later observation:
 
 No first-candle comparison is possible: there is no earlier `Close`. Therefore
 `Volume[0]` must **never** reach the accumulator, even when it is
-`math.MaxFloat64`. For a valid one-candle batch, `Values=[+0]` and `Valid=[true]`.
+`math.MaxFloat64`. This remains true for all legal OHLC geometry; the first
+candle is a baseline observation, not a signed trade. For a valid one-candle batch, `Values=[+0]` and `Valid=[true]`.
 
 | Index | Close | Volume | Action                                     | Effective OBV |
 |------:|------:|-------:|--------------------------------------------|--------------:|
@@ -144,6 +146,11 @@ Arithmetic and Count representability in the recurrence
 
 The same `ErrNilInput` applies to `Push` or `Restore` on a nil `*Stream`; those
 methods validate the receiver before inspecting input fields or state.
+
+Error precedence is **per observation**, not a whole-batch global nonfinite
+pass: an `ErrDomain` in an earlier candle is reported before a later
+`ErrNonFinite`. Both batch facades validate all candles before computing,
+while `Push` validates its incoming candle before count/arithmetic checks.
 
 | Sentinel          | Trigger and caller-visible behavior                                                                           |
 |-------------------|---------------------------------------------------------------------------------------------------------------|
@@ -222,9 +229,11 @@ nil pointer has `IsNil()==true` even inside an interface.
 Both batch forms borrow their inputs read-only and retain no reference to
 them. Returned slices can be mutated without affecting callers' input data
 or subsequent calculations. Concurrent input mutation while computing is
-unsupported. Stream is single-owner mutable state and has **no internal locks**;
-transfer detached snapshots between workers rather than sharing one mutable
-stream across goroutines.
+unsupported. An allocated empty `Result{}` does not prove a successful batch.
+
+Stream is single-owner mutable state with **no internal locks**. Transfer
+detached snapshots between workers rather than sharing one mutable stream
+across goroutines.
 
 ## 6. Canonical batch/stream example
 
@@ -451,3 +460,59 @@ prove the whole-repository CI gate. See [`../obv/doc.go`](../obv/doc.go),
 [`TUTORIAL.md`](TUTORIAL.md#11m-obv-foundations-cumulative-signed-volume-and-checkpointed-streams),
 [`FAQ_&_TIPS.md`](FAQ_%26_TIPS.md#13l-obv-faq-cumulative-signed-volume-and-replay-safety),
 and the [UES](lvlath_UES.md).
+
+
+---
+
+## 11. Cross-package integration without data leakage
+
+OBV complements, but does not replace, the neighboring time-series algorithms.
+Each package owns a distinct mathematical object and validation boundary. A
+composite analytics service must align observations explicitly and keep their
+validity and numeric domains separate.
+
+| Task                                                         | Appropriate surface                         | Safety condition                                                                 |
+|--------------------------------------------------------------|---------------------------------------------|----------------------------------------------------------------------------------|
+| Prove that exchange timestamps follow an expected cadence    | `series.Validate`                           | Use the external timestamp vector; OBV has no timestamp fields                   |
+| Compute signed cumulative traded volume                      | `obv.Compute` / `ComputeCandles`            | One consistent base-volume unit per epoch, first bar seeds only                  |
+| Compute typical-price money flow over the last P transitions | `mfi.Compute`                               | Preserve MFI warmup mask and every real zero-volume bar                          |
+| Extract smoothed price-strength or trend features            | `rsi.ComputePeriod` / `macd.ComputeDefault` | Their warmup masks differ from OBV's all-true mask                               |
+| Apply fitted numerical features downstream                   | `stats` / `matrix` / model consumers        | Fit transforms on the training segment only; do not refit on future observations |
+
+A safe same-instrument data flow makes the chronology and missing-data policy
+visible at the application layer:
+
+```mermaid
+flowchart TD
+    A[Exchange OHLCV plus source cursor] --> B[Caller verifies order, cadence and units]
+    B --> C[Accepted chronological OHLCV]
+    C --> D[obv.ComputeCandles: every bar valid]
+    C --> E[mfi.ComputeCandles: separate warmup]
+    C --> F[Caller projects closing prices]
+    F --> G[rsi.ComputePeriod: RSI warmup]
+    F --> H[macd.ComputeDefault: three readiness masks]
+    D --> I[Caller aligns outputs by original bar index]
+    E --> I
+    G --> I
+    H --> I
+    I --> J[Chronological training and holdout separation]
+    J --> K[Monitoring or downstream model]
+```
+
+**Do not erase a warmup boundary.** A zero-valued RSI or MFI placeholder with
+`Valid=false` is not made meaningful by the corresponding OBV bar being valid.
+Likewise, a later change in the price unit, volume unit, contract multiplier or
+feed cursor is not repaired by rescaling a checkpoint: explicitly normalize
+upstream or start a new epoch under a documented replay policy.
+
+**Do not treat a monitoring feature as a transaction.** The numerical `Push`
+commit and the exchange's message acknowledgement are different operations.
+For failover, durably bind the entire authenticated `Snapshot` to the last
+accepted external source offset; restore and resume from the next unprocessed
+bar. An application that cannot persist those together must supply explicit
+deduplication and replay semantics.
+
+Related entry points: [`TUTORIAL.md`](TUTORIAL.md#11m-obv-foundations-cumulative-signed-volume-and-checkpointed-streams),
+[`FAQ_&_TIPS.md`](FAQ_%26_TIPS.md#13l-obv-faq-cumulative-signed-volume-and-replay-safety),
+[`../obv/doc.go`](../obv/doc.go), and
+[`../obv/example_test.go`](../obv/example_test.go).

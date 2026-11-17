@@ -3,7 +3,7 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/FAQ_&_TIPS.md
-  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd, mfi and the wider lvlath package family
+  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd, mfi, obv and the wider lvlath package family
   lvlath - FAQ & Tips
 
   Purpose:
@@ -32,6 +32,7 @@
     - Wilder RSI warmup masks, deterministic batch/stream semantics, state rollback and checkpoint boundaries.
     - MACD SMA-seeded EMAs, signed features, three readiness masks, checkpoint identity and hot-path ownership.
     - MFI fixed-transition OHLCV windows, zero-volume retention, compensated rebasing and checkpoint authentication.
+    - OBV first-bar zero, cumulative Neumaier correction, zero-volume continuity and checkpoint trust boundaries.
 
   License:
     lvlath is licensed under AGPL-3.0-only. See ../LICENSE.
@@ -74,6 +75,7 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
     13i. [RSI FAQ](#13i-rsi-faq-wilder-streaming-readiness-and-checkpoints)
     13j. [MACD FAQ](#13j-macd-faq--sma-seeding-signed-values-batchstream-replay-and-feature-safety)
     13k. [MFI FAQ](#13k-mfi-faq-volume-weighted-transitions-compensated-windows-and-authenticated-replay)
+    13l. [OBV FAQ](#13l-obv-faq-cumulative-signed-volume-and-replay-safety)
 14. [Builder and gridgraph tips](#14-builder-and-gridgraph-tips)
 15. [Errors and diagnostics](#15-errors-and-diagnostics)
 16. [Determinism and concurrency](#16-determinism-and-concurrency)
@@ -114,6 +116,7 @@ Start with the question, not the algorithm name.
 | “How strong are smoothed up/down changes in an ordered positive price feed?”               | `rsi.ComputePeriod` / `Stream.Push`  | Wilder oscillator with a validity mask or zero-allocation, single-owner recurrence.                   |
 | “How do fast and slow price trends diverge and how does that separation change?”           | `macd.ComputeDefault` / `NewDefault` | SMA-seeded EMA, three signed aligned series, independent readiness masks and replayable Stream.       |
 | “How much rising versus falling typical-price flow occurred over the most recent candles?” | `mfi.ComputeDefault` / `NewDefault`  | Volume-weighted last-P-transition MFI, warmup mask, compensated rolling ring and detached checkpoint. |
+| “What signed volume has accumulated since a chosen session origin?”                        | `obv.ComputeCandles` / `New`         | Closing-price direction, seed zero, Neumaier compensation, transactional replayable stream.           |
 | “How do I build deterministic Monte Carlo, GBM or sensor-noise paths?”                     | `rng.Factory.Stream`                 | Pinned PCG-DXSM, logical path IDs and cached normals; not a cryptographic PRNG.                       |
 | “How do I build dependent-data bootstrap index ensembles?”                                 | `bootstrap.SampleIndices`            | Moving/Circular/Stationary blocks, replay ID and only complete rows.                                  |
 | “How do I infer a hidden operating regime from time-ordered observations?”                 | `hmm`                                | Typed causal filtering, smoothing, Viterbi, and independent-sequence EM.                              |
@@ -144,6 +147,7 @@ detect fixed-window serial dependence  -> ACF ComputeDefault (not causal)
 compute causal Wilder price strength   -> RSI ComputePeriod / Stream.Push
 compute signed trend-separation factor -> MACD ComputeDefault / Stream.Push
 compute volume-weighted OHLCV flow     -> MFI ComputeDefault / Stream.Push
+compute cumulative signed volume       -> OBV ComputeCandles / Stream.Push (no warmup)
 draw dependent-data index replicates   -> BOOTSTRAP SampleIndices (no statistic or CI)
 retrospective regime audit             -> HMM Smooth / Decode (future-conditioned)
 encode symbolic SAX words              -> SAX
@@ -3213,6 +3217,151 @@ golangci-lint run
 
 See [`MFI.md`](MFI.md), [`../mfi/doc.go`](../mfi/doc.go), and the five
 execution-checked scenarios in [`../mfi/example_test.go`](../mfi/example_test.go).
+
+---
+
+## 13l. OBV FAQ: cumulative signed volume and replay safety
+
+### Q13l.1. What does `obv` compute that `mfi`, `rsi` and `macd` do not?
+
+`obv` accumulates **signed current-candle volume** according to successive
+closing-price directions. Its result is an unbounded cumulative feature in
+the supplied volume units. `mfi` instead computes a **bounded rolling
+[0,100] typical-price money-flow ratio**, `rsi` measures smoothed changes
+in price strength, and `macd` measures differences between SMA-seeded EMAs.
+These results and their warmup policies are not interchangeable.
+
+### Q13l.2. Why is the first `obv.Result.Values[0]` zero and already valid?
+
+There is no earlier close against which to sign the initial candle's volume.
+The first bar **only** seeds `previousClose`, and the first accepted output is
+positive `0.0` with `Valid[0]=true`. For a singleton with even
+`Volume=math.MaxFloat64`, `Compute` must return `[0]` without overflow.
+Unlike MFI, there is no period and no unready prefix.
+
+### Q13l.3. Can I remove unchanged-price or zero-volume candles?
+
+No. Both are accepted observations, update `previousClose`, and increment
+`Count`; their contribution is zero. Dropping an unchanged-close bar can
+leave the displayed balance and next comparison unchanged, but it still
+corrupts the accepted Count and feed-offset correspondence. Dropping a
+zero-volume bar **whose close changed** can additionally reverse the sign
+of a later contribution. A **missing** candle is a different state: the
+upstream feed must detect discontinuity and choose an explicit reset/replay
+policy. OBV itself has no timestamps.
+
+### Q13l.4. Does OBV examine Open, High and Low if only Close signs volume?
+
+Yes. `Bar` and `Bars` must satisfy complete finite-positive OHLC geometry:
+`Low<=Open,Close<=High`, `High>=Low`, `Volume>=0`. Every input field is
+validated to reject malformed market records. `Open>High` returns
+`ErrDomain` even if Close and Volume are plausible.
+
+### Q13l.5. Which API should I use for batch, row-oriented feed and streaming?
+
+| Input/use                         | Public call                                         | Ownership                                    |
+|-----------------------------------|-----------------------------------------------------|----------------------------------------------|
+| Five aligned OHLCV columns        | `obv.Compute(obv.Bars{...})`                        | Read-only input; detached Values/Valid       |
+| Decoded chronological candle rows | `obv.ComputeCandles([]obv.Bar{...})`                | No five-column transposition or retention    |
+| Single live candle                | `stream := obv.New(); stream.Push(bar)`             | Mutable single-owner state                   |
+| New known epoch                   | `stream.Reset()`                                    | Starts from a new first-bar zero             |
+| Controlled handoff                | `state := stream.Snapshot(); backup.Restore(state)` | Detached checkpoint; external authentication |
+
+`Stream{}` is as usable as `New()`. There are no `Options`, `Context` or hidden
+period modes in the OBV package.
+
+### Q13l.6. What error takes precedence for malformed columns and OHLCV?
+
+First: nil any-column → `ErrNilInput`; non-nil empty Open →
+`ErrEmptyInput`; unequal column lengths → `ErrShape`. Only after shape
+validation are individual rows inspected in increasing index order. The
+first failing row wins, with nonfinite input (`ErrNonFinite`) taking priority
+over domain geometry (`ErrDomain`) *within that row*. Numeric Count or
+accumulation failure is `ErrOverflow`. Always use `errors.Is`.
+
+### Q13l.7. Why not use `sum += volume` or `sum -= volume` directly?
+
+At `1e16` magnitude, adding an exact `1` can round away the increment.
+When a later opposite-signed `1e16` arrives, ordinary accumulation reports
+zero instead of `1`. OBV retains a Neumaier correction; the displayed value
+is the finite `sum+compensation`. Both components are needed for correct
+future cancellation. This improves accuracy, not arbitrary precision.
+
+### Q13l.8. Can a valid finite pair of volumes still trigger `ErrOverflow`?
+
+Yes. The cumulative result may exceed the representable binary64 range.
+The kernel attempts cancellation-first rebalance for intermediate overflow
+that might otherwise conceal a finite result; it never silently clips,
+ignores a bar or invents infinity as a normal OBV. If the operation fails,
+`Push` returns no valid observation and leaves **all** stream fields intact.
+A late batch overflow returns `(nil,error)` rather than a usable prefix.
+
+### Q13l.9. How do I prove `Push` rejected a candle without partial mutation?
+
+Capture `before := stream.Snapshot()` and compare **all** fields with
+`stream.Snapshot()` directly after the failed Push. Compare `FloatState`
+using `math.Float64bits` because compensation or even a signed zero may
+change while the displayed total appears identical. Then replay a corrected
+valid bar and check that it compares against the last accepted close.
+
+### Q13l.10. What exactly is inside the v1 Snapshot?
+
+`Algorithm="obv/neumaier/v1"`, `Config=lowercase
+SHA256(ASCII Algorithm)`, `Count`, `FloatState=[previousClose,sum,compensation]`
+and `IntState=[]` of length zero. `Count=0` requires zero coordinates;
+`Count=1` requires a positive previous close and zero contributions.
+`Count=MaxUint64` can be restored, but the next Push rejects with
+`ErrOverflow`. Nil `Snapshot()` returns `Snapshot{}`; nil `Restore` reports
+`ErrNilInput` and nil `Reset()` is harmless.
+
+### Q13l.11. Does Config protect against forged state or replay?
+
+No. It is SHA-256 of a **fixed public algorithm string**, not a hash of
+the mutable fields and not a keyed MAC. `Restore` protects against malformed
+or incompatible **structure**, not an authenticated market history. Sign or
+MAC the *entire serialized snapshot* together with the instrument, volume
+unit, source feed identity and last committed offset, and enforce replay
+protection outside `obv`.
+
+### Q13l.12. Are returned Result slices and checkpoints safe to modify?
+
+They are detached and caller-owned. `Restore` copies values into scalar
+stream fields and retains no input slice. Concurrent calls mutating one
+Stream are **unsupported**; use one owner or external synchronization.
+`Result.IsNil()` checks the result pointer, not whether slices have length
+zero. An allocated empty `Result{}` is not a successful computation.
+
+### Q13l.13. Can I sum OBV across different instruments or claim “smart money”?
+
+Not without a separately justified unit conversion and aggregation rule.
+Some feeds report base assets, others contracts or quote notional. A growing
+OBV records volume attached to upward close transitions; it cannot identify
+buyers, institutions, executed order types, or guarantee a future breakout.
+Any screening threshold or strategy belongs to the caller, not this package.
+
+### Q13l.14. How should I verify this package before production?
+
+Start with independent hand or rational oracles, not only batch/stream parity
+through the shared kernel. Cover OBV01–OBV08: first-bar zero, cancellation
+`(+1e16,+1,-1e16)`, equal close with huge volume, true overflow and state
+rollback, volume scaling, malformed OHLC, and checkpoint continuation at
+count zero/one and after cancellation. Test nonfinite fields, nil receivers,
+source ownership and nonzero-delta allocation behavior. The tests live
+strictly in `package obv_test`.
+
+```bash
+go test ./obv -count=1 -cover
+go test ./obv -race -count=1
+go test ./obv -run '^Example' -count=1 -v
+go test ./obv -run '^$' -bench . -benchmem
+go test ./...
+go vet ./...
+golangci-lint run
+```
+
+For complete mathematics, ABI, code examples and the trust model, see
+[`OBV.md`](OBV.md), [`../obv/doc.go`](../obv/doc.go) and the five
+[`../obv/example_test.go`](../obv/example_test.go) scenarios.
 
 ---
 
