@@ -3,9 +3,9 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/TUTORIAL.md
-  Package reference: matrix, stats, ols, ridge, series, rsi, macd, mfi, obv, ad and the wider lvlath package family
+  Package reference: matrix, stats, ols, ridge, series, rsi, macd, mfi, obv, ad, montecarlo and the wider lvlath package family
   Contract status: learning guide; package doc.go and source define the public API.
-  Scope: graph, matrix, factorization, statistical and temporal workflows, including causal MACD, rolling MFI, cumulative OBV and Chaikin A/D.
+  Scope: graph, matrix, factorization, statistical and temporal workflows, including causal MACD, rolling MFI, cumulative OBV, Chaikin A/D and reproducible parallel Monte Carlo.
   lvlath - Repository Tutorial
 
   Purpose:
@@ -25,7 +25,7 @@
 
 > **hard math on an easy level**
 
-Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fitted feature scaling, covariance PCA, causal Wilder RSI, SMA-seeded MACD, rolling Money Flow Index, compensated On-Balance Volume, Chaikin A/D and time-series alignment.
+Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fitted feature scaling, covariance PCA, causal Wilder RSI, SMA-seeded MACD, rolling Money Flow Index, compensated On-Balance Volume, Chaikin A/D, reproducible parallel Monte Carlo and time-series alignment.
 
 This tutorial is the beginning of the learning path. It introduces the objects and ideas that most packages share: graphs, matrices, options, result artifacts, error contracts, and deterministic algorithm execution.
 
@@ -59,6 +59,7 @@ This tutorial is the beginning of the learning path. It introduces the objects a
     11l. [MFI Foundations: Volume-Weighted Typical Price, Compensated Windows and Recoverable Streams](#11l-mfi-foundations-volume-weighted-typical-price-compensated-windows-and-recoverable-streams)
     11m. [OBV Foundations: Cumulative Signed Volume and Checkpointed Streams](#11m-obv-foundations-cumulative-signed-volume-and-checkpointed-streams)
     11n. [AD Foundations: Close-Location Volume and Deterministic Replay](#11n-ad-foundations-close-location-volume-and-deterministic-replay)
+    11o. [Monte Carlo Foundations: Path-Indexed Simulation, Ordered Reduction and Bounded Parallelism](#11o-monte-carlo-foundations-path-indexed-simulation-ordered-reduction-and-bounded-parallelism)
 12. [Algorithm Selection Guide](#12-algorithm-selection-guide)
 13. [Professional Best Practices](#13-professional-best-practices)
 14. [Where To Go Next](#14-where-to-go-next)
@@ -99,6 +100,7 @@ The library covers:
 * `ad` Chaikin close-location-weighted base volume, first-bar inclusion, Neumaier compensation and checkpointed streaming;
 * `bootstrap` reproducible Moving, Circular and Stationary block-index ensembles with per-replicate RNG streams and atomic row publication;
 * `rng` local pinned PCG-DXSM streams with SHA-256 seed derivation, strictly open uniforms and cached Box-Muller normals;
+* `montecarlo` bounded-parallel independent sampling with per-path versioned streams, path-ordered `stats.Moments`, exact empirical quantiles and prefix-only interruption results;
 * `paa` exact fractional time-series compression, rational segment boundaries and value-only feature projection;
 * `sax` symbolic words from fractional PAA and compatible Euclidean MINDIST (not a DTW lower bound);
 * `tsp` matrix-backed tour optimization with exact, approximate, matching, and local-search regimes;
@@ -123,6 +125,7 @@ causal sample transform    *series.TransformResult     detached Values + Valid m
 timestamp-grid inspection  *series.ValidationResult    exact cadence / missing slots
 dependent index ensembles  *bootstrap.Result           detached complete rows / RNG replay revision
 versioned stochastic path  rng.RNG                     mutable PCG-DXSM draw stream, owned by one goroutine
+independent path ensemble  *montecarlo.Result          ordered means/variance/SE, optional exact quantiles and detached samples
 sample autocorrelation     *acf.Result                 fixed-window lag coefficients / pair counts
 Wilder RSI factor          *rsi.Result                 aligned oscillator / Valid mask
 MACD trend difference      *macd.Result                aligned Line / Signal / Histogram masks
@@ -228,6 +231,7 @@ Read these files as a learning path. `doc.go` files define implemented package c
 | 8m   | [`MFI.md`](MFI.md)                         | Compensated rolling MFI, zero-volume slots, canonical batch/stream parity and checkpoint integrity boundaries.              |
 | 8n   | [`OBV.md`](OBV.md)                         | Cumulative signed volume, first-bar zero, Neumaier accumulation, stream rollback and externally authenticated replay.       |
 | 8o   | [`AD.md`](AD.md)                           | Chaikin close-location-weighted volume, first-bar inclusion, stable multiplier, Neumaier rebase and snapshot trust.         |
+| 8p   | [`MONTECARLO.md`](MONTECARLO.md)           | Parallel path streams, ordered moments, bounded dispatch, exact quantiles and partial-result policy.                        |
 | 9    | [`DTW.md`](DTW.md)                         | `Align`, `AlignCostMatrix`, `AlignMatrix`, `AlignBounded`, exact `Search`, numeric and path artifacts.                      |
 | 9a   | [`DTW_SEARCH.md`](DTW_SEARCH.md)           | Fixed-length exact top-K, certified LB_Keogh, workers, budgets, and partial-result law.                                     |
 | 10   | [`TSP.md`](TSP.md)                         | Matrix-backed tours, exact regimes, Christofides, Blossom matching, local search, timeouts.                                 |
@@ -260,7 +264,8 @@ Working on numeric/time-series workflows:
   SERIES -> OBV.ComputeCandles / Stream.Push -> cumulative signed volume, valid from first candle
   SERIES -> AD.ComputeCandles / Stream.Push -> close-location-weighted volume, valid from bar zero
   SERIES -> BOOTSTRAP.SampleIndices -> paired matrix/return/sensor resamples -> caller estimators
-  RNG.Stream(seed, logicalPath) -> Monte Carlo / fault injection -> indexed reduction
+  RNG.Stream(seed, logicalPath) -> own sampler model -> MONTECARLO.Run (bounded jobs + indexed moments)
+  MONTECARLO.Run -> mean/variance/SE / optional exact quantiles -> application decision policy
   OLS/RIDGE residual window -> ACF -> investigate serial dependence (NOT a p-value)
   MATRICES -> HMM.Smooth / Decode -> offline incident reconstruction
   SAX (Euclidean screening) != DTW (nonlinear alignment)
@@ -385,6 +390,25 @@ Think of `lvlath` as a contract stack.
                          │ stable covariance + checked Jacobi spectrum   │
                          │ frozen loadings / inference without refit     │
                          └───────────────────────────────────────────────┘
+```
+
+### Parallel stochastic execution bridge
+
+`rng` creates a deterministic single-owner stream; `montecarlo` adds a path-indexed bounded scheduler and canonical single-owner moments; `stats` provides the numeric recurrence; `matrix` stores optional detached results. The application continues to own the stochastic model and its domain assumptions. `bootstrap` instead returns block-resampled indices from already observed dependent data. These are composable but **not interchangeable** numerical questions.
+
+```text
+rng.Factory.Stream(Seed,pathID)      application Sampler
+                  \                  /
+                   bounded worker pool
+                           |
+                  indexed path outcomes
+                           |
+                single ordered coordinator
+                           |
+                      stats.Moments
+                           |
+                  *montecarlo.Result
+                (optional matrix.Matrix)
 ```
 
 ### Repository laws
@@ -2713,16 +2737,14 @@ odd-sized `FillNormal` would otherwise discard the pending spare at its end.
 
 ### 11i.4. Parallel Monte Carlo without accidental nondeterminism
 
-A GBM/European-call Monte Carlo pipeline should assign `pathID = uint64(path)`
-to each simulation, write `payoff[path]`, join workers, and sum payoffs by
-ascending path index. It must **not** sum worker-local floating-point totals
-in completion order, which is non-associative and can vary at the last bit.
+The `rng` package supplies streams but does **not** schedule paths or reduce
+simulation payoffs. A manually orchestrated GBM experiment must assign stable
+logical path IDs, retain outcomes by ID, join workers and reduce in ascending
+path order; worker-local or completion-order floating sums are not reproducible.
+For ordinary independent-path ensembles, prefer `montecarlo.Run`, which already
+implements bounded scheduling and that canonical reduction boundary.
 
-Run the [100,000-path standalone scenario](../examples/rng/main.go):
-
-```bash
-go run ./examples/rng
-```
+For reproducible bounded-parallel orchestration, continue to the [Monte Carlo driver](#11o-monte-carlo-foundations-path-indexed-simulation-ordered-reduction-and-bounded-parallelism) and the five executable [`montecarlo` examples](../montecarlo/example_test.go). `montecarlo.Run` implements the fixed path-ID reduction order rather than requiring callers to assemble their own queue.
 
 The application owns GBM parameters, dividends, discretization and option
 valuation; `rng` owns only draw generation. The executable
@@ -3738,6 +3760,169 @@ see [`OBV.md`](OBV.md) and [`MFI.md`](MFI.md).
 
 ---
 
+## 11o. Monte Carlo Foundations: Path-Indexed Simulation, Ordered Reduction and Bounded Parallelism
+
+`montecarlo` is the bridge from one version-pinned `rng` stream to a **reproducible ensemble of independent model outcomes**. Its job is to execute the caller's fixed-dimensional `Sampler`, not to invent an asset model, a random physical process, or a risk threshold. Every returned feature is an application-defined numeric quantity: a payoff in USD, an outage count, a crack length in millimetres, or a fault indicator.
+
+### 11o.1. Model, stream, execution, and statistics are separate responsibilities
+
+```text
+application calibration / fixed model parameters
+                       |
+                       v
+                Sampler.Sample
+                   ^       ^
+      pathID = i --+       +-- rng.Factory.Stream(seed,i)
+                       |
+             one finite vector [x0,...,xd-1]
+                       |
+        bounded workers (completion order arbitrary)
+                       |
+        coordinator waits for nextReduce = i
+                       |
+      stats.Moments.Update in pathID then feature order
+                       |
+      Result: Completed / Mean / SampleVariance / SE
+              optional Samples and Quantiles
+```
+
+The sampler must be deterministic for a given `(pathID, RNG draw sequence)` and safe for simultaneous `Sample` calls when `Workers>1`. The driver constructs a fresh `rng.RNG` for **every logical path**, not every worker, and records `Result.Seed` plus `Result.RNG` (the factory's version string). Never share one mutable RNG across workers, consult global counters for draw selection, or consume wall-clock time as implicit entropy.
+
+The same full successful run is bitwise reproducible on a single platform/backend for `Workers=1,2,4,8` when the sampler satisfies that contract. A change in the *number of completed paths before cancellation* is allowed: it depends on execution timing, not the mathematical full-run sequence.
+
+### 11o.2. The bounded window prevents a slow first path from exhausting memory
+
+The worker pool accepts only logical IDs in a window tied to the first not-yet-reduced ID:
+
+![Bounded Monte Carlo dispatch](https://latex.codecogs.com/svg.image?%5Cmathrm%7BnextReduce%7D%5Cle%20i%3C%5Cmin%5Cleft%28N%2C%5Cmathrm%7BnextReduce%7D%2B2W%5Cright%29)
+
+`W=min(Paths,max(1,Workers))`. If path 0 stalls, then `nextReduce` stays zero, so at most `2W` IDs can be dispatched regardless of a million requested paths. Completed later outcomes occupy a bounded reorder buffer; **none** may enter the statistics until every lower ID has been committed.
+
+This is different from creating one goroutine or one queued work item for every path. It also explains why the coordinator, not workers, owns all mutable `stats.Moments` states. Parallel partial sums would change floating-point grouping and undermine worker-count parity.
+
+### 11o.3. Know which uncertainty and which memory policy you asked for
+
+For `n=Completed>=2`, a feature's returned statistics are:
+
+![Sample variance and Monte Carlo SE](https://latex.codecogs.com/svg.image?s%5E2%3D%5Cfrac%7B%5Csum_i%28x_i-%5Cbar%7Bx%7D%29%5E2%7D%7Bn-1%7D%2C%5Cqquad%5Cmathrm%7BSE%7D%28%5Cbar%7Bx%7D%29%3D%5Csqrt%7Bs%5E2%2Fn%7D)
+
+`SampleVariance` is the **sample variance of individual simulated outcomes**. `MeanStandardError` is the **Monte Carlo sampling error of their mean** under independent paths. Neither measures uncertainty from incorrect model dynamics, poor calibration, or future parameter drift. The implementation delegates to `stats.Moments` for numerically protected central moments, then computes the standard error without a premature underflowing division.
+
+Exact empirical quantiles use the sorted observations of **every path**: `h=(n-1)*p`, with linear interpolation between adjacent order statistics. They require O(`Paths*d`) stored values even when the public `Samples` field is nil. Set `RetainSamples` only when your consumer needs individual paths; otherwise prefer mean-only operation or accept the explicit exact-quantile memory cost.
+
+| Regime                             | Public output                       | Main memory behavior                                                                       |
+|:-----------------------------------|:------------------------------------|:-------------------------------------------------------------------------------------------|
+| `Estimate` / `EstimateParallel`    | Mean, sample variance, SE           | No full path matrix; O(`d + W*d`) driver memory                                            |
+| `RunWithQuantiles(...,levels,...)` | Same moments plus `q × d` quantiles | One private `Paths × d` buffer, a `Paths` scratch column and quantile output               |
+| `RunWithSamples(...)`              | A `Completed × d` matrix            | One budget-checked dense backing; a partial prefix retains its original backing allocation |
+
+`MaxSamplesBytes=0` selects a **64 MiB optional-buffer budget**, not an RSS limit. Budget rejection and size overflow happen before `Sample` and return nil results. The limit excludes sampler allocations, worker stacks and moment state. See [`MONTECARLO.md`](MONTECARLO.md#7-memory-budget-and-honest-complexity) for the exact byte formula.
+
+### 11o.4. A five-asset basket option: real modeling responsibilities stay in the Sampler
+
+The following complete program evaluates a **one-year European call on a weighted basket of five uncorrelated assets** under a deliberately specified risk-neutral geometric Brownian model. Spots, weights, volatilities, strike and interest rate are illustrative, not live quotes or validated market calibration. The driver knows none of those assumptions; it sees only `[discountedPayoff,exerciseIndicator]`.
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "math"
+
+    "github.com/lvlath/go/montecarlo"
+    "github.com/lvlath/go/rng"
+)
+
+type basketCall struct {
+    spots        [5]float64
+    weights      [5]float64
+    volatilities [5]float64
+    rate         float64
+    maturity     float64
+    strike       float64
+}
+
+func (basketCall) Dimension() int { return 2 }
+
+func (m basketCall) Sample(ctx context.Context, _ uint64, random rng.RNG) ([]float64, error) {
+    if err := ctx.Err(); err != nil {
+        return nil, err
+    }
+    basket := 0.0
+    for asset := range m.spots {
+        sigma := m.volatilities[asset]
+        terminal := m.spots[asset] * math.Exp(
+            (m.rate-0.5*sigma*sigma)*m.maturity+
+                sigma*math.Sqrt(m.maturity)*random.Normal(),
+        )
+        basket += m.weights[asset] * terminal
+    }
+    payoff := math.Max(basket-m.strike, 0)
+    exercised := 0.0
+    if payoff > 0 {
+        exercised = 1
+    }
+    return []float64{math.Exp(-m.rate*m.maturity) * payoff, exercised}, nil
+}
+
+func main() {
+    model := basketCall{
+        spots:        [5]float64{128, 96, 141, 83, 115},
+        weights:      [5]float64{0.25, 0.20, 0.20, 0.20, 0.15},
+        volatilities: [5]float64{0.22, 0.18, 0.26, 0.16, 0.21},
+        rate:         0.035,
+        maturity:     1,
+        strike:       115,
+    }
+    result, err := montecarlo.EstimateParallel(
+        context.Background(), 60_000, 20261118, 4, model,
+    )
+    if err != nil {
+        fmt.Println("pricing failed:", err)
+        return
+    }
+    if !result.Complete {
+        fmt.Println("pricing run incomplete")
+        return
+    }
+
+    // 1.96*SE is an approximate normal-sampling half-width, conditional on
+    // the assumed model and sufficient independent simulation precision.
+    approximateHalfWidth := 1.96 * result.MeanStandardError[0]
+    fmt.Printf("basket value=%.2f USD; approx MC half-width=%.2f USD; exercised=%.1f%%\n",
+        result.Mean[0], approximateHalfWidth, 100*result.Mean[1])
+}
+```
+
+This example returns two different observables in one path, thus keeping payoff and exercise-frequency estimators on the **same underlying scenarios**. The model must supply correct correlations if assets are not independent: the driver does not invent them. For an output-checked, version-anchored option fixture, see [`../montecarlo/example_test.go`](../montecarlo/example_test.go).
+
+### 11o.5. Partial prefixes are auditable but are not completed experiments
+
+When a context is canceled or any `Sample` returns an error, the driver stops issuing new paths, cancels its child context, drains accepted work and returns a **contiguous committed prefix** `[0,Completed)`. Results for higher IDs beyond the first missing path are never merged. `Quantiles` is nil on every failed run, even when the prefix contains enough observations to compute an empirical statistic separately. For fewer than two committed paths the three moment vectors are nil.
+
+```go
+result, err := montecarlo.Run(ctx, plan, sampler)
+if err != nil {
+    // result == nil: validation/admission failed before any sampling.
+    // result != nil: an execution may have published an auditable prefix.
+    // Handle both branches explicitly; do not treat partial data as success.
+    return err
+}
+if !result.Complete {
+    return montecarlo.ErrDomain // Fail closed in this illustrative caller policy.
+}
+// Consume result.Mean and optional result.Quantiles or result.Samples.
+```
+
+The snippet belongs inside a function returning `error` with `ctx`, `plan` and `sampler` supplied by the application. `Completed==Requested` is not itself a success certificate: final moment materialization or quantile generation can fail after all paths were reduced. In that case `Complete=false`, `err!=nil`, and quantiles are not published.
+
+The driver does **not** recover panics inside sampler workers. An uncaught worker panic has normal Go process-terminating behavior, not a `Result` with an error. An uncooperative sampler that ignores the cancellation context can prevent graceful shutdown. These are explicit application safety boundaries.
+
+For full invariants, per-file GoDoc, precise error precedence, numeric sign-safe interpolation and benchmark regimes, continue to [`MONTECARLO.md`](MONTECARLO.md), [`../montecarlo/doc.go`](../montecarlo/doc.go) and the [Monte Carlo FAQ](FAQ_%26_TIPS.md#13n-monte-carlo-faq-replay-scheduling-numerics-and-partial-results).
+
+---
+
 ## 12. Algorithm Selection Guide
 
 ### If the input is a graph
@@ -3764,45 +3949,46 @@ see [`OBV.md`](OBV.md) and [`MFI.md`](MFI.md).
 
 ### If the input is numeric data
 
-| Problem                                               | Package                                       | Main output                                                                                        |
-|:------------------------------------------------------|:----------------------------------------------|:---------------------------------------------------------------------------------------------------|
-| Dense algebra                                         | `matrix`                                      | matrix result with shape/error policy.                                                             |
-| Stable mean and population/sample variance            | `stats.Summarize`                             | detached `Summary`, exact binary-input mean and scaled variance.                                   |
-| Streaming/partitioned moments                         | `stats.Moments`                               | error-atomic Welford updates and Chan merges.                                                      |
-| Training-only feature scaling                         | `stats.FitStandardizer`                       | immutable model and detached fit metadata.                                                         |
-| Numeric cleaning                                      | `matrix`                                      | sanitized matrix.                                                                                  |
-| Matrix-native normalization                           | `matrix`                                      | matrix-specific transforms under their own contract.                                               |
-| Covariance/correlation                                | `matrix`                                      | stable sample moments and direct Pearson coefficients.                                             |
-| Fitted PCA subspace and reconstruction                | `pca.FitWithComponents` / `Model.Reconstruct` | Frozen orthogonal basis, strict eigenpair gate, original-unit reconstruction.                      |
-| Square linear solve with pivoting                     | `matrix.FactorLU`                             | reusable factor, `P*A=L*U`, exact residual diagnostics.                                            |
-| Tall full-column-rank least squares                   | `matrix.SolveLeastSquares` / `FactorQR`       | Householder QR; numerical rank and `kappa_1(R)` measurement.                                       |
-| Regularized regression for collinear/wide features    | `ridge.Fit` / `ridge.FitStandardized`         | Positive-Lambda slope shrinkage, unpenalized intercept, frozen original-unit coefficients.         |
-| Fitted regression for future physical inputs          | `ols.Fit` / `ols.FitStandardized`             | Immutable Model, original-unit coefficients, training SSE, no refit.                               |
-| Symmetric positive-definite system                    | `matrix.FactorCholesky`                       | accepted symmetric midpoint, SPD check, reusable solves.                                           |
-| Symmetric spectral analysis                           | `matrix`                                      | eigenvalues/eigenvectors.                                                                          |
-| Exact nanosecond cadence checks                       | `series.Validate`                             | sample count + ordered gap metadata.                                                               |
-| Dependent-data resampling index ensembles             | `bootstrap.SampleIndices`                     | Detached Moving/Circular/Stationary `[][]int`, replay ID, partial completion law.                  |
-| Causal lag/difference/returns                         | `series`                                      | length-preserving values + validity mask.                                                          |
-| Fractional equal-duration scalar compression          | `paa.Transform` / `paa.TransformRange`        | Detached PAA means, exact rational intervals, original window length.                              |
-| Fixed-alphabet symbolic window encoding               | `sax.Encode` / `sax.Encoder.Encode`           | Detached symbol word, policy identity and optional transformed PAA.                                |
-| Compatible Euclidean symbolic lower bound             | `sax.Encoder.Mindist` / `sax.MindistValues`   | Lower-bound dissimilarity in the selected transformed space, never a general DTW bound.            |
-| Direct sample ACF by integer lag                      | `acf.ComputeDefault` / `acf.Compute`          | One fitted window, explicit denominator convention and pair counts; not causal streaming.          |
-| Causal Wilder price-strength oscillator               | `rsi.ComputePeriod` / `rsi.NewPeriod`         | Aligned Values+Valid or single-owner zero-allocation stream with explicit Reset.                   |
-| SMA-seeded MACD and trend separation                  | `macd.ComputeDefault` / `macd.NewDefault`     | Three aligned signed outputs; independently gated Line and Signal/Histogram; zero-allocation Push. |
-| Volume-weighted OHLCV price direction and rolling MFI | `mfi.ComputeDefault` / `mfi.NewDefault`       | Finite `[0,100]` feature, one Valid mask, compensated ring and versioned snapshots.                |
-| Cumulative volume signed by close direction           | `obv.ComputeCandles` / `obv.New`              | Valid-first-bar zero, Neumaier state, unbounded finite balance and externally protected snapshots. |
-| Cumulative volume weighted by close position          | `ad.ComputeCandles` / `ad.New`                | Valid first-bar contribution, bounded multiplier, Neumaier and external replay trust.              |
-| Reproducible stochastic simulation paths              | `rng.NewFactory().Stream` / `rng.NewStream`   | Pinned PCG-DXSM, logical path IDs, one goroutine owner per stream.                                 |
-| Complete fixed index windows                          | `series.WindowRanges`                         | ordered half-open sample-index intervals.                                                          |
-| Hidden-state streaming causal filtering               | `hmm.FilterStep` / `FilterDefault`            | P(z_t given observations through t), no future-sample leakage.                                     |
-| Retrospective hidden-state attribution                | `hmm.Smooth` / `hmm.Decode`                   | Full-sequence state marginals vs one optimal joint path; different contracts.                      |
-| Independent categorical/Gaussian sequence training    | `hmm.FitCategorical` / `hmm.FitGaussian`      | MAP Baum-Welch with no cross-sequence transitions and explicit convergence diagnostics.            |
-| Scalar sequence alignment                             | `dtw.Align`                                   | DTW `Result` with distance/reachability.                                                           |
-| Inclusive-limit scalar alignment                      | `dtw.AlignBounded`                            | Exact/above-limit/unreachable status.                                                              |
-| Globally exact window top-K                           | `dtw.Search`                                  | Sorted fixed-length squared-DTW matches.                                                           |
-| Precomputed local-cost alignment                      | `dtw.AlignCostMatrix`                         | DTW over caller-owned finite cost surface.                                                         |
-| Multivariate time-series alignment                    | `dtw.AlignMatrix`                             | squared-L2 row-cost alignment result.                                                              |
-| Complete route matrix optimization                    | `tsp.SolveMatrix`                             | tour, cost, exactness/timeout/ratio metadata.                                                      |
+| Problem                                                   | Package                                       | Main output                                                                                                   |
+|:----------------------------------------------------------|:----------------------------------------------|:--------------------------------------------------------------------------------------------------------------|
+| Dense algebra                                             | `matrix`                                      | matrix result with shape/error policy.                                                                        |
+| Stable mean and population/sample variance                | `stats.Summarize`                             | detached `Summary`, exact binary-input mean and scaled variance.                                              |
+| Streaming/partitioned moments                             | `stats.Moments`                               | error-atomic Welford updates and Chan merges.                                                                 |
+| Training-only feature scaling                             | `stats.FitStandardizer`                       | immutable model and detached fit metadata.                                                                    |
+| Numeric cleaning                                          | `matrix`                                      | sanitized matrix.                                                                                             |
+| Matrix-native normalization                               | `matrix`                                      | matrix-specific transforms under their own contract.                                                          |
+| Covariance/correlation                                    | `matrix`                                      | stable sample moments and direct Pearson coefficients.                                                        |
+| Fitted PCA subspace and reconstruction                    | `pca.FitWithComponents` / `Model.Reconstruct` | Frozen orthogonal basis, strict eigenpair gate, original-unit reconstruction.                                 |
+| Square linear solve with pivoting                         | `matrix.FactorLU`                             | reusable factor, `P*A=L*U`, exact residual diagnostics.                                                       |
+| Tall full-column-rank least squares                       | `matrix.SolveLeastSquares` / `FactorQR`       | Householder QR; numerical rank and `kappa_1(R)` measurement.                                                  |
+| Regularized regression for collinear/wide features        | `ridge.Fit` / `ridge.FitStandardized`         | Positive-Lambda slope shrinkage, unpenalized intercept, frozen original-unit coefficients.                    |
+| Fitted regression for future physical inputs              | `ols.Fit` / `ols.FitStandardized`             | Immutable Model, original-unit coefficients, training SSE, no refit.                                          |
+| Symmetric positive-definite system                        | `matrix.FactorCholesky`                       | accepted symmetric midpoint, SPD check, reusable solves.                                                      |
+| Symmetric spectral analysis                               | `matrix`                                      | eigenvalues/eigenvectors.                                                                                     |
+| Exact nanosecond cadence checks                           | `series.Validate`                             | sample count + ordered gap metadata.                                                                          |
+| Dependent-data resampling index ensembles                 | `bootstrap.SampleIndices`                     | Detached Moving/Circular/Stationary `[][]int`, replay ID, partial completion law.                             |
+| Causal lag/difference/returns                             | `series`                                      | length-preserving values + validity mask.                                                                     |
+| Fractional equal-duration scalar compression              | `paa.Transform` / `paa.TransformRange`        | Detached PAA means, exact rational intervals, original window length.                                         |
+| Fixed-alphabet symbolic window encoding                   | `sax.Encode` / `sax.Encoder.Encode`           | Detached symbol word, policy identity and optional transformed PAA.                                           |
+| Compatible Euclidean symbolic lower bound                 | `sax.Encoder.Mindist` / `sax.MindistValues`   | Lower-bound dissimilarity in the selected transformed space, never a general DTW bound.                       |
+| Direct sample ACF by integer lag                          | `acf.ComputeDefault` / `acf.Compute`          | One fitted window, explicit denominator convention and pair counts; not causal streaming.                     |
+| Causal Wilder price-strength oscillator                   | `rsi.ComputePeriod` / `rsi.NewPeriod`         | Aligned Values+Valid or single-owner zero-allocation stream with explicit Reset.                              |
+| SMA-seeded MACD and trend separation                      | `macd.ComputeDefault` / `macd.NewDefault`     | Three aligned signed outputs; independently gated Line and Signal/Histogram; zero-allocation Push.            |
+| Volume-weighted OHLCV price direction and rolling MFI     | `mfi.ComputeDefault` / `mfi.NewDefault`       | Finite `[0,100]` feature, one Valid mask, compensated ring and versioned snapshots.                           |
+| Cumulative volume signed by close direction               | `obv.ComputeCandles` / `obv.New`              | Valid-first-bar zero, Neumaier state, unbounded finite balance and externally protected snapshots.            |
+| Cumulative volume weighted by close position              | `ad.ComputeCandles` / `ad.New`                | Valid first-bar contribution, bounded multiplier, Neumaier and external replay trust.                         |
+| Reproducible stochastic simulation paths                  | `rng.NewFactory().Stream` / `rng.NewStream`   | Pinned PCG-DXSM, logical path IDs, one goroutine owner per stream.                                            |
+| Independent Monte Carlo paths and exact outcome quantiles | `montecarlo.Run` / `RunWithQuantiles`         | Path-indexed RNG streams, ordered vector sample moments, bounded worker window and explicit memory admission. |
+| Complete fixed index windows                              | `series.WindowRanges`                         | ordered half-open sample-index intervals.                                                                     |
+| Hidden-state streaming causal filtering                   | `hmm.FilterStep` / `FilterDefault`            | P(z_t given observations through t), no future-sample leakage.                                                |
+| Retrospective hidden-state attribution                    | `hmm.Smooth` / `hmm.Decode`                   | Full-sequence state marginals vs one optimal joint path; different contracts.                                 |
+| Independent categorical/Gaussian sequence training        | `hmm.FitCategorical` / `hmm.FitGaussian`      | MAP Baum-Welch with no cross-sequence transitions and explicit convergence diagnostics.                       |
+| Scalar sequence alignment                                 | `dtw.Align`                                   | DTW `Result` with distance/reachability.                                                                      |
+| Inclusive-limit scalar alignment                          | `dtw.AlignBounded`                            | Exact/above-limit/unreachable status.                                                                         |
+| Globally exact window top-K                               | `dtw.Search`                                  | Sorted fixed-length squared-DTW matches.                                                                      |
+| Precomputed local-cost alignment                          | `dtw.AlignCostMatrix`                         | DTW over caller-owned finite cost surface.                                                                    |
+| Multivariate time-series alignment                        | `dtw.AlignMatrix`                             | squared-L2 row-cost alignment result.                                                                         |
+| Complete route matrix optimization                        | `tsp.SolveMatrix`                             | tour, cost, exactness/timeout/ratio metadata.                                                                 |
 
 ### If the goal is documentation or testing
 
@@ -3923,9 +4109,17 @@ build input -> choose policy -> run algorithm -> inspect result fields
 Sparse graph traversal, dense matrix kernels, flow residual pressure, DTW full-matrix mode, TSP exact search, and local search are different regimes. Benchmark them separately and name the regime clearly.
 
 
+### 13.12. Reproduce a full stochastic experiment, not merely its seed
+
+For Monte Carlo, pin the model revision, model parameter values and units, base seed, and the returned RNG revision. Keep path IDs independent of worker IDs and require complete success before treating quantiles as an ensemble summary. Remember that sampling standard error is **not** model uncertainty and that a quantiles-only run still materializes raw observations internally. See [`MONTECARLO.md`](MONTECARLO.md).
+
 ## 14. Where To Go Next
 
 Use this tutorial as the entry point, then move into package-specific material:
+
+> If you are running reproducible stochastic engineering or risk experiments:
+>
+>   [`RNG.md`](RNG.md) -> [`MONTECARLO.md`](MONTECARLO.md) -> [`../montecarlo/example_test.go`](../montecarlo/example_test.go)
 
 > If you are modeling topology first:
 >

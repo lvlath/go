@@ -3,7 +3,7 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/FAQ_&_TIPS.md
-  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd, mfi, obv, ad and the wider lvlath package family
+  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd, mfi, obv, ad, montecarlo and the wider lvlath package family
   lvlath - FAQ & Tips
 
   Purpose:
@@ -34,6 +34,7 @@
     - MFI fixed-transition OHLCV windows, zero-volume retention, compensated rebasing and checkpoint authentication.
     - OBV first-bar zero, cumulative Neumaier correction, zero-volume continuity and checkpoint trust boundaries.
     - Chaikin A/D bounded multiplier, first-bar contribution, global batch error precedence and checkpoint replay integrity.
+    - Monte Carlo per-path RNG replay, 2W scheduling bounds, stable moments, exact quantiles, byte admission and interruption prefixes.
 
   License:
     lvlath is licensed under AGPL-3.0-only. See ../LICENSE.
@@ -78,6 +79,7 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
     13k. [MFI FAQ](#13k-mfi-faq-volume-weighted-transitions-compensated-windows-and-authenticated-replay)
     13l. [OBV FAQ](#13l-obv-faq-cumulative-signed-volume-and-replay-safety)
     13m. [AD FAQ](#13m-ad-faq-close-location-volume-precision-and-checkpoint-safety)
+    13n. [Monte Carlo FAQ](#13n-monte-carlo-faq-replay-scheduling-numerics-and-partial-results)
 14. [Builder and gridgraph tips](#14-builder-and-gridgraph-tips)
 15. [Errors and diagnostics](#15-errors-and-diagnostics)
 16. [Determinism and concurrency](#16-determinism-and-concurrency)
@@ -94,37 +96,38 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
 
 Start with the question, not the algorithm name.
 
-| Question                                                                                   | Use                                  | Reason                                                                                                |
-|:-------------------------------------------------------------------------------------------|:-------------------------------------|:------------------------------------------------------------------------------------------------------|
-| “How many hops away is this vertex?”                                                       | `bfs`                                | BFS minimizes edge count.                                                                             |
-| “Which vertices are in the same weak island?”                                              | `bfs.Components`                     | Weak membership ignores direction for component grouping.                                             |
-| “What is a deterministic deep traversal?”                                                  | `dfs`                                | DFS gives post-order and forest-style structure.                                                      |
-| “Does this graph contain a cycle?”                                                         | `dfs.DetectCycles`                   | Returns deterministic witness cycles.                                                                 |
-| “What order can I execute a DAG?”                                                          | `dfs.TopologicalSort`                | Topological order is a directed acyclic graph contract.                                               |
-| “What is the cheapest route by weight?”                                                    | `dijkstra`                           | Dijkstra minimizes non-negative total cost.                                                           |
-| “What is the cheapest connected backbone?”                                                 | `mst`                                | MST solves minimum connected spanning structure.                                                      |
-| “What is the maximum throughput?”                                                          | `flow`                               | Flow solves capacity-constrained source-to-sink movement.                                             |
-| “How do I turn graph topology into numeric features?”                                      | `matrix`                             | Adjacency, incidence, degree vector, metric closure, algebra.                                         |
-| “How do I model a grid map?”                                                               | `gridgraph`                          | Generates lattice topology instead of manual wiring.                                                  |
-| “How do I build repeatable fixtures?”                                                      | `builder`                            | Deterministic graph/data generation.                                                                  |
-| “How do I compress a fixed-size scalar time-series window?”                                | `paa`                                | Exact fractional PAA averages with rational boundaries and no dropped tail.                           |
-| “How do I encode a fixed-length symbolic signature?”                                       | `sax`                                | Fractional PAA + right-bin quantization, compatible Euclidean MINDIST.                                |
-| “How do I align two time series?”                                                          | `dtw`                                | Dynamic Time Warping handles local timing drift.                                                      |
-| “How do I compute robust moments or merge workers?”                                        | `stats`                              | Welford/Chan moments, exact mean sum, scaled M2.                                                      |
-| “How do I normalize heldout features without refit?”                                       | `stats`                              | Immutable fitted model over matrix columns.                                                           |
-| “How do I estimate linear factor coefficients and reuse them?”                             | `ols`                                | Full-rank QR, original-unit beta/intercept, immutable prediction.                                     |
-| “How do I fit correlated or wide linear factors with explicit L2 shrinkage?”               | `ridge`                              | Augmented QR, positive Lambda, unpenalized intercept and frozen physical predictions.                 |
-| “What serial dependence or cycle repeats at a fixed sample-index lag?”                     | `acf`                                | One full-window mean, explicit denominator, exact pair counts.                                        |
-| “How strong are smoothed up/down changes in an ordered positive price feed?”               | `rsi.ComputePeriod` / `Stream.Push`  | Wilder oscillator with a validity mask or zero-allocation, single-owner recurrence.                   |
-| “How do fast and slow price trends diverge and how does that separation change?”           | `macd.ComputeDefault` / `NewDefault` | SMA-seeded EMA, three signed aligned series, independent readiness masks and replayable Stream.       |
-| “How much rising versus falling typical-price flow occurred over the most recent candles?” | `mfi.ComputeDefault` / `NewDefault`  | Volume-weighted last-P-transition MFI, warmup mask, compensated rolling ring and detached checkpoint. |
-| “What signed volume has accumulated since a chosen session origin?”                        | `obv.ComputeCandles` / `New`         | Closing-price direction, seed zero, Neumaier compensation, transactional replayable stream.           |
-| “How does close location inside each candle weight cumulative volume?”                     | `ad.ComputeCandles` / `New`          | Chaikin multiplier times current base volume, first-bar inclusion, Neumaier and snapshot replay.      |
-| “How do I build deterministic Monte Carlo, GBM or sensor-noise paths?”                     | `rng.Factory.Stream`                 | Pinned PCG-DXSM, logical path IDs and cached normals; not a cryptographic PRNG.                       |
-| “How do I build dependent-data bootstrap index ensembles?”                                 | `bootstrap.SampleIndices`            | Moving/Circular/Stationary blocks, replay ID and only complete rows.                                  |
-| “How do I infer a hidden operating regime from time-ordered observations?”                 | `hmm`                                | Typed causal filtering, smoothing, Viterbi, and independent-sequence EM.                              |
-| “How do I reduce multivariate dimensions without a response variable?”                     | `pca`                                | Validated covariance spectrum and a frozen loadings model for holdout inference.                      |
-| “How do I visit all cities in a route?”                                                    | `tsp`                                | Tour construction/improvement/exact-small-instance routing.                                           |
+| Question                                                                                                      | Use                                   | Reason                                                                                                |
+|:--------------------------------------------------------------------------------------------------------------|:--------------------------------------|:------------------------------------------------------------------------------------------------------|
+| “How many hops away is this vertex?”                                                                          | `bfs`                                 | BFS minimizes edge count.                                                                             |
+| “Which vertices are in the same weak island?”                                                                 | `bfs.Components`                      | Weak membership ignores direction for component grouping.                                             |
+| “What is a deterministic deep traversal?”                                                                     | `dfs`                                 | DFS gives post-order and forest-style structure.                                                      |
+| “Does this graph contain a cycle?”                                                                            | `dfs.DetectCycles`                    | Returns deterministic witness cycles.                                                                 |
+| “What order can I execute a DAG?”                                                                             | `dfs.TopologicalSort`                 | Topological order is a directed acyclic graph contract.                                               |
+| “What is the cheapest route by weight?”                                                                       | `dijkstra`                            | Dijkstra minimizes non-negative total cost.                                                           |
+| “What is the cheapest connected backbone?”                                                                    | `mst`                                 | MST solves minimum connected spanning structure.                                                      |
+| “What is the maximum throughput?”                                                                             | `flow`                                | Flow solves capacity-constrained source-to-sink movement.                                             |
+| “How do I turn graph topology into numeric features?”                                                         | `matrix`                              | Adjacency, incidence, degree vector, metric closure, algebra.                                         |
+| “How do I model a grid map?”                                                                                  | `gridgraph`                           | Generates lattice topology instead of manual wiring.                                                  |
+| “How do I build repeatable fixtures?”                                                                         | `builder`                             | Deterministic graph/data generation.                                                                  |
+| “How do I compress a fixed-size scalar time-series window?”                                                   | `paa`                                 | Exact fractional PAA averages with rational boundaries and no dropped tail.                           |
+| “How do I encode a fixed-length symbolic signature?”                                                          | `sax`                                 | Fractional PAA + right-bin quantization, compatible Euclidean MINDIST.                                |
+| “How do I align two time series?”                                                                             | `dtw`                                 | Dynamic Time Warping handles local timing drift.                                                      |
+| “How do I compute robust moments or merge workers?”                                                           | `stats`                               | Welford/Chan moments, exact mean sum, scaled M2.                                                      |
+| “How do I normalize heldout features without refit?”                                                          | `stats`                               | Immutable fitted model over matrix columns.                                                           |
+| “How do I estimate linear factor coefficients and reuse them?”                                                | `ols`                                 | Full-rank QR, original-unit beta/intercept, immutable prediction.                                     |
+| “How do I fit correlated or wide linear factors with explicit L2 shrinkage?”                                  | `ridge`                               | Augmented QR, positive Lambda, unpenalized intercept and frozen physical predictions.                 |
+| “What serial dependence or cycle repeats at a fixed sample-index lag?”                                        | `acf`                                 | One full-window mean, explicit denominator, exact pair counts.                                        |
+| “How strong are smoothed up/down changes in an ordered positive price feed?”                                  | `rsi.ComputePeriod` / `Stream.Push`   | Wilder oscillator with a validity mask or zero-allocation, single-owner recurrence.                   |
+| “How do fast and slow price trends diverge and how does that separation change?”                              | `macd.ComputeDefault` / `NewDefault`  | SMA-seeded EMA, three signed aligned series, independent readiness masks and replayable Stream.       |
+| “How much rising versus falling typical-price flow occurred over the most recent candles?”                    | `mfi.ComputeDefault` / `NewDefault`   | Volume-weighted last-P-transition MFI, warmup mask, compensated rolling ring and detached checkpoint. |
+| “What signed volume has accumulated since a chosen session origin?”                                           | `obv.ComputeCandles` / `New`          | Closing-price direction, seed zero, Neumaier compensation, transactional replayable stream.           |
+| “How does close location inside each candle weight cumulative volume?”                                        | `ad.ComputeCandles` / `New`           | Chaikin multiplier times current base volume, first-bar inclusion, Neumaier and snapshot replay.      |
+| “How do I build deterministic Monte Carlo, GBM or sensor-noise paths?”                                        | `rng.Factory.Stream`                  | Pinned PCG-DXSM, logical path IDs and cached normals; not a cryptographic PRNG.                       |
+| “How do I execute many independent stochastic paths with identical full-run statistics across worker counts?” | `montecarlo.Run` / `EstimateParallel` | Per-path RNG, ordered `stats.Moments`, bounded 2W dispatch and strict error/prefix law.               |
+| “How do I build dependent-data bootstrap index ensembles?”                                                    | `bootstrap.SampleIndices`             | Moving/Circular/Stationary blocks, replay ID and only complete rows.                                  |
+| “How do I infer a hidden operating regime from time-ordered observations?”                                    | `hmm`                                 | Typed causal filtering, smoothing, Viterbi, and independent-sequence EM.                              |
+| “How do I reduce multivariate dimensions without a response variable?”                                        | `pca`                                 | Validated covariance spectrum and a frozen loadings model for holdout inference.                      |
+| “How do I visit all cities in a route?”                                                                       | `tsp`                                 | Tour construction/improvement/exact-small-instance routing.                                           |
 
 ### Q1.2. How do I avoid using the wrong algorithm?
 
@@ -151,7 +154,9 @@ compute causal Wilder price strength   -> RSI ComputePeriod / Stream.Push
 compute signed trend-separation factor -> MACD ComputeDefault / Stream.Push
 compute volume-weighted OHLCV flow     -> MFI ComputeDefault / Stream.Push
 compute cumulative signed volume       -> OBV ComputeCandles / Stream.Push (no warmup)
-compute candle close-location flow    -> AD ComputeCandles / Stream.Push (first bar contributes)
+compute candle close-location flow     -> AD ComputeCandles / Stream.Push (first bar contributes)
+drive independent stochastic trials    -> MONTECARLO Run / EstimateParallel (ordered vector moments)
+compute exact empirical path quantiles -> MONTECARLO RunWithQuantiles (budgeted raw storage)
 draw dependent-data index replicates   -> BOOTSTRAP SampleIndices (no statistic or CI)
 retrospective regime audit             -> HMM Smooth / Decode (future-conditioned)
 encode symbolic SAX words              -> SAX
@@ -3587,6 +3592,144 @@ executable usage cases in [`../ad/example_test.go`](../ad/example_test.go).
 
 ---
 
+## 13n. Monte Carlo FAQ: Replay, Scheduling, Numerics and Partial Results
+
+### Q13n.1. When should I use `montecarlo` instead of `rng`, `bootstrap` or `stats`?
+
+Use `rng` when you need a **single version-pinned mutable stream** and will write your own execution orchestration. Use `montecarlo` when you need to execute **many independent model paths** with bounded parallelism, canonical path-ordered summaries and optional exact quantiles. Use `bootstrap` when you want **block-resampled index rows from an existing dependent sequence**; it does not sample a financial/physical model or estimate your statistic. Use `stats` for scalar moments that your application updates directly, not for a versioned trial scheduler.
+
+```text
+rng.Factory.Stream(seed,pathID) -> one stream per logical path
+           |
+caller Sampler + montecarlo.Run -> ordered vector moments / exact quantiles
+
+bootstrap.SampleIndices -> existing-data index replicates (different objective)
+stats.Moments            -> caller-controlled scalar updates / merges (no driver)
+```
+
+See [`RNG.md`](RNG.md), [`BOOTSTRAP.md`](BOOTSTRAP.md), [`STATS.md`](STATS.md) and [`MONTECARLO.md`](MONTECARLO.md).
+
+### Q13n.2. What is the canonical API, and what do the convenience wrappers change?
+
+`montecarlo.Run(ctx,plan,sampler)` is canonical. `Estimate(ctx,paths,seed,sampler)` selects serial mean-only execution. `EstimateParallel(ctx,paths,seed,workers,sampler)` selects mean-only parallel execution. `RunWithQuantiles(ctx,plan,levels,sampler)` **replaces** `plan.Quantiles` with its `levels` argument; it does not combine old and new levels. `RunWithSamples(ctx,plan,sampler)` enables `RetainSamples`. Every wrapper delegates to `Run`, preserving validation, errors, memory policy and result semantics.
+
+### Q13n.3. How should I implement `Sampler` without breaking replay?
+
+Implement the two-method interface:
+
+```go
+type Sampler interface {
+    Dimension() int
+    Sample(ctx context.Context, pathID uint64, random rng.RNG) ([]float64, error)
+}
+```
+
+Keep the output dimension constant and positive, and return precisely that many finite components on every successful call. Treat `random` as exclusively owned by that one path invocation. Use only explicitly fixed model parameters, `pathID` and the passed stream for stochastic decisions. Avoid global `math/rand`, mutable shared draw counters, worker-derived seeds, externally changing state and clock-dependent branches.
+
+A sampler used with `Workers>1` must support concurrent `Sample` calls. If the model needs mutable state, move it to path-local variables or synchronize and prove that the state cannot affect draw sequences.
+
+### Q13n.4. Why is the RNG stream constructed per path rather than per worker?
+
+Worker scheduling is nondeterministic. Deriving streams from worker slot numbers changes which random words a path receives when you change parallelism. The driver uses `rng.Factory.Stream(Plan.Seed,pathID)` for **every** issued logical path. Persist `Result.RNG` (the factory's version), base seed, model parameters and model revision if you need replay across deployments.
+
+### Q13n.5. What exactly is bitwise invariant across `Workers=1,2,4,8`?
+
+For **complete successful runs** with the same deterministic concurrency-safe sampler, seed, path count, platform and underlying implementation: retained path values, every feature's mean/variance/SE, and requested empirical quantiles are bitwise reproducible. The coordinator uses path IDs in ascending order for every `stats.Moments.Update`; workers never merge partial moments. This is not a cross-platform floating-point equivalence guarantee, and partial-run `Completed` can vary with timing.
+
+### Q13n.6. What prevents an OOM if path zero runs much slower than every other path?
+
+The dispatcher issues only IDs `i` satisfying `nextReduce <= i < nextReduce+2W`, with the upper end capped by `Paths` and `W=min(Paths,max(1,Workers))`. If path zero has not reduced, `nextReduce` cannot advance and the pool cannot issue path 8 at `W=4`. Accepted outcomes and the pending reorder map remain `O(W*d)` in addition to application model costs. There is no Paths-sized job queue or one goroutine per path.
+
+### Q13n.7. Can I compute variance independently in every worker and merge it later?
+
+Not while preserving this contract. Although `stats.Moments.Merge` is valid for intentionally partitioned statistics, different worker counts induce different merge trees and floating-point rounding. `montecarlo` deliberately reduces through one coordinator in **ascending `pathID` and feature index**. Worker-local accumulation would violate complete-run bitwise worker-count parity.
+
+### Q13n.8. What do `Mean`, `SampleVariance`, and `MeanStandardError` each mean?
+
+- `Mean[j]`: arithmetic sample mean of outcome coordinate `j` across `Completed` committed paths.
+- `SampleVariance[j]`: Bessel-corrected **sample** variance with denominator `Completed-1`, not population variance.
+- `MeanStandardError[j]`: `sqrt(SampleVariance[j])/sqrt(Completed)`, measuring Monte Carlo sampling precision of the **estimated mean**, assuming independent trials.
+
+The last value does **not** measure variability of a physical payoff itself, uncertainty in model assumptions or a validated forecast error bound. Use the sample standard deviation `sqrt(SampleVariance[j])` if your question concerns spread of the simulated outcomes.
+
+### Q13n.9. Why use `stats.Moments` rather than `mean(x*x)-mean(x)*mean(x)`?
+
+Raw second-moment subtraction loses small variance at large mean offsets; squaring large finite numbers can also overflow before the final variance is divided by `n-1`. The existing `stats.Moments` kernel uses compensated scaled Welford updates and its independently protected mean. A constant `math.MaxFloat64` input can have finite mean `MaxFloat64` and exact zero variance. Variance is still a floating-point approximation, not an unlimited-precision rational quantity.
+
+### Q13n.10. Why can a finite variance produce a nonzero SE when `variance/n` underflows to zero?
+
+The driver evaluates `sqrt(variance)/sqrt(n)` instead of computing `sqrt(variance/n)` in that order. The two expressions are mathematically equal, but dividing a tiny subnormal variance by large `n` may round to zero **before** square root, even though the actual standard error is representable. This ordering avoids that preventable intermediate underflow; it is not a guarantee of correct rounding in every binary64 case.
+
+### Q13n.11. Are `Quantiles` exact, and must the levels be sorted?
+
+They are exact **empirical order-statistic quantiles** over every simulated sample, without histogram approximation or reservoir subsampling. Interpolation is still performed in binary64. The caller must provide strictly increasing, distinct, finite levels in `[0,1]`; duplicates, descending values, `NaN`, infinities and out-of-range probabilities are `ErrInvalidOption`. The driver never silently sorts levels. `QuantileLevels` is a detached copy on execution results.
+
+### Q13n.12. Why not use `a+f*(b-a)` for all interpolated quantiles?
+
+For opposite-sign values `a=-math.MaxFloat64`, `b=+math.MaxFloat64`, `(b-a)` overflows, even though `Q(0.5)=0` is representable. For opposite signs the kernel uses `(1-f)*a+f*b`; for same signs it can safely use the bounded difference form. Exact `p=0` and `p=1` endpoints preserve observed extremes. This avoids the specific overflowing subtraction but does not turn float64 into arbitrary precision.
+
+### Q13n.13. Why can a run fail even though the requested median is representable?
+
+`Run` must publish **all required moments** on complete success. For observations `[-MaxFloat64,+MaxFloat64]`, the type-7 median is zero, but sample variance is not representable as finite binary64. The run returns `ErrOverflow`, `Complete=false` and no quantile matrix; it must not masquerade as a successful partial set of statistics.
+
+### Q13n.14. Why did `RetainSamples=false` still trigger `ErrBudget`?
+
+A request for exact quantiles requires storing all `Paths*d` values even when the public `Samples` matrix is omitted. The checked optional-buffer budget accounts for one raw sample backing, one `Paths`-length sort column when quantiles exist, and a `q*d` quantile output:
+
+![Monte Carlo budget](https://latex.codecogs.com/svg.image?B%3D8Nd%5Cmathbf%7B1%7D_%7B%5Cmathrm%7Bretain%7D%5Clor%20q%3E0%7D%2B8N%5Cmathbf%7B1%7D_%7Bq%3E0%7D%2B8qd)
+
+`MaxSamplesBytes=0` selects the default **64 MiB**, not unlimited memory. The limit is about these buffers, not process RSS or allocations within the sampler. Check for `ErrBudget` before increasing a ceiling or dropping exact quantiles intentionally.
+
+### Q13n.15. Is the memory ceiling a guarantee that `Run` cannot run out of RAM?
+
+No. It checks optional raw/sort/quantile buffer arithmetic **before the first sampler call** and protects against impossible sizes. It excludes sampler-managed arrays, per-path RNG/returned vectors, `stats.Moments`, channel/map metadata, goroutine stacks and runtime overhead. Even representable admitted `make` calls may fail at the OS/runtime level. Total application memory planning remains the caller's responsibility.
+
+### Q13n.16. How does a partial result preserve an exact prefix?
+
+`Completed=k` means exactly IDs `[0,k)` were accepted and reduced in that order. A successful later path `k+2` is never counted if path `k` failed or did not finish. A terminal sampler/context error stops future dispatch; the coordinator drains accepted jobs and can still reduce earlier successes as their gaps close. The exact `k` after cancellation depends on timing. Never interpret it as “the number of successful outcomes anywhere in the window.”
+
+### Q13n.17. Are the moment vectors and quantiles always available after cancellation?
+
+`Quantiles` is **nil on any unsuccessful run**, even if `Completed>=2`. For `Completed<2`, `Mean`, `SampleVariance` and `MeanStandardError` are nil. With `Completed>=2`, a successful final summary may describe that exact prefix; but if materializing required numeric statistics fails, the vectors can remain nil. Consumers must inspect `err`, `Complete`, `Completed` and field presence instead of guessing.
+
+### Q13n.18. Can `Completed==Requested` occur when `Complete==false`?
+
+Yes. All path vectors may have been reduced before a final `stats.Moments.Summary(1)` reports an unrepresentable variance, or context may cancel during final quantile sorting. `Completed` means *paths reduced*, not *all requested statistics published*. The only successful full experiment is `err==nil && result!=nil && result.Complete`.
+
+### Q13n.19. What exactly is `Samples`, and is it detached from the sampler?
+
+On a complete retained run, `Samples` is a `matrix.Matrix` backed by an owning `*matrix.Dense` with rows in path-ID order. On an interrupted retained run with `Completed>0`, it is a private `matrix.Matrix` prefix view exposing exactly `Completed × d`; its originally allocated full `Paths × d` Dense backing remains retained, but inaccessible rows cannot be queried through the view. `Samples.Clone()` produces an independently owned compact matrix for those visible rows. The driver copies returned sampler slices before publication, so result matrices and vectors do not alias a sampler's output buffer.
+
+### Q13n.20. Can my sampler reuse the same `[]float64` buffer across concurrent paths?
+
+Only with a genuinely race-free ownership protocol. The worker copies the returned slice *after* `Sample` returns. If another goroutine mutates that same backing array while the worker copies, it is a race and the resulting vector may be corrupted. Returning a fresh per-path slice is the simplest safe approach; a model may use a pool only if its transfer and reuse policy prevents overlapping read/write access.
+
+### Q13n.21. Does `Result.IsNil()` tell me that the experiment was completed?
+
+No. The method implements the `core.Nilable` convention and returns `true` **only** for a nil `*Result` receiver. A non-nil partial or numerically failed result is still non-nil. `Complete` and `err` are the separate success protocol. The result's public slices and matrices are caller-owned and must not be mutated concurrently without synchronization.
+
+### Q13n.22. What are the exact validation and runtime error classes?
+
+Preflight order: `ctx` presence/pre-cancellation -> `Paths`/`Workers`/`Quantiles` -> sampler presence (including `IsNil()` if exposed) -> positive `Dimension()` -> checked integer sizes and budget -> sampling. Classify with `errors.Is`: `ErrInvalidOption`, `ErrNilInput`, `ErrOverflow`, `ErrBudget` before work; `ErrShape`/`ErrNonFinite` for invalid successful sample vectors; `ErrDomain`/`ErrOverflow` for dependency/statistic failures; original context and user-sampler causes are preserved. Competing runtime error causes are first-*observed*, not ordered by path ID.
+
+### Q13n.23. What happens if my `Sampler.Sample` panics?
+
+A panic is not swallowed, returned as `ErrDomain`, converted to a zero vector, or automatically propagated to the `Run` caller's goroutine. `Sample` executes inside a worker goroutine and the package uses neither `recover()` nor `panic()` nor `reflect`. An unhandled sampler panic has the normal Go process-terminating semantics. It does **not** guarantee orderly pool cleanup. Return an error for recoverable model failures; if you need to isolate untrusted panic-prone simulation code, use a supervised separate process.
+
+### Q13n.24. Can cancellation forcibly stop a slow or blocked sampler?
+
+No. The driver cancels its child context, stops issuing new work, drains accepted outcomes and waits for its workers. A sampler that never checks `ctx.Done()` or never returns can prevent `Run` from returning. A timeout on the **caller context** is a cooperative cancellation request, not a Go goroutine-kill primitive. Structure long path simulations to check `ctx.Err()` at meaningful stages.
+
+### Q13n.25. How do I compute VaR and Expected Shortfall correctly?
+
+For a sampler returning **signed losses**, request the desired high quantile such as `0.99` through `RunWithQuantiles` and interpret it in the same loss units as the sampler. A quantile is **not** Expected Shortfall. One exact empirical tail calculation can replay the same per-path streams with a second sampler that returns `[lossIfInTail,tailIndicator]` under an explicit `loss>=VaR` tie convention; `mean(tailLoss)/mean(tailIndicator)` is then the conditional tail mean if the count is nonzero. That two-pass pipeline is demonstrated in [`../montecarlo/example_test.go`](../montecarlo/example_test.go). Its statistical validity still depends on the chosen loss model and the simulation ensemble.
+
+### Q13n.26. How should I benchmark and verify a production Monte Carlo integration?
+
+Test analytical oracles for means, Bessel variance, SE and type-7 quantiles; full-success bit parity for workers 1/2/4/8; a blocked path-zero barrier verifying the `2W` issue limit; cancellation with strict prefix/quantiles-nil semantics; budget/overflow checks **before Sample**; wrong shape/nonfinite/error wrapping; and detached ownership. Use only external `package montecarlo_test` tests, `errors.Is`, race checks, `go vet`, and the repository `golangci-lint`. Bench separately with dimension `1` versus `32`, paths `1,000` versus `100,000`, workers `1` versus `4`, and mean-only/retained/quantiles modes. Report `allocs/op` and real model work; avoid treating timing-based cancellations as deterministic unit-test oracles. See [`MONTECARLO.md`](MONTECARLO.md#13-verification-and-benchmark-regimes).
+
+---
+
 ## 14. Builder and gridgraph tips
 
 ### Q14.1. When should I use `builder`?
@@ -3707,6 +3850,12 @@ Yes, once successfully fitted. Its parameter slices are private and immutable, a
 ### Q16.6. Can multiple goroutines share one fitted PCA Model?
 
 Yes. `pca.Model.Transform`, `InverseTransform`, and `Reconstruct` use immutable private training parameters and per-call output/workspace. Keep every caller-owned input matrix stable for each call, and do not infer that `matrix.Dense` itself permits concurrent mutation. `Components()` returns a detached copy, not writable access to the trained basis. The underlying `matrix.EigenSym` is a fit-time operation and has no mid-rotation cancellation hook.
+
+---
+
+### Q16.7. Is the `montecarlo` worker pool deterministic and safe with a shared Sampler?
+
+The *mathematical full-run result* is deterministic for a fixed platform/backend **only when the sampler is itself deterministic and concurrency-safe**. Streams are private to logical paths and the coordinator alone updates moments; neither property automatically makes an arbitrary shared model object safe. Do not mutate model parameters during a run or share one mutable RNG across paths. Partial-result length after cancellation is timing-dependent. See [Monte Carlo FAQ](#13n-monte-carlo-faq-replay-scheduling-numerics-and-partial-results).
 
 ---
 
@@ -4097,6 +4246,12 @@ models, produce probabilities or promise positive trading performance.
 
 See [`MACD.md`](MACD.md) and the streaming/failover example in the
 [Tutorial](TUTORIAL.md#11k-macd-foundations-sma-seeded-ema-signed-momentum-and-checkpoint-replay).
+
+---
+
+### Recipe O. Replay Monte Carlo percentiles without publishing the raw paths
+
+Use a fixed, versioned `Sampler` and a stable seed. Call `montecarlo.RunWithQuantiles(ctx, montecarlo.Plan{Paths: 100_000, Seed: seed, Workers: 4}, []float64{0.95, 0.99}, sampler)` for complete empirical quantiles with `Samples==nil`. A private `Paths*d` buffer is still budgeted and allocated; `MaxSamplesBytes=0` selects the 64 MiB optional-buffer ceiling. Inspect `err`, `Complete`, `Quantiles` and `QuantileLevels` before consuming any quantile. Persist the model revision/parameters and `Result.RNG`, not just `Seed`; never interpret the Monte Carlo SE as certainty about the stochastic model. For a two-pass VaR/Expected Shortfall pipeline, see [`../montecarlo/example_test.go`](../montecarlo/example_test.go) and [`MONTECARLO.md`](MONTECARLO.md).
 
 ---
 

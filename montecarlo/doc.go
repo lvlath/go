@@ -1,81 +1,146 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2025-2026 katalvlaran
 
-// Package montecarlo provides a reproducible parallel driver for independent
-// multidimensional stochastic experiments. The package is not a stochastic
-// model: Sampler owns every equation, domain assumption and physical process.
+// Package montecarlo executes reproducible, bounded-parallel Monte Carlo
+// experiments over independently generated finite, fixed-dimensional vectors.
+// It is a simulation driver and reduction engine, not a financial, physical,
+// probabilistic, or domain-specific stochastic model.
 //
-// Domain and public contract:
-//   - Sampler exposes Dimension and Sample(ctx,pathID,rng.RNG).
-//   - Plan fixes the trial count, per-path seed, concurrency and memory policy.
-//   - Result publishes a completed contiguous prefix, summary moments and
-//     optionally an owned Samples matrix and exact type-7 Quantiles matrix.
-//   - Run is the canonical facade; Estimate, EstimateParallel,
-//     RunWithQuantiles and RunWithSamples delegate to Run without another kernel.
+// Domain and public surface:
+//   - Sampler defines Dimension() and Sample(ctx, pathID, rng.RNG). Application
+//     code supplies the model, its parameters, units, and draw-consumption law.
+//   - Plan specifies Paths, Seed, Workers, RetainSamples, Quantiles, and the
+//     MaxSamplesBytes admission limit. Seed=0 is a valid reproducible seed.
+//   - Run is the canonical facade. Estimate, EstimateParallel, RunWithQuantiles,
+//     and RunWithSamples are policy-setting wrappers over that same Run kernel;
+//     they neither change its mathematics nor discard its Result artifact.
+//   - Result records Requested, Completed, Seed, RNG, Complete, optionally the
+//     retained Samples matrix and exact empirical Quantiles, and sample Mean,
+//     SampleVariance, and MeanStandardError vectors when representable.
+//   - (*Result).IsNil implements core.Nilable; it reports nil pointer identity,
+//     not completion status, sample sufficiency, or absence of an error.
 //
-// Determinism and statistical laws:
-//   - Every logical pathID receives rng.Factory.Stream(Plan.Seed,pathID).
-//     Factory.Version is recorded for reproducible replay.
-//   - Workers may finish in arbitrary order. Exactly one coordinator updates
-//     stats.Moments by ascending pathID and then ascending feature index.
-//   - Complete results are bitwise identical across worker counts under a
-//     deterministic concurrency-safe sampler and the same platform/backend.
-//   - SampleVariance uses ddof=1. MeanStandardError is the square root of
-//     variance divided by sample count, evaluated without avoidable underflow.
-//     Standard error represents sampling precision, not model uncertainty.
-//   - Exact quantiles use h=(n-1)*p and sign-aware linear interpolation of
-//     adjacent sorted order statistics separately for each feature.
+// Shape and input law:
+//   - Paths must be at least two. Workers must be nonnegative; zero selects one
+//     worker. Effective W=min(Paths,max(1,Workers)), after checked conversion.
+//   - Dimension() is called once before any Sample; d must be positive. Each
+//     successful Sample must return precisely d finite float64 components.
+//   - Quantiles is empty or a strictly increasing sequence of distinct finite
+//     probabilities p in [0,1]. Levels are never silently sorted or deduplicated.
+//   - A nil context is ErrInvalidOption. An already cancelled context returns
+//     its context error without calling Dimension or Sample.
+//   - A nil or recognized core.Nilable-style typed-nil Sampler is ErrNilInput.
+//     An arbitrary typed-nil implementation without IsNil cannot be detected
+//     without introspection; such a value must not be supplied by callers.
 //
-// Shape, options and memory:
-//   - Paths>=2, Workers>=0 (zero means one), Dimension()>0 fixed per run.
-//   - Quantile levels are finite, unique, strictly ascending within [0,1].
-//   - Raw storage exists only for requested RetainSamples or exact Quantiles.
-//     MaxSamplesBytes=0 means 64 MiB. Preflight counts one Paths*d raw buffer,
-//     one Paths sort scratch column and one len(Quantiles)*d output buffer.
-//   - The dispatch window is [nextReduce,nextReduce+2W), W=min(max(1,Workers),
-//     Paths). Pending outcomes and worker-owned copied samples use O(W*d)
-//     additional memory, independent of total Paths in mean-only mode.
-//   - Retained partial prefixes expose Completed*d cells but retain their
-//     originally budgeted full backing allocation, without making a copy.
+// Determinism and concurrency law:
+//   - For logical path ID i, a worker creates a fresh stream exclusively with
+//     rng.Factory.Stream(Plan.Seed,i); it never shares that mutable RNG with
+//     another path. The Result records rng.Factory.Version() for replay.
+//   - Workers may complete out of order, but only one coordinator applies
+//     stats.Moments.Update for path IDs 0,1,... and columns 0,1,... in that order.
+//     There is no worker-local moment merge, shared accumulator, or reduction lock.
+//   - Full successful results are bitwise reproducible across worker counts
+//     on the same platform, implementation, and RNG revision, PROVIDED that
+//     Sample is itself deterministic, concurrency-safe, and independent of
+//     scheduling, wall-clock time, and external mutable state.
+//   - Cancellation timing, the number of paths committed before interruption,
+//     and the first observed competing error are not worker-count invariant.
+//   - Each worker copies a returned sample slice before sending its outcome.
+//     Callers must not mutate Plan.Quantiles during Run, and Samplers must not
+//     mutate returned slices asynchronously or share mutable RNG instances.
 //
-// Error precedence and partial results:
-//   - Validation order is context, Plan options, sampler presence, Dimension,
-//     checked memory sizing and budget, then computation.
-//   - Invalid preflight returns (nil,error). Terminal sampler/context/numeric
-//     failure returns (Result,error), Complete=false and only committed paths
-//     [0,Completed); a later finished path never fills a lower-ID hole.
-//   - On Completed<2, all moment vectors are nil; on any failure, Quantiles
-//     is nil. Retained Samples is nil for Completed=0.
+// Bounded scheduling and memory law:
+//   - The coordinator issues only IDs in [nextReduce,nextReduce+2*W), capped
+//     by Paths. Until the first missing ID is committed, that window cannot
+//     advance. Pending results remain O(W*d), even if path zero is slow.
+//   - Without retention or quantiles, no Paths-by-d sample matrix is allocated;
+//     additional driver memory is O(d+W*d), excluding Sampler-owned memory.
+//   - With RetainSamples or Quantiles, exactly one Paths-by-d raw sample backing
+//     is reserved. Quantiles additionally require a Paths-element sorting
+//     column and a len(Quantiles)-by-d output matrix.
+//   - The checked admission formula is 8*Paths*d + I(q>0)*8*Paths + 8*q*d
+//     bytes, where q=len(Quantiles). MaxSamplesBytes=0 selects 64 MiB.
+//     ErrOverflow covers unrepresentable sizes; ErrBudget covers a request
+//     exceeding the configured buffer ceiling, both before any Sample call.
+//   - This limit is NOT a bound on goroutine stacks, stats.Moments, channel/map
+//     metadata, Sampler allocations, process RSS, or OS allocation failure.
+//   - Partial retained Samples exposes Completed rows without duplicating the
+//     full budgeted Dense backing. That original Paths-by-d backing remains
+//     resident until the partial matrix is released; Clone allocates an
+//     independent Completed-by-d matrix if compact ownership is required.
+//
+// Numeric and quantile law:
+//   - One stats.Moments per feature computes a protected mean and scaled Welford
+//     central moment in canonical path order. Variance is SAMPLE variance with
+//     Bessel correction (ddof=1); it is not population variance.
+//   - MeanStandardError[j]=sqrt(SampleVariance[j])/sqrt(Completed), avoiding
+//     avoidable underflow of variance/Completed. It estimates sampling error
+//     of the mean under independent paths, NOT uncertainty of model assumptions,
+//     calibrated parameters, or a confidence bound on physical outcomes.
+//   - Exact empirical quantiles use independently sorted coordinate samples
+//     and the type-7 index h=(Paths-1)*p, i=floor(h), f=h-i. The result is a
+//     floating-point interpolation of the adjacent order statistics, not an
+//     approximation by histogram, t-digest, or subsampling.
+//   - Opposite-sign endpoints use (1-f)*a+f*b instead of a+f*(b-a), whose
+//     intermediate difference may overflow. Same-sign endpoints use the
+//     bounded difference form; p=0 and p=1 preserve the observed extremes.
+//   - All public scalar moments and quantiles must be finite. Unrepresentable
+//     final variance or other required numeric output yields ErrOverflow,
+//     even when some other statistic (for example, a median) is representable.
+//
+// Errors and partial-result law:
+//   - Validation precedence is: context -> Plan options -> Sampler presence
+//     -> Dimension -> checked memory sizes and budget -> execution.
+//   - Preflight rejection returns (nil,error) without sampling. Once work has
+//     started, a runtime, sampler, or context failure returns (*Result,error)
+//     with Complete=false and the successfully reduced contiguous prefix
+//     [0,Completed). Successful later IDs beyond any missing path are excluded.
+//   - If Completed<2, Mean, SampleVariance and MeanStandardError are nil. On a
+//     successful summary with Completed>=2, all three vectors have length d;
+//     failure of final numeric materialization may leave them nil instead.
+//   - Quantiles is nil on every unsuccessful or incomplete run and whenever
+//     no quantile levels were requested. QuantileLevels copies requested levels
+//     even if a started run fails; Samples is nil if retention is off or
+//     Completed=0. Complete is the authoritative success flag: Completed==Paths
+//     alone does not guarantee valid final moments or requested quantiles.
 //   - ErrInvalidOption, ErrNilInput, ErrShape, ErrNonFinite, ErrDomain,
-//     ErrOverflow and ErrBudget are stable errors.Is targets; sampler/context
-//     causes are returned without rewriting their identity.
+//     ErrBudget, and ErrOverflow are stable errors.Is classifications. Context
+//     and Sampler error identity is preserved; dependency errors are joined
+//     when mapped to a package sentinel. Error text is not a protocol.
+//   - On an observed terminal failure, new dispatch stops, the child context
+//     is canceled, accepted jobs are drained, and workers are joined. A Sampler
+//     ignoring cancellation may delay return indefinitely. No arbitrary Go
+//     goroutine can be forcibly stopped by this package.
 //
-// Ownership and concurrency:
-//   - Plan.Quantiles is copied; result vectors and matrices are detached from
-//     sampler buffers. The caller owns public data and may modify it after Run.
-//   - The Sampler must allow concurrent Sample calls if Workers>1 and must not
-//     asynchronously modify a previously returned output slice.
-//   - A mutable rng.RNG belongs to one path invocation; worker scheduling never
-//     contributes to stream derivation. There are no coordinator locks or shared
-//     mutable reduction states across worker goroutines.
-//   - A Sampler that ignores context may delay shutdown. A panic inside Sample
-//     is not recovered: an unrecovered panic in a worker terminates normal
-//     Go process execution. No reflect, panic or recover is used by this package.
-//
-// Non-goals:
-//   - No pricing model, portfolio loss distribution, physical crack law,
-//     importance sampling, quasi-Monte-Carlo scheme, confidence model,
-//     approximate quantile fallback or cross-platform bitwise guarantee.
+// Ownership and unsupported guarantees:
+//   - Successful result slices and matrices are detached from Sample buffers
+//     and from the caller's Plan.Quantiles. Published artifacts are caller-owned;
+//     concurrent mutation of shared public matrices/slices is not synchronized.
+//   - No model fitting, importance sampling, quasi-Monte-Carlo, cross-platform
+//     bitwise guarantee, automatic confidence interval, tail-risk estimator,
+//     random-number security guarantee, or streaming exact quantiles without
+//     sample materialization is provided by this package.
+//   - The package never calls panic, recover, or reflect. A panic inside a
+//     Sample worker is NOT converted into an error or a zero vector. Since Go
+//     cannot transfer such a panic to the Run caller without recovery, an
+//     unhandled worker panic has the normal process-terminating Go behavior;
+//     pool cleanup is NOT guaranteed in that situation.
 //
 // Complexity:
-//   - Without exact quantiles: O(Paths*d) driver work plus sampler cost;
-//     O(d+W*d) streaming memory if no samples are retained.
-//   - With exact quantiles: O(d*Paths*log(Paths)) sorting time and
-//     O(Paths*d+Paths+q*d+W*d) memory; q=len(Quantiles).
+//   - Mean-only: O(Paths*d + sampler work) total CPU work and O(d+W*d)
+//     additional driver memory. Retention adds O(Paths*d) persistent memory.
+//   - With q>0 exact quantiles: O(Paths*d*log(Paths) + sampler work) total CPU
+//     work and O(Paths*d+Paths+q*d+W*d) space; sorting uses one column buffer.
 //
 // AI-Hints:
-//   - Never merge worker-local float64 totals or schedule beyond the 2W window.
-//   - Never interpret a low Monte Carlo SE as proof that a financial or physical
-//     model is correctly calibrated. Prefer explicit model validation outside
-//     this computational driver and persist the RNG version with experiment IDs.
+//   - Never replace coordinator-owned ordered updates with per-worker sums or
+//     tie RNG stream identity to worker count; both break worker-count parity.
+//   - Never infer the full experiment succeeded from Completed==Requested or
+//     infer memory safety from MaxSamplesBytes alone; inspect Complete/error,
+//     and budget Sampler/RNG/worker allocations separately.
+//   - Retain the seed, RNG version, model revision, input calibration and
+//     parameter assumptions alongside results for meaningful experiment replay.
+//   - See docs/MONTECARLO.md and montecarlo/example_test.go for exact result
+//     contracts, sign-safe quantiles, interruption handling, and domain examples.
 package montecarlo
