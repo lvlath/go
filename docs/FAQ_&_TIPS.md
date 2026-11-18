@@ -3,7 +3,7 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/FAQ_&_TIPS.md
-  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd, mfi, obv, ad, montecarlo and the wider lvlath package family
+  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd, mfi, obv, ad, montecarlo, gbm and the wider lvlath package family
   lvlath - FAQ & Tips
 
   Purpose:
@@ -35,6 +35,7 @@
     - OBV first-bar zero, cumulative Neumaier correction, zero-volume continuity and checkpoint trust boundaries.
     - Chaikin A/D bounded multiplier, first-bar contribution, global batch error precedence and checkpoint replay integrity.
     - Monte Carlo per-path RNG replay, 2W scheduling bounds, stable moments, exact quantiles, byte admission and interruption prefixes.
+    - GBM exact-in-distribution lognormal paths, explicit time units, safe wide-number increments, and complete-prefix semantics.
 
   License:
     lvlath is licensed under AGPL-3.0-only. See ../LICENSE.
@@ -80,6 +81,7 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
     13l. [OBV FAQ](#13l-obv-faq-cumulative-signed-volume-and-replay-safety)
     13m. [AD FAQ](#13m-ad-faq-close-location-volume-precision-and-checkpoint-safety)
     13n. [Monte Carlo FAQ](#13n-monte-carlo-faq-replay-scheduling-numerics-and-partial-results)
+    13o. [GBM FAQ](#13o-gbm-faq-exact-lognormal-steps-units-overflow-and-complete-paths)
 14. [Builder and gridgraph tips](#14-builder-and-gridgraph-tips)
 15. [Errors and diagnostics](#15-errors-and-diagnostics)
 16. [Determinism and concurrency](#16-determinism-and-concurrency)
@@ -124,6 +126,7 @@ Start with the question, not the algorithm name.
 | “How does close location inside each candle weight cumulative volume?”                                        | `ad.ComputeCandles` / `New`           | Chaikin multiplier times current base volume, first-bar inclusion, Neumaier and snapshot replay.      |
 | “How do I build deterministic Monte Carlo, GBM or sensor-noise paths?”                                        | `rng.Factory.Stream`                  | Pinned PCG-DXSM, logical path IDs and cached normals; not a cryptographic PRNG.                       |
 | “How do I execute many independent stochastic paths with identical full-run statistics across worker counts?” | `montecarlo.Run` / `EstimateParallel` | Per-path RNG, ordered `stats.Moments`, bounded 2W dispatch and strict error/prefix law.               |
+| “How do I sample positive GBM prices at irregular explicit times?”                                            | `gbm.Simulate` / `SimulateSeeded`     | Exact-in-distribution lognormal endpoints, no implicit annualization, complete or valid prefix.       |
 | “How do I build dependent-data bootstrap index ensembles?”                                                    | `bootstrap.SampleIndices`             | Moving/Circular/Stationary blocks, replay ID and only complete rows.                                  |
 | “How do I infer a hidden operating regime from time-ordered observations?”                                    | `hmm`                                 | Typed causal filtering, smoothing, Viterbi, and independent-sequence EM.                              |
 | “How do I reduce multivariate dimensions without a response variable?”                                        | `pca`                                 | Validated covariance spectrum and a frozen loadings model for holdout inference.                      |
@@ -156,6 +159,7 @@ compute volume-weighted OHLCV flow     -> MFI ComputeDefault / Stream.Push
 compute cumulative signed volume       -> OBV ComputeCandles / Stream.Push (no warmup)
 compute candle close-location flow     -> AD ComputeCandles / Stream.Push (first bar contributes)
 drive independent stochastic trials    -> MONTECARLO Run / EstimateParallel (ordered vector moments)
+simulate exact lognormal GBM paths     -> GBM Simulate / SimulateSeeded (explicit time units, positive prices)
 compute exact empirical path quantiles -> MONTECARLO RunWithQuantiles (budgeted raw storage)
 draw dependent-data index replicates   -> BOOTSTRAP SampleIndices (no statistic or CI)
 retrospective regime audit             -> HMM Smooth / Decode (future-conditioned)
@@ -3730,6 +3734,153 @@ Test analytical oracles for means, Bessel variance, SE and type-7 quantiles; ful
 
 ---
 
+## 13o. GBM FAQ: Exact Lognormal Steps, Units, Overflow and Complete Paths
+
+### Q13o.1. When should I choose `gbm` rather than `rng` or `montecarlo`?
+
+Use `rng` to obtain reproducible normal draws, `gbm` to transform those draws into one **positive scalar geometric Brownian motion path**, and `montecarlo` to run and summarize many independent paths. `gbm.Simulate` owns the model transition, not parameter estimation, dividend calendars, instrument-specific payouts, parallel scheduling or statistical confidence intervals. For a complete cross-package example, see [GBM's Monte Carlo bridge](GBM.md#10-monte-carlo-option-pricing-bridge).
+
+### Q13o.2. Is the simulated process really exact, or is this Euler–Maruyama?
+
+The requested endpoints use **exact-in-distribution conditional lognormal transitions** for constant `mu` and `sigma`:
+
+$$
+\Delta\log S=(\mu-\sigma^2/2)\Delta t+\sigma\sqrt{\Delta t}\,Z.
+$$
+
+![GBM conditional lognormal transition](https://latex.codecogs.com/svg.image?%5Cdisplaystyle%20%5CDelta%5Clog%20S%3D%28%5Cmu-%5Csigma%5E2%2F2%29%5CDelta%20t%2B%5Csigma%5Csqrt%7B%5CDelta%20t%7DZ)
+
+There is no Euler–Maruyama time-discretization bias for these endpoints. There *is* finite-precision arithmetic error, RNG approximation, and model risk. Simulating only discrete endpoints also says nothing about a continuous-time barrier crossing between them.
+
+### Q13o.3. Is `TimeYears` the automatic default when `Unit` is omitted?
+
+`TimeYears` has enum value zero, so a zero-valued `TimeUnit` happens to identify years. **This is not permission to forget units.** Set `Unit` explicitly in both `Parameters` and `TimeGrid`, especially in multi-source applications. Invalid enums or mismatched units are `ErrInvalidOption`; GBM does not infer seconds from a small timestamp or infer years from a large drift.
+
+### Q13o.4. Why can't I combine annual drift with second-based grid timestamps?
+
+The drift has units `1/Unit`, while volatility has units `1/sqrt(Unit)`. Applying annual coefficients to seconds silently multiplies modeled growth and variance by the wrong time scale. `Parameters.Unit != TimeGrid.Unit` is therefore rejected before any normal draw. There is no hidden 252-session, 365-day or 365.25-day conversion.
+
+### Q13o.5. How do I deliberately convert annual parameters to seconds?
+
+Choose and document a calendar convention in **caller code**. If `secondsPerYear` expresses that convention, use
+
+```go
+const secondsPerYear = 365.25 * 24 * 60 * 60
+secondsDrift := annualDrift / secondsPerYear
+secondsVolatility := annualVolatility / math.Sqrt(secondsPerYear)
+// Use TimeSeconds for both parameters and the elapsed-second grid.
+```
+
+Both coefficients must be converted. Dividing volatility by `secondsPerYear` instead of its square root changes the diffusion distribution. The library never chooses this constant.
+
+### Q13o.6. Are Unix timestamps or arbitrary nonuniform grids valid?
+
+Irregular spacing is valid; **epoch timestamps are not directly suitable** because the first grid entry must be numerically zero. Rebase observations to elapsed time and use a consistent unit, such as seconds since the first tick. Every later value must be finite and strictly greater than its predecessor. `gbm` does not sort, resample, interpolate or create missing observations. A large `int64` nanosecond feed should be checked and carefully converted before use; adjacent distinct integers can collapse to equal float64 timestamps.
+
+### Q13o.7. Why is `[0]` a valid grid?
+
+It represents a request for the known initial observation only. On success, the result contains exactly `Times=[0]`, `Values=[Initial]`, `Complete=true`, and **zero** `Normal()` calls even when `Volatility>0`. The argument `random` must still pass non-nil validation. `SimulateTerminal(..., horizon=0, ...)` is the corresponding wrapper.
+
+### Q13o.8. Why does zero volatility still require a non-nil RNG?
+
+The canonical public validation law does not change with model parameters. A missing generator is `ErrNilInput` for both deterministic and stochastic paths. Once validated, `sigma==0` follows the analytic `Initial*exp(mu*t)` path and does not call `Normal`, `UniformOpen` or `Uint64`. This both saves entropy and makes draw-count replay straightforward.
+
+### Q13o.9. How many Gaussian draws will a stochastic path consume?
+
+A successful `n`-timestamp path with `sigma>0` calls `random.Normal()` exactly `n-1` times in increasing step order. A step that produces a nonfinite draw or unrepresentable price may consume its own draw but is excluded from the published result. Cancellation detected before a step consumes no draw for that step. The underlying pinned RNG's *raw word* consumption is different because Box–Muller caches a spare Gaussian variate.
+
+### Q13o.10. Why not compute `S * exp(increment)` directly?
+
+Because the intermediate `exp(increment)` can overflow even when `S * exp(increment)` is mathematically representable. For example, a very small `Initial=1e-300` and a log increase of about `1000` yield a finite positive result despite `math.Exp(1000)` being infinite. The implementation accumulates log growth relative to the unchanged starting value and converts to a `float64` price only when publishing a complete step.
+
+### Q13o.11. Why can `sigma*sigma*dt` also fail for valid inputs?
+
+For `sigma=1e160` and `dt=1e-320`, the direct `sigma*sigma` intermediate exceeds `MaxFloat64` even though `sigma*sqrt(dt)` is approximately one. The GBM kernel computes the interval and its square root in extended-exponent arithmetic, then constructs the Itô correction from the scale. An **actually unrepresentable output** remains `ErrOverflow`; the method does not promise exact-real arithmetic or unlimited exponents.
+
+### Q13o.12. Are positive subnormal prices permitted?
+
+Yes. All **strictly positive, finite** float64 values, including subnormals, are valid published prices. If a computed new price rounds to exactly zero or infinity, the step fails with `ErrOverflow`. The package never substitutes `math.SmallestNonzeroFloat64` or an arbitrary epsilon as a fabricated price floor.
+
+### Q13o.13. Is `Result.Values[len-1]` always the requested terminal price?
+
+Only when `err==nil`, `result!=nil` and `result.Complete==true`. A runtime failure returns only the completed prefix, including time zero, with `Times` and `Values` of equal length. **The failed time step is not included**, so the last published value may be an earlier observation. In particular, do not price a maturity payoff or estimate full-horizon risk from an incomplete prefix.
+
+### Q13o.14. Does GBM return a partial result for invalid inputs?
+
+No. Nil context, units mismatch, nil/empty grid, duplicate times, nonfinite coefficients and physical-domain errors fail **preflight** with a nil `*Result`. Only failures **after** preflight may return a non-nil prefix: cancellation observed before a step, nonfinite `Normal()` or an unrepresentable computed price. `Complete=false` accompanies the runtime error; there is no successful incomplete simulation.
+
+### Q13o.15. Can cancellation interrupt `random.Normal()` immediately?
+
+No. `gbm` checks `ctx.Err()` before each new step; the `rng.RNG.Normal` interface itself takes no context. A cancellation occurring during `Normal` or numeric arithmetic is normally noticed at a later iteration boundary, not forcibly in the middle of an operation. A cancellation that arrives after the last step's check can coexist with a complete result. Pre-canceled contexts instead return `nil, ctx.Err()` before any simulation work.
+
+### Q13o.16. Which error wins when several inputs are invalid?
+
+The order is **context → units → RNG presence → grid presence/length → origin and ascending timestamp scan → parameter finiteness → parameter domain → runtime**. In the timestamp scan, each point is checked for NaN/Inf before strict order. Consequently a nonfinite grid point is `ErrNonFinite`, a finite duplicate is `ErrOrder`, and a unit mismatch wins before either. For the exact validation matrix, see [`GBM.md`](GBM.md#5-validation-and-error-precedence).
+
+### Q13o.17. Should I compare `err == gbm.ErrOverflow`?
+
+No. Sentinels are classified through `errors.Is`, which remains correct when an adapter wraps the error:
+
+```go
+if errors.Is(err, gbm.ErrOverflow) {
+    // Discard the failed endpoint; retain the completed prefix only if useful.
+}
+if errors.Is(err, context.Canceled) {
+    // Preserve the calling operation's cancellation classification.
+}
+```
+
+Do not branch on `err.Error()` or string fragments. The package defines distinct `ErrInvalidOption`, `ErrNilInput`, `ErrEmptyInput`, `ErrOrder`, `ErrNonFinite`, `ErrDomain` and `ErrOverflow` sentinels.
+
+### Q13o.18. Which of the four public facades should I use?
+
+| Goal                                 | API                                                        |
+|:-------------------------------------|:-----------------------------------------------------------|
+| Full, explicitly modeled path        | `gbm.Simulate(ctx,p,grid,stream)`                          |
+| Scalar parameters with elapsed times | `gbm.SimulatePath(ctx,initial,mu,sigma,unit,times,stream)` |
+| Terminal-only payoff                 | `gbm.SimulateTerminal(ctx,p,horizon,stream)`               |
+| One replayable standalone scenario   | `gbm.SimulateSeeded(ctx,p,grid,seed,pathID)`               |
+
+`SimulateTerminal` still returns `*Result`, not a bare price. `SimulateSeeded` is **not** appropriate for creating a new RNG inside `montecarlo.Sampler.Sample`, because the driver already provides the logical path's stream.
+
+### Q13o.19. How do I bridge a GBM path into `montecarlo.Sampler` safely?
+
+Implement `Dimension() int` and `Sample(ctx,pathID,random)` in your application. Pass the **supplied** `random rng.RNG` to `gbm.SimulateTerminal` or `Simulate`. Return the GBM error unchanged; guard `result==nil || !result.Complete` before constructing a payoff; validate the resulting payoff as finite. Then `montecarlo.Run` can reduce full-horizon samples by path ID. Do not convert `Complete=false` into a successful row. A [complete, runnable call-pricing sampler](GBM.md#10-monte-carlo-option-pricing-bridge) shows the interface.
+
+### Q13o.20. Can a terminal-only simulation price an Asian or barrier option?
+
+Not when the payoff depends on intermediate values. `SimulateTerminal` returns `[S0,S(T)]` for positive `T`; it cannot describe observed path extrema or averages. Use an explicit time grid for discretely monitored payoffs. **Even then**, a GBM endpoint grid does not certify that a continuous barrier was never crossed between two observations. Continuous monitoring requires additional bridge mathematics outside this package.
+
+### Q13o.21. Does this package turn exchange sessions or nanosecond `series` grids into GBM time?
+
+No. `series.Validate` uses signed integer nanoseconds and optional cadence checks; GBM uses elapsed `float64` timestamps and **three explicit unit labels**. When composing them, the caller is responsible for checking source integrity, choosing a time origin, converting to elapsed years/days/seconds, and ensuring strict ordering survives floating conversion. There is no automatic trading calendar, interpolation or 252-session annualization.
+
+### Q13o.22. What drift should I supply for a risk-neutral dividend-paying call?
+
+Under a **caller-chosen** constant-rate risk-neutral model, use `Parameters.Drift=r-q` where `r` is the interest rate and `q` the continuous dividend yield, both per chosen time unit. The transition already subtracts `sigma²/2` in **log coordinates**. Double-subtracting it from the input drift is wrong. Discount a terminal call payoff externally by `exp(-r*T)`. The package neither decides whether the measure is risk-neutral nor fits the model.
+
+### Q13o.23. Does a simulated GBM path prove future market prices are lognormal?
+
+No. Many observed series exhibit jumps, stochastic volatility, leverage effects, serial dependence, calendar discontinuities or changes in regime. GBM is useful as an explicit baseline or scenario generator, not a universal market model. Calibrate and backtest outside GBM; distinguish estimation uncertainty, Monte Carlo sampling error, market-model risk and liquidity/transaction-cost effects.
+
+### Q13o.24. Are `TimeGrid` inputs and returned slices independent?
+
+The caller owns the input `TimeGrid.Values`, which is borrowed read-only during the operation; GBM does not retain or modify it. `Result.Times` and `Result.Values` are detached caller-owned slices, including on runtime failure. Each simulation has its own numeric workspace. Different goroutines may share a stable grid and copied model values but **must not share the same mutable `rng.RNG` concurrently**. Concurrent mutation of an input slice while it is read is unsupported.
+
+### Q13o.25. Is `Result.IsNil()` equivalent to `Complete`?
+
+No. `(*Result)(nil).IsNil()` returns true; a non-nil incomplete Result returns false. `IsNil` implements `core.Nilable` pointer-presence semantics, not mathematical success, valid-horizon status, ownership, or a price-domain check. Always inspect **both** the returned error and `Complete`.
+
+### Q13o.26. How do I make standalone path replay stable?
+
+Use `gbm.SimulateSeeded` or one explicit `rng.Factory.Stream(seed,pathID)` for each logical path. Persist the same model coefficients and units, ordered grid, base seed, logical path ID, RNG revision (`Factory.Version()`) and GBM implementation version when strict audit replay matters. Never derive path ID from a worker slot or reseed after partial failure expecting the prior stream's advanced state to roll back. Identical results across Go/math backends are not promised to the last bit.
+
+### Q13o.27. What do meaningful GBM tests and benchmarks measure?
+
+Use independent `sigma=0` analytic solutions, zero-shock Itô-correction oracles, controlled `Normal` sequences, irregular grids, zero-RNG consumption, exact prefix lengths, all sentinel precedence families, positive subnormal boundaries, extreme sigma/tiny-dt cancellation, ownership isolation and Monte Carlo worker 1/4 replay. Keep tests in `package gbm_test` through public API. Benchmark grid lengths **100 and 10,000** with `sigma=0` and `sigma>0`, after prebuilding fixtures; record allocations as well as time. A fixed-precision `math/big` square root has meaningful constant cost even though path complexity is `O(n)`. See [GBM verification](GBM.md#12-testing-benchmarking-and-limitations).
+
+---
+
 ## 14. Builder and gridgraph tips
 
 ### Q14.1. When should I use `builder`?
@@ -4252,6 +4403,12 @@ See [`MACD.md`](MACD.md) and the streaming/failover example in the
 ### Recipe O. Replay Monte Carlo percentiles without publishing the raw paths
 
 Use a fixed, versioned `Sampler` and a stable seed. Call `montecarlo.RunWithQuantiles(ctx, montecarlo.Plan{Paths: 100_000, Seed: seed, Workers: 4}, []float64{0.95, 0.99}, sampler)` for complete empirical quantiles with `Samples==nil`. A private `Paths*d` buffer is still budgeted and allocated; `MaxSamplesBytes=0` selects the 64 MiB optional-buffer ceiling. Inspect `err`, `Complete`, `Quantiles` and `QuantileLevels` before consuming any quantile. Persist the model revision/parameters and `Result.RNG`, not just `Seed`; never interpret the Monte Carlo SE as certainty about the stochastic model. For a two-pass VaR/Expected Shortfall pipeline, see [`../montecarlo/example_test.go`](../montecarlo/example_test.go) and [`MONTECARLO.md`](MONTECARLO.md).
+
+---
+
+### Recipe P. Replay a complete GBM path without silent time conversion
+
+Construct `gbm.Parameters` with an explicitly chosen `TimeUnit`, and `gbm.TimeGrid{Values: elapsedTimes, Unit: params.Unit}` whose first value is zero and whose entries are strictly increasing. For an independent synthetic scenario call `gbm.SimulateSeeded(ctx,params,grid,seed,pathID)`; check **both** `err==nil` and `result.Complete` before extracting the horizon price. If a `montecarlo.Sampler` needs the model, call `gbm.Simulate(ctx,params,grid,random)` with the **driver-supplied** path stream; forward errors instead of reducing an incomplete prefix. Changing from annual model coefficients to elapsed seconds requires external `mu/C` and `sigma/sqrt(C)` conversion, not matching enum labels without changing numeric values. See [`GBM.md`](GBM.md) and [`../examples/gbm/main.go`](../examples/gbm/main.go).
 
 ---
 

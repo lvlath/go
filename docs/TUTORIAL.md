@@ -3,9 +3,9 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/TUTORIAL.md
-  Package reference: matrix, stats, ols, ridge, series, rsi, macd, mfi, obv, ad, montecarlo and the wider lvlath package family
+  Package reference: matrix, stats, ols, ridge, series, rsi, macd, mfi, obv, ad, montecarlo, gbm and the wider lvlath package family
   Contract status: learning guide; package doc.go and source define the public API.
-  Scope: graph, matrix, factorization, statistical and temporal workflows, including causal MACD, rolling MFI, cumulative OBV, Chaikin A/D and reproducible parallel Monte Carlo.
+  Scope: graph, matrix, factorization, statistical and temporal workflows, including causal MACD, rolling MFI, cumulative OBV, Chaikin A/D, reproducible parallel Monte Carlo and exact-in-distribution GBM.
   lvlath - Repository Tutorial
 
   Purpose:
@@ -25,7 +25,7 @@
 
 > **hard math on an easy level**
 
-Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fitted feature scaling, covariance PCA, causal Wilder RSI, SMA-seeded MACD, rolling Money Flow Index, compensated On-Balance Volume, Chaikin A/D, reproducible parallel Monte Carlo and time-series alignment.
+Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fitted feature scaling, covariance PCA, causal Wilder RSI, SMA-seeded MACD, rolling Money Flow Index, compensated On-Balance Volume, Chaikin A/D, reproducible parallel Monte Carlo, exact-lognormal GBM paths and time-series alignment.
 
 This tutorial is the beginning of the learning path. It introduces the objects and ideas that most packages share: graphs, matrices, options, result artifacts, error contracts, and deterministic algorithm execution.
 
@@ -60,6 +60,7 @@ This tutorial is the beginning of the learning path. It introduces the objects a
     11m. [OBV Foundations: Cumulative Signed Volume and Checkpointed Streams](#11m-obv-foundations-cumulative-signed-volume-and-checkpointed-streams)
     11n. [AD Foundations: Close-Location Volume and Deterministic Replay](#11n-ad-foundations-close-location-volume-and-deterministic-replay)
     11o. [Monte Carlo Foundations: Path-Indexed Simulation, Ordered Reduction and Bounded Parallelism](#11o-monte-carlo-foundations-path-indexed-simulation-ordered-reduction-and-bounded-parallelism)
+    11p. [GBM Foundations: Exact Lognormal Paths and Explicit Time Units](#11p-gbm-foundations-exact-lognormal-paths-and-explicit-time-units)
 12. [Algorithm Selection Guide](#12-algorithm-selection-guide)
 13. [Professional Best Practices](#13-professional-best-practices)
 14. [Where To Go Next](#14-where-to-go-next)
@@ -101,6 +102,7 @@ The library covers:
 * `bootstrap` reproducible Moving, Circular and Stationary block-index ensembles with per-replicate RNG streams and atomic row publication;
 * `rng` local pinned PCG-DXSM streams with SHA-256 seed derivation, strictly open uniforms and cached Box-Muller normals;
 * `montecarlo` bounded-parallel independent sampling with per-path versioned streams, path-ordered `stats.Moments`, exact empirical quantiles and prefix-only interruption results;
+* `gbm` exact-in-distribution lognormal paths on explicit irregular time grids, with strict unit matching, numerical overflow gates and detached completed prefixes;
 * `paa` exact fractional time-series compression, rational segment boundaries and value-only feature projection;
 * `sax` symbolic words from fractional PAA and compatible Euclidean MINDIST (not a DTW lower bound);
 * `tsp` matrix-backed tour optimization with exact, approximate, matching, and local-search regimes;
@@ -126,6 +128,7 @@ timestamp-grid inspection  *series.ValidationResult    exact cadence / missing s
 dependent index ensembles  *bootstrap.Result           detached complete rows / RNG replay revision
 versioned stochastic path  rng.RNG                     mutable PCG-DXSM draw stream, owned by one goroutine
 independent path ensemble  *montecarlo.Result          ordered means/variance/SE, optional exact quantiles and detached samples
+GBM lognormal path          *gbm.Result                 complete exact-distribution endpoints / valid prefix on error
 sample autocorrelation     *acf.Result                 fixed-window lag coefficients / pair counts
 Wilder RSI factor          *rsi.Result                 aligned oscillator / Valid mask
 MACD trend difference      *macd.Result                aligned Line / Signal / Histogram masks
@@ -232,6 +235,7 @@ Read these files as a learning path. `doc.go` files define implemented package c
 | 8n   | [`OBV.md`](OBV.md)                         | Cumulative signed volume, first-bar zero, Neumaier accumulation, stream rollback and externally authenticated replay.       |
 | 8o   | [`AD.md`](AD.md)                           | Chaikin close-location-weighted volume, first-bar inclusion, stable multiplier, Neumaier rebase and snapshot trust.         |
 | 8p   | [`MONTECARLO.md`](MONTECARLO.md)           | Parallel path streams, ordered moments, bounded dispatch, exact quantiles and partial-result policy.                        |
+| 8q   | [`GBM.md`](GBM.md)                         | Exact lognormal increments on irregular grids, strict unit matching, stable log-growth publication, RNG/MC bridge.          |
 | 9    | [`DTW.md`](DTW.md)                         | `Align`, `AlignCostMatrix`, `AlignMatrix`, `AlignBounded`, exact `Search`, numeric and path artifacts.                      |
 | 9a   | [`DTW_SEARCH.md`](DTW_SEARCH.md)           | Fixed-length exact top-K, certified LB_Keogh, workers, budgets, and partial-result law.                                     |
 | 10   | [`TSP.md`](TSP.md)                         | Matrix-backed tours, exact regimes, Christofides, Blossom matching, local search, timeouts.                                 |
@@ -265,6 +269,7 @@ Working on numeric/time-series workflows:
   SERIES -> AD.ComputeCandles / Stream.Push -> close-location-weighted volume, valid from bar zero
   SERIES -> BOOTSTRAP.SampleIndices -> paired matrix/return/sensor resamples -> caller estimators
   RNG.Stream(seed, logicalPath) -> own sampler model -> MONTECARLO.Run (bounded jobs + indexed moments)
+  RNG.Stream(seed, logicalPath) -> GBM.Simulate / SimulateTerminal -> payoff Sampler -> MONTECARLO.Run
   MONTECARLO.Run -> mean/variance/SE / optional exact quantiles -> application decision policy
   OLS/RIDGE residual window -> ACF -> investigate serial dependence (NOT a p-value)
   MATRICES -> HMM.Smooth / Decode -> offline incident reconstruction
@@ -393,6 +398,8 @@ Think of `lvlath` as a contract stack.
 ```
 
 ### Parallel stochastic execution bridge
+
+For an explicitly selected geometric Brownian motion model, `gbm` transforms path-owned normal draws into positive-price endpoints before the application turns a complete trajectory into a payoff. It does not schedule or aggregate paths.
 
 `rng` creates a deterministic single-owner stream; `montecarlo` adds a path-indexed bounded scheduler and canonical single-owner moments; `stats` provides the numeric recurrence; `matrix` stores optional detached results. The application continues to own the stochastic model and its domain assumptions. `bootstrap` instead returns block-resampled indices from already observed dependent data. These are composable but **not interchangeable** numerical questions.
 
@@ -1605,17 +1612,17 @@ With `a=3`, breakpoints `[0,1]`, and `w=n=5`, the Raw vector `[-1,0,0.5,1,2]` yi
 
 For compatible words from equally long input windows, let `gap_j` be the minimum separation of the two bins in segment `j`. Equal or adjacent bins have `gap_j=0`; separated bins use their nearest breakpoint endpoints. The reported distance is
 
-\[
+$$
 \operatorname{MINDIST}=\sqrt{\frac{n}{w}\sum_{j=0}^{w-1}gap_j^2}.
-\]
+$$
 ![Symbolic Euclidean MINDIST formula](https://latex.codecogs.com/svg.image?%5Cmathrm%7BMINDIST%7D%3D%5Csqrt%7B%5Cfrac%7Bn%7D%7Bw%7D%5Csum_%7Bj%3D0%7D%5E%7Bw-1%7D%5Cmathrm%7Bgap%7D_j%5E2%7D)
 
 
 In **exact arithmetic**, interval separation and Jensen's inequality establish
 
-\[
+$$
 \operatorname{MINDIST}\le D_{\mathrm{PAA}}\le D_{\mathrm{Euclidean}}(Q^*,C^*).
-\]
+$$
 
 `Q*` and `C*` are the source windows *after* their selected transformations; with `ZPopulation`, they are independently normalized, not the original Raw observations. Binary64 rounding is not by itself a directed-rounding certificate for certified Euclidean pruning. MINDIST is also **not a metric on symbolic words**: adjacent but different symbols can have zero separation.
 
@@ -3923,6 +3930,109 @@ For full invariants, per-file GoDoc, precise error precedence, numeric sign-safe
 
 ---
 
+## 11p. GBM Foundations: Exact Lognormal Paths and Explicit Time Units
+
+`github.com/lvlath/go/gbm` solves a focused stochastic-modeling problem: given a **positive initial value**, fixed proportional drift and volatility, an explicit elapsed-time grid and a path-owned Gaussian stream, produce one **complete positive-price trajectory** or a rigorously delimited prefix plus an error. It is a model sampler rather than a market-price estimator or a Monte Carlo driver.
+
+### 11p.1. What “exact-in-distribution” means
+
+A geometric Brownian motion follows `dS = mu*S*dt + sigma*S*dW`. Its log-price has the exact conditional transition
+
+$$
+  \Delta\log S = \mu\,\Delta t
+      -\frac12\left(\sigma\sqrt{\Delta t}\right)^2
+      +\sigma\sqrt{\Delta t}\,Z, \qquad Z\sim N(0,1).
+$$
+
+![GBM lognormal increment](https://latex.codecogs.com/svg.image?%5Cdisplaystyle%20%5CDelta%5Clog%20S%3D%5Cmu%5CDelta%20t-%5Cfrac12%28%5Csigma%5Csqrt%7B%5CDelta%20t%7D%29%5E2%2B%5Csigma%5Csqrt%7B%5CDelta%20t%7DZ)
+
+This uses the exact law at specified endpoints; **unlike Euler–Maruyama**, it does not approximate the SDE with a price-level Euler step. It still uses rounded floating arithmetic and the particular normal distribution delivered by the RNG. It also does not know what the continuous trajectory did between sampled timestamps, which matters for continuously monitored barriers.
+
+**Why the logarithmic state matters:** a naive `S * math.Exp(increment)` can overflow at the exponential while the final product is representable. Likewise, forming `sigma*sigma` before multiplying by a tiny interval can overflow even though `sigma*sqrt(dt)` is finite. The canonical kernel accumulates log growth relative to the unchanged initial price and forms its drift, diffusion scale and Itô correction in fixed-precision wide arithmetic. Only a positive finite final `float64` price may be published; positive subnormals remain valid, while a rounded zero or infinity is `ErrOverflow`.
+
+### 11p.2. Physical units are part of the data contract
+
+Use exactly one of `TimeYears`, `TimeDays` or `TimeSeconds` **in both** `gbm.Parameters` and `gbm.TimeGrid`. `Drift` is per unit, `Volatility` per square root of that unit, and the grid must begin at zero and increase strictly. A single `[0]` is valid. No implicit year-to-second, 252-session, weekend or exchange-calendar conversion occurs.
+
+If a caller changes annual coefficients to seconds with a chosen `secondsPerYear=C`, it must set `muSeconds=muYears/C` and `sigmaSeconds=sigmaYears/sqrt(C)` and convert all elapsed timestamps to seconds. The package never selects `C`. Unlike `series`, GBM receives **floating elapsed time** rather than `int64` nanosecond timestamps and has no cadence/gap detector. Establish data integrity before conversion when it matters.
+
+### 11p.3. Choose a facade deliberately
+
+| Need                                | API                                                   | Distinct contract                                  |
+|:------------------------------------|:------------------------------------------------------|:---------------------------------------------------|
+| Entire irregular scenario           | `gbm.Simulate(ctx,p,grid,random)`                     | Canonical full path, partial-result/error handling |
+| Explicit scalar parameters and grid | `gbm.SimulatePath(ctx,s0,mu,sigma,unit,times,random)` | Creates typed carriers; no hidden unit/default     |
+| Endpoint-dependent payoff           | `gbm.SimulateTerminal(ctx,p,T,random)`                | `[0,T]` or `[0]` when `T=0`                        |
+| Replayable stand-alone path         | `gbm.SimulateSeeded(ctx,p,grid,seed,pathID)`          | New path-ID-addressed RNG stream                   |
+
+No wrapper adds a second numerical algorithm or silently reinterprets `mu`, `sigma`, time units or errors. For Monte Carlo, **use the stream the driver passes into `Sampler.Sample`**; do not create a new stream inside the sampler through `SimulateSeeded`.
+
+### 11p.4. Runnable example: nonuniform scenario checkpoints
+
+This synthetic five-checkpoint price model uses a **year-based** irregular grid for a quarterly-style risk report with an event-specific intermediate observation. It illustrates replay and successful result interpretation, not a fitted forecast.
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+
+    "github.com/lvlath/go/gbm"
+)
+
+func main() {
+    params := gbm.Parameters{
+        Initial: 100,
+        Drift: 0.03,
+        Volatility: 0.22,
+        Unit: gbm.TimeYears,
+    }
+    grid := gbm.TimeGrid{
+        Values: []float64{0, 0.05, 0.25, 0.75, 1.0},
+        Unit: gbm.TimeYears,
+    }
+    result, err := gbm.SimulateSeeded(context.Background(), params, grid, 20261118, 17)
+    if err != nil {
+        fmt.Println("simulation:", err)
+        return
+    }
+    if result == nil || !result.Complete {
+        fmt.Println("incomplete scenario")
+        return
+    }
+    fmt.Printf("points=%d complete=%t initial=%.0f horizon=%.2f years\n",
+        len(result.Values), result.Complete, result.Values[0], result.Times[len(result.Times)-1])
+    // Output:
+    // points=5 complete=true initial=100 horizon=1.00 years
+}
+```
+
+The two result slices are **detached from the grid and from each other**. The underlying time-step scan order and Gaussian draw order are the ascending input indices. Each positive-volatility step consumes **exactly one** `RNG.Normal()` call; with zero volatility the same path becomes deterministic and consumes **zero**, even though a non-nil RNG remains mandatory.
+
+### 11p.5. Partial results, errors and Monte Carlo integration
+
+An input error returns `nil, error`; a pre-canceled context also returns nil. After valid preflight, the simulator commits time zero. A cancellation observed before a later step, a nonfinite normal draw or an unrepresentable next price returns a **non-nil completed prefix**, `Complete=false`, and the corresponding context or sentinel error. Failed steps do not appear in either slice; lengths remain equal. Cancellation is checked at step boundaries, not forcibly inside `Normal`.
+
+```text
+Inputs                 GBM path                         Consumer
+---------              -----------------------------    ---------------------------
+valid p, grid, RNG --> [initial + ordered increments] --> check error and Complete
+                                  |
+                         runtime interruption
+                                  |
+                         valid prefix + error --------> diagnose only;
+                                                           never price at maturity
+```
+
+`Result.IsNil()` reports pointer absence through `core.Nilable`; it is **not** a substitute for checking `Complete`. Classify sentinels with `errors.Is`, not string comparison: `ErrInvalidOption`, `ErrNilInput`, `ErrEmptyInput`, `ErrOrder`, `ErrNonFinite`, `ErrDomain`, `ErrOverflow` and the original context errors have distinct meanings.
+
+A `montecarlo.Sampler` must turn each complete GBM trajectory into one fixed-size, finite payoff vector and return an **error** instead of a truncated sample. For a dividend-adjusted risk-neutral call, choose `Drift=r-q` in `TimeYears`, simulate a terminal endpoint with the supplied RNG, then discount `max(S(T)-K,0)` by `exp(-r*T)` in the caller's code. The Itô correction is already inside GBM: do not subtract `sigma²/2` from `r-q` a second time. The Monte Carlo driver then supplies per-path RNGs and an ordered aggregator; it does not calibrate the option model.
+
+For the implementation derivation, complete validation precedence, overflow/subnormal policy, a standalone irregular-tick scenario, a complete `montecarlo.Sampler`, and five audited executable examples, continue to [`GBM.md`](GBM.md), [`../gbm/doc.go`](../gbm/doc.go), [`../gbm/example_test.go`](../gbm/example_test.go) and [`../examples/gbm/main.go`](../examples/gbm/main.go).
+
+---
+
 ## 12. Algorithm Selection Guide
 
 ### If the input is a graph
@@ -3979,6 +4089,7 @@ For full invariants, per-file GoDoc, precise error precedence, numeric sign-safe
 | Cumulative volume weighted by close position              | `ad.ComputeCandles` / `ad.New`                | Valid first-bar contribution, bounded multiplier, Neumaier and external replay trust.                         |
 | Reproducible stochastic simulation paths                  | `rng.NewFactory().Stream` / `rng.NewStream`   | Pinned PCG-DXSM, logical path IDs, one goroutine owner per stream.                                            |
 | Independent Monte Carlo paths and exact outcome quantiles | `montecarlo.Run` / `RunWithQuantiles`         | Path-indexed RNG streams, ordered vector sample moments, bounded worker window and explicit memory admission. |
+| Exact-in-distribution GBM on a chosen time grid           | `gbm.Simulate` / `gbm.SimulateSeeded`         | Detached strictly positive prices, explicit years/days/seconds and complete/prefix status.                    |
 | Complete fixed index windows                              | `series.WindowRanges`                         | ordered half-open sample-index intervals.                                                                     |
 | Hidden-state streaming causal filtering                   | `hmm.FilterStep` / `FilterDefault`            | P(z_t given observations through t), no future-sample leakage.                                                |
 | Retrospective hidden-state attribution                    | `hmm.Smooth` / `hmm.Decode`                   | Full-sequence state marginals vs one optimal joint path; different contracts.                                 |
@@ -4008,26 +4119,26 @@ For full invariants, per-file GoDoc, precise error precedence, numeric sign-safe
 ### 13.1. Start from the objective, not the function name
 
 ```text
-min hops                             -> bfs
-post-order / cycle / DAG order       -> dfs
-min non-negative route cost          -> dijkstra
-min acyclic full backbone cost       -> mst.Kruskal / mst.Prim
-approx terminal-only backbone        -> mst.SteinerTree
-cover all edges of a given tree      -> mst.SteinerWalk
-max feasible throughput              -> flow
-all-pairs distances                  -> matrix metric closure
-dense topology/covariance            -> matrix
-streaming mean/variance              -> stats.Moments / stats.Summarize
-train-only standardization           -> stats.FitStandardizer
-frozen orthogonal compression        -> pca.FitWithComponents
-exact timestamp grid / causal arrays -> series
-symbolic Euclidean screening         -> sax
-fixed-window sample autocorrelation  -> acf.ComputeDefault / acf.Compute
-causal volume-weighted OHLCV flow    -> mfi.ComputeDefault / mfi.NewDefault
+min hops                              -> bfs
+post-order / cycle / DAG order        -> dfs
+min non-negative route cost           -> dijkstra
+min acyclic full backbone cost        -> mst.Kruskal / mst.Prim
+approx terminal-only backbone         -> mst.SteinerTree
+cover all edges of a given tree       -> mst.SteinerWalk
+max feasible throughput               -> flow
+all-pairs distances                   -> matrix metric closure
+dense topology/covariance             -> matrix
+streaming mean/variance               -> stats.Moments / stats.Summarize
+train-only standardization            -> stats.FitStandardizer
+frozen orthogonal compression         -> pca.FitWithComponents
+exact timestamp grid / causal arrays  -> series
+symbolic Euclidean screening          -> sax
+fixed-window sample autocorrelation   -> acf.ComputeDefault / acf.Compute
+causal volume-weighted OHLCV flow     -> mfi.ComputeDefault / mfi.NewDefault
 cumulative signed close-to-close flow -> obv.ComputeCandles / obv.New
 cumulative candle close-location flow -> ad.ComputeCandles / ad.New
-time-warped sequence similarity      -> dtw
-closed tour cost                     -> tsp
+time-warped sequence similarity       -> dtw
+closed tour cost                      -> tsp
 ```
 
 ### 13.2. Model graph capabilities honestly
@@ -4113,13 +4224,17 @@ Sparse graph traversal, dense matrix kernels, flow residual pressure, DTW full-m
 
 For Monte Carlo, pin the model revision, model parameter values and units, base seed, and the returned RNG revision. Keep path IDs independent of worker IDs and require complete success before treating quantiles as an ensemble summary. Remember that sampling standard error is **not** model uncertainty and that a quantiles-only run still materializes raw observations internally. See [`MONTECARLO.md`](MONTECARLO.md).
 
+### 13.13. Preserve GBM physical dimensions and completion semantics
+
+Use an explicit identical `TimeUnit` in `gbm.Parameters` and `gbm.TimeGrid`, rebasing timestamps to elapsed time starting at zero. On any time-unit conversion, change both `mu` (in inverse time) and `sigma` (in inverse square-root time) in caller code. Keep one `rng.RNG` per logical scenario; never treat a non-nil incomplete `*gbm.Result` as a valid maturity payoff. The exact-distribution endpoint law is not a guarantee of market-model accuracy or continuous-barrier monitoring. See [`GBM.md`](GBM.md) and [GBM FAQ](FAQ_%26_TIPS.md#13o-gbm-faq-exact-lognormal-steps-units-overflow-and-complete-paths).
+
 ## 14. Where To Go Next
 
 Use this tutorial as the entry point, then move into package-specific material:
 
 > If you are running reproducible stochastic engineering or risk experiments:
 >
->   [`RNG.md`](RNG.md) -> [`MONTECARLO.md`](MONTECARLO.md) -> [`../montecarlo/example_test.go`](../montecarlo/example_test.go)
+>   [`RNG.md`](RNG.md) -> [`GBM.md`](GBM.md) (for a GBM model) -> [`MONTECARLO.md`](MONTECARLO.md) -> [`../gbm/example_test.go`](../gbm/example_test.go)
 
 > If you are modeling topology first:
 >

@@ -8,7 +8,7 @@
     This README is the public face of lvlath. It presents the library as a
     deterministic, contract-driven Go toolkit for graph algorithms, flow networks,
     dense graph algebra, routing, exact timestamp grids, causal time-series primitives, Wilder RSI batch/stream filtering, SMA-seeded MACD, compensated MFI, compensated cumulative OBV, Chaikin A/D, fixed-window ACF, fractional PAA,
-    symbolic SAX encoding, dependent-data block-index resampling, path-indexed parallel Monte Carlo simulation, alignment, and reproducible algorithm engineering. It should give a new reader immediate confidence in
+    symbolic SAX encoding, dependent-data block-index resampling, path-indexed parallel Monte Carlo simulation, exact-in-distribution GBM paths, alignment, and reproducible algorithm engineering. It should give a new reader immediate confidence in
     what lvlath can solve, how packages compose, where the formal contracts live,
     and why this repository is engineered beyond ad-hoc algorithm snippets.
 
@@ -48,7 +48,7 @@
 
 # lvlath
 
-**lvlath** is a pure-Go algorithm engineering library for graphs, flows, dense graph algebra, routing, exact timestamp grids, causal series transforms, fractional PAA, symbolic SAX time-series signatures, stable statistical moments, fitted feature scaling, sample autocorrelation, Wilder RSI, SMA-seeded MACD, compensated OHLCV Money Flow Index, cumulative On-Balance Volume, Chaikin Accumulation/Distribution, covariance PCA, causal Hidden Markov Models, version-pinned PCG-DXSM stochastic streams, time-series alignment, reproducible parallel Monte Carlo drivers, and reproducible test fixtures.
+**lvlath** is a pure-Go algorithm engineering library for graphs, flows, dense graph algebra, routing, exact timestamp grids, causal series transforms, fractional PAA, symbolic SAX time-series signatures, stable statistical moments, fitted feature scaling, sample autocorrelation, Wilder RSI, SMA-seeded MACD, compensated OHLCV Money Flow Index, cumulative On-Balance Volume, Chaikin Accumulation/Distribution, covariance PCA, causal Hidden Markov Models, version-pinned PCG-DXSM stochastic streams, time-series alignment, reproducible parallel Monte Carlo drivers, exact-in-distribution geometric Brownian motion paths, and reproducible test fixtures.
 
 It is built for people who need algorithmic tools they can explain in a code review, trust in CI, compose across packages, and debug from deterministic artifacts instead of guessing why an answer changed.
 
@@ -79,6 +79,7 @@ It is built for people who need algorithmic tools they can explain in a code rev
 * `bootstrap` constructs reproducible dependent-data index ensembles with unbiased bounded integers, checked memory budgets and complete-row cancellation;
 * `rng` supplies local pinned PCG-DXSM128 streams, strict 52-bit open uniforms, cached Box-Muller normals and logical-path replay;
 * `montecarlo` orchestrates independent seeded simulation paths with bounded worker scheduling, canonical vector moments, exact empirical quantiles and auditable interruption prefixes;
+* `gbm` simulates positive exact-in-distribution lognormal paths on irregular explicitly unit-typed grids, with robust log-growth arithmetic and an error-safe completed-prefix protocol;
 * `flow`, `mst`, `tsp`, `dtw`, `gridgraph`, and `builder` packages extend the same discipline into optimization, alignment, fixtures, and examples.
 
 ---
@@ -111,6 +112,7 @@ The common failures are familiar:
 * OBV incorrectly includes the seed candle volume, loses low-order volume after a large cancellation, or uses a public snapshot Config digest as an integrity tag.
 * Chaikin A/D incorrectly starts with OBV's zero seed, forms 2*Close near MaxFloat64, divides by a flat spread, or drops a low-order volume correction.
 * Monte Carlo worker count silently changes floating-point totals, a blocked low-index path grows an unbounded queue, or a partial result is mistaken for a complete ensemble.
+* GBM silently applies annual coefficients to elapsed seconds, overflows a representable `S*exp(increment)` result, or turns a failed endpoint into a fake epsilon-clamped price.
 
 `lvlath` is built against those failure modes. It is an algorithm engineering library: each package publishes a narrow mathematical contract, validates its input domain, returns meaningful result artifacts, and keeps deterministic behavior observable.
 
@@ -172,6 +174,10 @@ The common failures are familiar:
 
     `montecarlo` derives one `rng.Factory.Stream(Seed,pathID)` per logical trial, not per worker. The coordinator alone advances path-ordered `stats.Moments` under a `2W` in-flight window; exact quantiles are optional and fully budgeted. Failed runs publish only a contiguous prefix and no quantiles. The model and its statistical assumptions remain with the caller.
 
+15. **GBM time dimensions and path completion cannot be inferred**
+
+    `gbm` requires matching declared years/days/seconds, finite positive input prices and an exact-origin increasing grid. It computes model transitions in log-growth coordinates, consumes no entropy at zero volatility, and never publishes rounded zero or infinity as success. A runtime failure returns a completed prefix plus error, **not** a valid terminal scenario. It neither annualizes the model nor validates its suitability for observed markets.
+
 ---
 
 ## Installation
@@ -214,6 +220,7 @@ lvlath/
 ├── bootstrap/             # versioned Moving/Circular/Stationary block-index ensembles
 ├── rng/                   # pinned SHA256LE/PCG-DXSM streams, open uniforms and cached normals
 ├── montecarlo/            # bounded parallel paths, ordered moments, exact sample quantiles
+├── gbm/                   # exact lognormal GBM paths, explicit units, positive-price prefix law
 ├── gridgraph/             # 2D lattice graph generation
 ├── matrix/                # dense graph algebra, stable statistics, pivoted factors and solves
 ├── tsp/                   # tour construction, local search, exact small-instance routing
@@ -243,6 +250,7 @@ lvlath/
 │   ├── BOOTSTRAP.md
 │   ├── RNG.md
 │   ├── MONTECARLO.md
+│   ├── GBM.md
 │   ├── PAA.md
 │   ├── SAX.md
 │   ├── GRID_GRAPH.md
@@ -411,6 +419,10 @@ Composition rule:
   stats owns stable scalar moments and immutable matrix feature scaling.
   bootstrap owns versioned block-index replicates; values and inference stay with callers.
   rng owns version-pinned path-specific pseudo-random streams; it does not schedule trials.
+  gbm owns one exact-in-distribution geometric Brownian motion trajectory on
+  explicitly unit-matched elapsed-time grids; stochastic draws come from rng,
+  payoffs and calibration come from the caller, and ensemble reduction comes
+  from montecarlo.
   montecarlo owns the bounded parallel driver, canonical path-ID reduction,
   optional exact quantiles and prefix-only interruption semantics; it does not model a process.
   acf owns fixed-window sample autocorrelation, explicit estimator conventions,
@@ -477,6 +489,7 @@ The stochastic branch of the architecture is deliberately separate from graph tr
 | `ridge`      | Tikhonov L2 regression with mandatory Lambda>0 and immutable physical-unit inference.                                                          | Stable balanced augmented Householder QR, p>n, duplicated predictors, unpenalized intercept and checked objective.         | Correlated multi-factor hedges, wide optical sensors, seasonal AR(12).                                         |
 | `rng`        | Version-pinned SHA-256/PCG-DXSM128/64 streams, strict uniform midpoints, cached Box-Muller normals and batch facades.                          | Immutable factory, logical path isolation, no hot-loop allocation and exact raw consumption.                               | Monte Carlo paths, risk simulation, sensor fault injection, repeatable stress experiments.                     |
 | `montecarlo` | Independent multidimensional stochastic experiments, bounded worker scheduling, ordered Welford moments and type-7 quantiles.                  | Bitwise worker-count parity on complete deterministic runs, checked optional-buffer admission and strict partial prefixes. | Option/risk valuation, structural fatigue screening, microgrid resilience, repeatable fault experiments.       |
+| `gbm`        | Exact-in-distribution GBM price paths on caller-specified irregular grids, with explicit years/days/seconds.                                   | Avoids spurious `S*exp`/`sigma²` overflows; detached prefix/errors, zero RNG draws at sigma zero.                          | European-option paths, synthetic tick stress, FX-liability scenarios and deterministic escalation.             |
 | `bootstrap`  | Reproducible Moving/Circular/Stationary index resampling for dependent series with per-replicate streams and exact bounded integers.           | Detached complete-row results, memory admission and cancellation without interrupted-row publication.                      | Portfolio risk sensitivity, paired serial regression, telemetry alarm calibration.                             |
 | `acf`        | Direct fixed-window sample autocorrelation with two explicit denominator conventions and raw/centered origins.                                 | Scaled compensated products, no lag-specific recentering or clipping; caller-owned lag counts.                             | Residual audits, compressor cycles, vibration periodicity, signal pitch.                                       |
 | `rsi`        | Deterministic Wilder RSI over finite-positive prices: batch mask, streaming Push and snapshot continuation.                                    | One shared scalar recurrence, explicit warmup, atomic failed Push, detached checkpoints, no signal thresholds.             | Portfolio momentum-factor extraction, feed monitoring, authenticated hot-failover analytics.                   |
@@ -1716,6 +1729,64 @@ For applied models, see the five checked examples in [`montecarlo/example_test.g
 
 ---
 
+### GBM: exact-in-distribution lognormal paths with explicit physical units
+
+`github.com/lvlath/go/gbm` simulates **one positive geometric Brownian motion trajectory** over a caller-owned nonuniform time grid. It consumes one standard-normal draw per stochastic interval from `rng.RNG`, accumulates logarithmic growth in extended-exponent arithmetic and publishes only positive finite `float64` prices. The initial price is retained exactly as the conversion anchor; positive subnormals are legal, while a rounded zero or infinity is `ErrOverflow`, **not** a fabricated epsilon-clamped value.
+
+| Need                                    | Public API                                            | What the result means                                                 |
+|:----------------------------------------|:------------------------------------------------------|:----------------------------------------------------------------------|
+| Full explicit-grid GBM path             | `gbm.Simulate(ctx,p,grid,random)`                     | `*Result{Times,Values,Complete}`; complete or valid prefix with error |
+| Scalar construction with explicit units | `gbm.SimulatePath(ctx,s0,mu,sigma,unit,times,random)` | Same canonical kernel and error law                                   |
+| One-horizon European terminal model     | `gbm.SimulateTerminal(ctx,p,horizon,random)`          | `[0,horizon]` or initial-only `[0]` at zero horizon                   |
+| Reproducible standalone scenario        | `gbm.SimulateSeeded(ctx,p,grid,seed,pathID)`          | A fresh `rng.NewStream` addressed by logical path ID                  |
+
+**Why the numeric policy matters.** Neither `S_previous*exp(logIncrement)` nor an upfront `sigma*sigma` is safe across the full finite `float64` parameter domain. The kernel computes `sigma*sqrt(dt)` and the Itô correction in wide arithmetic and avoids premature level-domain overflow, including cases with representable final prices. The fixed-precision implementation is **not** a proof of correctly rounded exact-real results for every possible finite input. Its exact-in-distribution statement concerns the model transition law, assuming normal draws, not arbitrary precision or empirical realism.
+
+**Time is an explicit model dimension.** `gbm.TimeYears`, `TimeDays` and `TimeSeconds` are labels with strict equality between `Parameters.Unit` and `TimeGrid.Unit`. Drift is `1/Unit`; volatility is `1/sqrt(Unit)`. No hidden 252-session calendar, year fraction or seconds conversion occurs. Grid values are elapsed, finite, begin at zero and increase strictly. `[0]` is valid and consumes no Gaussian draw; `sigma==0` consumes no RNG entropy on any grid but still requires a non-nil stream.
+
+**Runtime failure is not successful early maturity.** Invalid inputs and pre-canceled contexts return `nil, error`. After preflight, interrupted or numerically failed steps return only the detached completed prefix, with `Complete=false` and a classified error. `Result.IsNil()` implements pointer-presence semantics through `core.Nilable`; it does not prove horizon completion. A Monte Carlo adapter must return an error rather than pricing an incomplete GBM path.
+
+The following example produces a replayable, synthetic one-year path with event-specific checkpoints; the printed metadata is deterministic without implying that the sampled endpoint is a verified market forecast:
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+
+    "github.com/lvlath/go/gbm"
+)
+
+func main() {
+    params := gbm.Parameters{
+        Initial: 100, Drift: 0.03, Volatility: 0.22, Unit: gbm.TimeYears,
+    }
+    grid := gbm.TimeGrid{
+        Values: []float64{0, 0.05, 0.25, 0.75, 1}, Unit: gbm.TimeYears,
+    }
+    path, err := gbm.SimulateSeeded(context.Background(), params, grid, 20261118, 17)
+    if err != nil {
+        fmt.Println("simulation:", err)
+        return
+    }
+    if path == nil || !path.Complete {
+        fmt.Println("incomplete path")
+        return
+    }
+    fmt.Printf("checkpoints=%d first=%.0f horizon=%.0f year\n",
+        len(path.Values), path.Values[0], path.Times[len(path.Times)-1])
+    // Output:
+    // checkpoints=5 first=100 horizon=1 year
+}
+```
+
+`gbm` deliberately does **not** calibrate a model, certify lognormal market behavior, choose a financial probability measure, implement portfolio correlation or price a derivative. To price a dividend-paying European option under a caller-selected risk-neutral model, pass `Drift=r-q`, use the stream supplied to `montecarlo.Sampler.Sample`, simulate a complete terminal path, discount the payoff **outside GBM**, and let `montecarlo.Run` perform ordered sample reduction. For a path-dependent payoff, provide the observation grid explicitly; unobserved continuous-time barrier crossings are not resolved by endpoint simulation.
+
+The five executable examples cover irregular synthetic ticks, risk-neutral call pricing with Monte Carlo worker replay, five-year FX reserve stress, zero-entropy deterministic procurement costs and explicit annual-to-seconds conversion. See [`docs/GBM.md`](docs/GBM.md) for complete mathematics, numerical limits, error precedence, diagrams and applied examples; [`gbm/doc.go`](gbm/doc.go) for the source contract; [`gbm/example_test.go`](gbm/example_test.go) and [`examples/gbm/main.go`](examples/gbm/main.go) for tested operational programs.
+
+---
+
 ### HMM: causal regime filtering, retrospective smoothing and reproducible EM
 
 `github.com/lvlath/go/hmm` models **hidden operating regimes** behind categorical events or finite multichannel telemetry. Its two immutable model families share the same transition mathematics but have distinct, typed observation contracts:
@@ -1781,6 +1852,7 @@ See [`docs/HMM.md`](docs/HMM.md) for formal log-domain equations, EM counts and 
 | Series primitives         | [`docs/SERIES.md`](docs/SERIES.md)           | Exact integer grids, causal transforms, result masks, numeric safeguards, index windows.                                        |
 | Deterministic RNG streams | [`docs/RNG.md`](docs/RNG.md)                 | Pinned PCG-DXSM128/64, SHA-256 state mapping, strict uniform, Gaussian spare and replay.                                        |
 | Monte Carlo driver        | [`docs/MONTECARLO.md`](docs/MONTECARLO.md)   | Path-keyed replay, bounded dispatch, vector moments, exact empirical quantiles, memory limits and prefix failures.              |
+| GBM exact lognormal paths | [`docs/GBM.md`](docs/GBM.md)                 | Model equations, unit dimensions, input precedence, robust price publication and Monte Carlo bridge.                            |
 | Stable statistics         | [`docs/STATS.md`](docs/STATS.md)             | Welford/Chan, exact mean sum, scaled M2, fitted scaling, sentinels, immutable inference.                                        |
 | Stable Ridge regression   | [`docs/RIDGE.md`](docs/RIDGE.md)             | Positive-Lambda augmented QR, strict intercept policy, wide/collinear designs, nonzero tiny coefficients and frozen prediction. |
 | Dependent index bootstrap | [`docs/BOOTSTRAP.md`](docs/BOOTSTRAP.md)     | Moving/Circular/Stationary laws, exact integer mapping, replay, budget and partial rows.                                        |
@@ -2313,106 +2385,110 @@ incidence matrix:       columns are edge identities, not vertex-pair weights
 
 ### By question type
 
-| You ask                                                                                        | Use                                                                | Why                                                                                          |
-|:-----------------------------------------------------------------------------------------------|:-------------------------------------------------------------------|:---------------------------------------------------------------------------------------------|
-| "Which vertices are within `k` hops?"                                                          | `bfs.BFS` with depth policy                                        | Hop layers are unweighted traversal.                                                         |
-| "Which weak islands exist?"                                                                    | `bfs.Components`                                                   | Component membership is not a route-cost problem.                                            |
-| "What dependency order is valid?"                                                              | `dfs.TopologicalSort`                                              | DAG ordering is finish-order semantics.                                                      |
-| "Where is the cycle?"                                                                          | `dfs.DetectCycles`                                                 | You need a deterministic witness, not all simple cycles.                                     |
-| "What is the cheapest route from this source?"                                                 | `dijkstra.Dijkstra`                                                | Non-negative weighted shortest path.                                                         |
-| "Which targets are outside a runtime budget?"                                                  | `dijkstra.WithMaxDistance`                                         | Cutoff policy without deleting topology.                                                     |
-| "Which links form the cheapest connected backbone?"                                            | `mst.MinimumSpanningTree`, `mst.Kruskal`, `mst.Prim`               | MST/MSF solves acyclic connectivity, not routing.                                            |
-| "What if the graph is disconnected but I still need per-component backbones?"                  | `mst.WithForest`                                                   | Forest mode is explicit, not a hidden fallback.                                              |
-| "How do I connect only a required set of vertices?"                                            | `mst.SteinerTree`                                                  | KMB approximates a nonnegative graph Steiner tree using original EdgeIDs.                    |
-| "How do I cover all edges of the installed tree from A to B?"                                  | `mst.SteinerWalk`                                                  | Iterative optimal covering of the given tree, with repeated passage IDs.                     |
-| "What is the max source-to-sink capacity?"                                                     | `flow.Dinic` or `flow.EdmondsKarp`                                 | Flow algorithms reason over residual capacity.                                               |
-| "How do I validate exact sample cadence and missing slots?"                                    | `series.Validate`                                                  | Signed-nanosecond grid checks; no interpolation.                                             |
-| "How do I compute causal lag, differences, or returns?"                                        | `series.Lag` / `Difference` / `SimpleReturns` / `LogReturns`       | Length-preserving values and validity masks.                                                 |
-| "How do I compute Wilder relative strength on an ordered positive price feed?"                 | `rsi.ComputePeriod` / `rsi.NewPeriod`                              | Aligned Values+Valid or single-owner zero-allocation streaming; caller handles gaps.         |
-| "How do fast and slow price trends diverge, and what is their smoothed separation?"            | `macd.ComputeDefault` / `macd.NewDefault`                          | Three signed aligned series with readiness masks and transactional single-owner streaming.   |
-| "Which typical-price directions received more traded volume in the last P transitions?"        | `mfi.ComputeDefault` / `mfi.NewDefault`                            | Bounded OHLCV MFI, explicit warmup validity and compensated rolling state.                   |
-| "What is cumulative volume attached to rising versus falling closes since an explicit origin?" | `obv.ComputeCandles` / `obv.New`                                   | Unbounded compensated OBV, valid from the first candle, with no window or options.           |
-| "How does close location inside each candle affect cumulative volume pressure?"                | `ad.ComputeCandles` / `ad.New`                                     | Unbounded compensated A/D, first bar contributes, no previous close or warmup.               |
-| "How do I compress a window without dropping fractional tails?"                                | `paa.Transform` / `paa.TransformRange`                             | Exact fractional PAA, checked integer geometry and a detached result.                        |
-| "How do I create comparable symbolic time-series signatures?"                                  | `sax.NewEncoder` / `sax.Encode`                                    | Fixed-alphabet symbols, compatible policy hash, detached results.                            |
-| "Can SAX MINDIST prune arbitrary DTW candidates?"                                              | No                                                                 | Euclidean-only lower bound; shortlist retrieval must report Recall@K.                        |
-| "How do I measure repeat cycles or fixed-window serial dependence?"                            | `acf.ComputeDefault` / `acf.Compute`                               | Integer-lag ACF with explicit denominator and pair counts; not causal streaming.             |
-| "How do I enumerate only complete index windows?"                                              | `series.WindowRanges`                                              | Ordered half-open ranges without partial tails.                                              |
-| "How do I compare two jittery sensor signatures?"                                              | `dtw.Align`                                                        | Scalar DTW aligns timing drift.                                                              |
-| "How do I align model-provided frame costs?"                                                   | `dtw.AlignCostMatrix`                                              | Caller owns the local-cost surface.                                                          |
-| "How do I align multivariate sequences?"                                                       | `dtw.AlignMatrix`                                                  | Rows are time steps, columns are features.                                                   |
-| "How do I calculate stable population/sample variance?"                                        | `stats.Summarize`                                                  | Stable central moments and explicit DDOF denominator.                                        |
-| "How do I combine independent streaming statistics?"                                           | `stats.Moments.Update` / `Merge`                                   | Error-atomic, count-checked Welford/Chan partition reductions.                               |
-| "How do I scale test features using only training data?"                                       | `stats.FitStandardizer` followed by `Model.Transform`              | Frozen per-column means and scales, no inference refit.                                      |
-| "How do I filter a hidden operating regime from live sequential evidence?"                     | `hmm.CategoricalModel.FilterStep` / `hmm.GaussianModel.FilterStep` | Causal posterior, no look-ahead; explicit model identity and prior.                          |
-| "How do I retrospectively explain state changes across an incident?"                           | `hmm.Smooth` / `hmm.Decode`                                        | Noncausal per-step posterior or one maximum-joint path, respectively.                        |
-| "How do I train independent hidden-regime sessions without fabricated transitions?"            | `hmm.FitCategorical` / `hmm.FitGaussian`                           | Per-sequence prior reset and within-sequence xi only; MAP objective diagnostics.             |
-| "How do I reduce correlated feature dimensions without a target y?"                            | `pca.FitWithComponents` / `pca.FitStandardizedWithComponents`      | Frozen training PCA basis; k cannot exceed detected covariance rank.                         |
-| "How do I check a sensor batch against a learned normal subspace?"                             | `pca.Model.Reconstruct` + independently calibrated residual policy | Holdout reconstruction uses no batch refit; alerts are application policy.                   |
-| "How do I fit stable factors when columns are duplicated or p>n?"                              | `ridge.FitStandardized` / `ridge.Fit`                              | Explicit positive-Lambda slope penalty, unpenalized intercept, frozen physical coefficients. |
-| "How do I fit reusable linear-factor coefficients with an intercept?"                          | `ols.FitDefault` / `ols.FitStandardized`                           | Original-unit beta and b, training SSE, no heldout refit.                                    |
-| "How do I force a physical zero intercept?"                                                    | `ols.FitThroughOrigin` / `FitThroughOriginStandardized`            | No feature centering; b exactly +0 even when scaling.                                        |
-| "How do I fit a full-rank tall calibration model?"                                             | `matrix.SolveLeastSquares` / `FactorQR`                            | Pivoted Householder QR, rank refusal and residual diagnostics.                               |
-| "How do I solve a reusable SPD coupling system?"                                               | `matrix.FactorCholesky`                                            | Symmetry/SPD validation, measured condition and detached solutions.                          |
-| "How do I compute topology features?"                                                          | `matrix.NewAdjacencyMatrix`, `NewIncidenceMatrix`, `DegreeVector`  | Matrix artifacts preserve topology policy.                                                   |
-| "How do I compute all-pairs route distances?"                                                  | `matrix.BuildMetricClosure`                                        | Floyd-Warshall distance artifact with `+Inf` semantics.                                      |
-| "How do I solve a complete inspection/delivery tour?"                                          | `tsp.SolveMatrix`                                                  | TSP kernels consume matrix cost models.                                                      |
-| "How do I solve TSP from graph topology?"                                                      | `tsp.SolveGraph`                                                   | Graph is adapted at the facade boundary, then solved as a matrix problem.                    |
-| "How do I get exact TSP for a small instance?"                                                 | `tsp.ExactHeldKarp` / `tsp.BranchAndBound` policy                  | Exactness is explicit and guarded.                                                           |
-| "How do I get a metric symmetric approximation?"                                               | `tsp.Christofides` + `tsp.BlossomMatch`                            | The `1.5` ratio requires exact matching and metric assumptions.                              |
-| "How do I create reproducible stochastic simulation paths?"                                    | `rng.NewFactory().Stream(seed, pathID)`                            | PCG-DXSM pinned streams; logical path IDs, never worker IDs.                                 |
-| "How do I parallelize independent Monte Carlo paths with ordered, reproducible moments?"       | `montecarlo.Run` / `EstimateParallel`                              | One RNG per path, bounded 2W window, single ordered reducer, optional budgeted quantiles.    |
-| "How do I build repeatable graphs?"                                                            | `builder` / `gridgraph`                                            | Generated fixtures should be deterministic.                                                  |
+| You ask                                                                                        | Use                                                                | Why                                                                                                   |
+|:-----------------------------------------------------------------------------------------------|:-------------------------------------------------------------------|:------------------------------------------------------------------------------------------------------|
+| "Which vertices are within `k` hops?"                                                          | `bfs.BFS` with depth policy                                        | Hop layers are unweighted traversal.                                                                  |
+| "Which weak islands exist?"                                                                    | `bfs.Components`                                                   | Component membership is not a route-cost problem.                                                     |
+| "What dependency order is valid?"                                                              | `dfs.TopologicalSort`                                              | DAG ordering is finish-order semantics.                                                               |
+| "Where is the cycle?"                                                                          | `dfs.DetectCycles`                                                 | You need a deterministic witness, not all simple cycles.                                              |
+| "What is the cheapest route from this source?"                                                 | `dijkstra.Dijkstra`                                                | Non-negative weighted shortest path.                                                                  |
+| "Which targets are outside a runtime budget?"                                                  | `dijkstra.WithMaxDistance`                                         | Cutoff policy without deleting topology.                                                              |
+| "Which links form the cheapest connected backbone?"                                            | `mst.MinimumSpanningTree`, `mst.Kruskal`, `mst.Prim`               | MST/MSF solves acyclic connectivity, not routing.                                                     |
+| "What if the graph is disconnected but I still need per-component backbones?"                  | `mst.WithForest`                                                   | Forest mode is explicit, not a hidden fallback.                                                       |
+| "How do I connect only a required set of vertices?"                                            | `mst.SteinerTree`                                                  | KMB approximates a nonnegative graph Steiner tree using original EdgeIDs.                             |
+| "How do I cover all edges of the installed tree from A to B?"                                  | `mst.SteinerWalk`                                                  | Iterative optimal covering of the given tree, with repeated passage IDs.                              |
+| "What is the max source-to-sink capacity?"                                                     | `flow.Dinic` or `flow.EdmondsKarp`                                 | Flow algorithms reason over residual capacity.                                                        |
+| "How do I validate exact sample cadence and missing slots?"                                    | `series.Validate`                                                  | Signed-nanosecond grid checks; no interpolation.                                                      |
+| "How do I compute causal lag, differences, or returns?"                                        | `series.Lag` / `Difference` / `SimpleReturns` / `LogReturns`       | Length-preserving values and validity masks.                                                          |
+| "How do I compute Wilder relative strength on an ordered positive price feed?"                 | `rsi.ComputePeriod` / `rsi.NewPeriod`                              | Aligned Values+Valid or single-owner zero-allocation streaming; caller handles gaps.                  |
+| "How do fast and slow price trends diverge, and what is their smoothed separation?"            | `macd.ComputeDefault` / `macd.NewDefault`                          | Three signed aligned series with readiness masks and transactional single-owner streaming.            |
+| "Which typical-price directions received more traded volume in the last P transitions?"        | `mfi.ComputeDefault` / `mfi.NewDefault`                            | Bounded OHLCV MFI, explicit warmup validity and compensated rolling state.                            |
+| "What is cumulative volume attached to rising versus falling closes since an explicit origin?" | `obv.ComputeCandles` / `obv.New`                                   | Unbounded compensated OBV, valid from the first candle, with no window or options.                    |
+| "How does close location inside each candle affect cumulative volume pressure?"                | `ad.ComputeCandles` / `ad.New`                                     | Unbounded compensated A/D, first bar contributes, no previous close or warmup.                        |
+| "How do I compress a window without dropping fractional tails?"                                | `paa.Transform` / `paa.TransformRange`                             | Exact fractional PAA, checked integer geometry and a detached result.                                 |
+| "How do I create comparable symbolic time-series signatures?"                                  | `sax.NewEncoder` / `sax.Encode`                                    | Fixed-alphabet symbols, compatible policy hash, detached results.                                     |
+| "Can SAX MINDIST prune arbitrary DTW candidates?"                                              | No                                                                 | Euclidean-only lower bound; shortlist retrieval must report Recall@K.                                 |
+| "How do I measure repeat cycles or fixed-window serial dependence?"                            | `acf.ComputeDefault` / `acf.Compute`                               | Integer-lag ACF with explicit denominator and pair counts; not causal streaming.                      |
+| "How do I enumerate only complete index windows?"                                              | `series.WindowRanges`                                              | Ordered half-open ranges without partial tails.                                                       |
+| "How do I compare two jittery sensor signatures?"                                              | `dtw.Align`                                                        | Scalar DTW aligns timing drift.                                                                       |
+| "How do I align model-provided frame costs?"                                                   | `dtw.AlignCostMatrix`                                              | Caller owns the local-cost surface.                                                                   |
+| "How do I align multivariate sequences?"                                                       | `dtw.AlignMatrix`                                                  | Rows are time steps, columns are features.                                                            |
+| "How do I calculate stable population/sample variance?"                                        | `stats.Summarize`                                                  | Stable central moments and explicit DDOF denominator.                                                 |
+| "How do I combine independent streaming statistics?"                                           | `stats.Moments.Update` / `Merge`                                   | Error-atomic, count-checked Welford/Chan partition reductions.                                        |
+| "How do I scale test features using only training data?"                                       | `stats.FitStandardizer` followed by `Model.Transform`              | Frozen per-column means and scales, no inference refit.                                               |
+| "How do I filter a hidden operating regime from live sequential evidence?"                     | `hmm.CategoricalModel.FilterStep` / `hmm.GaussianModel.FilterStep` | Causal posterior, no look-ahead; explicit model identity and prior.                                   |
+| "How do I retrospectively explain state changes across an incident?"                           | `hmm.Smooth` / `hmm.Decode`                                        | Noncausal per-step posterior or one maximum-joint path, respectively.                                 |
+| "How do I train independent hidden-regime sessions without fabricated transitions?"            | `hmm.FitCategorical` / `hmm.FitGaussian`                           | Per-sequence prior reset and within-sequence xi only; MAP objective diagnostics.                      |
+| "How do I reduce correlated feature dimensions without a target y?"                            | `pca.FitWithComponents` / `pca.FitStandardizedWithComponents`      | Frozen training PCA basis; k cannot exceed detected covariance rank.                                  |
+| "How do I check a sensor batch against a learned normal subspace?"                             | `pca.Model.Reconstruct` + independently calibrated residual policy | Holdout reconstruction uses no batch refit; alerts are application policy.                            |
+| "How do I fit stable factors when columns are duplicated or p>n?"                              | `ridge.FitStandardized` / `ridge.Fit`                              | Explicit positive-Lambda slope penalty, unpenalized intercept, frozen physical coefficients.          |
+| "How do I fit reusable linear-factor coefficients with an intercept?"                          | `ols.FitDefault` / `ols.FitStandardized`                           | Original-unit beta and b, training SSE, no heldout refit.                                             |
+| "How do I force a physical zero intercept?"                                                    | `ols.FitThroughOrigin` / `FitThroughOriginStandardized`            | No feature centering; b exactly +0 even when scaling.                                                 |
+| "How do I fit a full-rank tall calibration model?"                                             | `matrix.SolveLeastSquares` / `FactorQR`                            | Pivoted Householder QR, rank refusal and residual diagnostics.                                        |
+| "How do I solve a reusable SPD coupling system?"                                               | `matrix.FactorCholesky`                                            | Symmetry/SPD validation, measured condition and detached solutions.                                   |
+| "How do I compute topology features?"                                                          | `matrix.NewAdjacencyMatrix`, `NewIncidenceMatrix`, `DegreeVector`  | Matrix artifacts preserve topology policy.                                                            |
+| "How do I compute all-pairs route distances?"                                                  | `matrix.BuildMetricClosure`                                        | Floyd-Warshall distance artifact with `+Inf` semantics.                                               |
+| "How do I solve a complete inspection/delivery tour?"                                          | `tsp.SolveMatrix`                                                  | TSP kernels consume matrix cost models.                                                               |
+| "How do I solve TSP from graph topology?"                                                      | `tsp.SolveGraph`                                                   | Graph is adapted at the facade boundary, then solved as a matrix problem.                             |
+| "How do I get exact TSP for a small instance?"                                                 | `tsp.ExactHeldKarp` / `tsp.BranchAndBound` policy                  | Exactness is explicit and guarded.                                                                    |
+| "How do I get a metric symmetric approximation?"                                               | `tsp.Christofides` + `tsp.BlossomMatch`                            | The `1.5` ratio requires exact matching and metric assumptions.                                       |
+| "How do I create reproducible stochastic simulation paths?"                                    | `rng.NewFactory().Stream(seed, pathID)`                            | PCG-DXSM pinned streams; logical path IDs, never worker IDs.                                          |
+| "How do I parallelize independent Monte Carlo paths with ordered, reproducible moments?"       | `montecarlo.Run` / `EstimateParallel`                              | One RNG per path, bounded 2W window, single ordered reducer, optional budgeted quantiles.             |
+| "How do I generate a positive lognormal price path on an irregular grid?"                      | `gbm.Simulate` / `SimulateSeeded`                                  | Model units are explicit, price publication is finite, runtime failures retain only completed points. |
+| "How do I build repeatable graphs?"                                                            | `builder` / `gridgraph`                                            | Generated fixtures should be deterministic.                                                           |
 
 ### By failure mode you need to avoid
 
-| Risk                                                                            | lvlath answer                                                                                            |
-|:--------------------------------------------------------------------------------|:---------------------------------------------------------------------------------------------------------|
-| Map-order flakiness in examples/tests                                           | `core` deterministic surfaces and package tie-break laws.                                                |
-| Invalid topology reaches algorithms                                             | Graph capability validation and package-level input validators.                                          |
-| BFS used for weighted routing                                                   | Separate BFS hop semantics from Dijkstra weighted semantics.                                             |
-| DFS order misread as discovery order                                            | DFS `Result.Order` is documented finish order.                                                           |
-| Unknown target treated as unreachable                                           | Dijkstra keeps target-domain errors separate from `+Inf` distances.                                      |
-| Runtime route policy deletes graph structure                                    | Dijkstra thresholds/cutoffs model the run without mutating topology.                                     |
-| Disconnected MST silently becomes forest                                        | `mst.WithForest` is explicit; strict MST returns disconnection.                                          |
-| Terminal-only optimization confused with full MST                               | `mst.SteinerTree` uses required terminals and original edges; it is an approximation, not an exact MST.  |
-| Network cost mistaken for inspection-route cost                                 | `SteinerResult.TotalWeight` counts unique links; `WalkResult.Distance` counts actual passages.           |
-| Repeated walk EdgeIDs removed as duplicates                                     | `SteinerWalk` repeats original IDs by design while covering every selected tree edge.                    |
-| Non-finite MST weights corrupt sorting/heap behavior                            | MST rejects `NaN`, `+Inf`, `-Inf` before kernel execution.                                               |
-| Flow output hides residual state                                                | Flow result includes residual-network semantics.                                                         |
-| DTW path requested from rolling memory                                          | DTW memory/path policy is explicit; path needs full accumulated storage.                                 |
-| Missing timestamps silently treated as samples                                  | `series.Validate` reports whole-slot gaps; no values or time slots are synthesized.                      |
-| PAA fractional remainder dropped or padded with zeros                           | `paa.Transform` uses integer exact-overlap geometry; neither truncation nor padding occurs.              |
-| SAX breakpoint labels mistaken for encoding identity                            | `EncodingID` hashes actual threshold content and numeric policy; `BreakpointID` is audit-only.           |
-| Euclidean SAX MINDIST incorrectly used to prune DTW                             | Do not prune; the two distance objectives differ and a positive MINDIST may accompany zero DTW.          |
-| LagAdjusted clipped to [-1,1] or treated as Toeplitz PSD                        | Preserve the estimator convention; use CommonDenominator for exact-arithmetic PSD compatibility.         |
-| Block-bootstrap path silently replaced by IID modulo-biased shuffling           | `bootstrap` uses exact rejection, explicit block topology, per-replicate streams and versioned metadata. |
-| Worker-tied seeds or shared mutable pseudo-random streams                       | Use `rng.Factory.Stream(seed,uint64(logicalPath))` and reduce path results by stable index.              |
-| Worker-count-dependent Monte Carlo means/variance or an unbounded pending queue | `montecarlo` uses path-ID streams, coordinator-only `stats.Moments`, and a `2W` issue window.            |
-| A partial Monte Carlo prefix interpreted as a completed risk estimate           | Check `err`/`Complete`; `Completed` is a contiguous prefix, quantiles nil on failure.                    |
-| Full-window ACF mistaken for a causal streaming feature                         | Fit only a fixed permitted window; appending observations can revise every lag.                          |
-| Warmup zero mistaken for a computed zero                                        | `series.TransformResult.Valid` marks computed cells; retain it with `Values`.                            |
-| MFI zero-volume or unchanged-price bars silently dropped                        | Retain every observed transition slot; a missing candle is a separate feed-integrity error.              |
-| MFI checkpoint Config mistaken for integrity proof                              | Authenticate the entire Snapshot and persist source offset; Config is only an algorithm/period identity. |
-| First OBV candle incorrectly contributes its volume                             | Seed the first accepted Close only; its valid OBV must be exactly positive zero.                         |
-| OBV correction is lost after a large opposite-signed volume                     | Preserve sum and compensation across Push and Snapshot/Restore; do not flatten them.                     |
-| OBV checkpoint Config is treated as proof of authentic feed history             | Authenticate the entire snapshot and its external source cursor; Config hashes a public algorithm ID.    |
-| A/D bar zero is dropped or the multiplier forms 2*Close near MaxFloat64         | Include the first weighted contribution; use bounded distances and the flat-range branch.                |
-| A/D loses low-order corrections or accepts an unauthenticated checkpoint        | Preserve both Neumaier coordinates; authenticate snapshot plus source epoch/offset externally.           |
-| DTW over-warps a signal                                                         | Use window and slope penalty deliberately.                                                               |
-| Feature scale dominates multivariate DTW                                        | Normalize before `dtw.AlignMatrix`; it uses squared L2 row cost.                                         |
-| High-offset variance vanishes or intermediate `M2` overflows                    | `stats.Moments` uses scaled Welford/Chan; exact binary sum preserves the final mean.                     |
-| Holdout data refits a normalizer or constant features vanish                    | `stats.Standardizer` freezes training parameters; `UnitScaleConstant` preserves novel deviations.        |
-| PCA loadings drift after observing a holdout batch                              | `pca.Model.Transform` retains train-only origin, scales and loading basis; it does not refit.            |
-| Unconverged Jacobi result or negative eigenvalue is hidden                      | PCA rejects failed eigenpair/PSD checks and never silently substitutes ThinSVD.                          |
-| Zero-weight edge disappears in matrix adjacency                                 | Use zero-preserving matrix policy; absence becomes `+Inf`.                                               |
-| Metric closure exported as fake topology                                        | Matrix refuses metric-closure export as ordinary graph topology.                                         |
-| TSP receives sparse unresolved `+Inf` matrix                                    | Use metric closure only when indirect travel is domain-valid; final kernels need finite completeness.    |
-| Christofides ratio claimed with greedy matching                                 | `tsp.BlossomMatch` is required for the formal `1.5` ratio.                                               |
-| Branch-and-Bound timeout is mistaken for optimality                             | Inspect TSP `Result.TimedOut` and TSP `Result.Optimal`.                                                  |
-| Local-search TSP treated as proof                                               | 2-opt/3-opt improve tours; they do not certify global optimum.                                           |
-| Randomized tests/benchmarks drift                                               | Use fixed seeds or deterministic `builder` fixtures.                                                     |
-| Docs describe fictional APIs                                                    | `{package}/doc.go`, `docs/{PACKAGE}.md`, examples, and tests must stay synchronized.                     |
+| Risk                                                                            | lvlath answer                                                                                                |
+|:--------------------------------------------------------------------------------|:-------------------------------------------------------------------------------------------------------------|
+| Map-order flakiness in examples/tests                                           | `core` deterministic surfaces and package tie-break laws.                                                    |
+| Invalid topology reaches algorithms                                             | Graph capability validation and package-level input validators.                                              |
+| BFS used for weighted routing                                                   | Separate BFS hop semantics from Dijkstra weighted semantics.                                                 |
+| DFS order misread as discovery order                                            | DFS `Result.Order` is documented finish order.                                                               |
+| Unknown target treated as unreachable                                           | Dijkstra keeps target-domain errors separate from `+Inf` distances.                                          |
+| Runtime route policy deletes graph structure                                    | Dijkstra thresholds/cutoffs model the run without mutating topology.                                         |
+| Disconnected MST silently becomes forest                                        | `mst.WithForest` is explicit; strict MST returns disconnection.                                              |
+| Terminal-only optimization confused with full MST                               | `mst.SteinerTree` uses required terminals and original edges; it is an approximation, not an exact MST.      |
+| Network cost mistaken for inspection-route cost                                 | `SteinerResult.TotalWeight` counts unique links; `WalkResult.Distance` counts actual passages.               |
+| Repeated walk EdgeIDs removed as duplicates                                     | `SteinerWalk` repeats original IDs by design while covering every selected tree edge.                        |
+| Non-finite MST weights corrupt sorting/heap behavior                            | MST rejects `NaN`, `+Inf`, `-Inf` before kernel execution.                                                   |
+| Flow output hides residual state                                                | Flow result includes residual-network semantics.                                                             |
+| DTW path requested from rolling memory                                          | DTW memory/path policy is explicit; path needs full accumulated storage.                                     |
+| Missing timestamps silently treated as samples                                  | `series.Validate` reports whole-slot gaps; no values or time slots are synthesized.                          |
+| PAA fractional remainder dropped or padded with zeros                           | `paa.Transform` uses integer exact-overlap geometry; neither truncation nor padding occurs.                  |
+| SAX breakpoint labels mistaken for encoding identity                            | `EncodingID` hashes actual threshold content and numeric policy; `BreakpointID` is audit-only.               |
+| Euclidean SAX MINDIST incorrectly used to prune DTW                             | Do not prune; the two distance objectives differ and a positive MINDIST may accompany zero DTW.              |
+| LagAdjusted clipped to [-1,1] or treated as Toeplitz PSD                        | Preserve the estimator convention; use CommonDenominator for exact-arithmetic PSD compatibility.             |
+| Block-bootstrap path silently replaced by IID modulo-biased shuffling           | `bootstrap` uses exact rejection, explicit block topology, per-replicate streams and versioned metadata.     |
+| Worker-tied seeds or shared mutable pseudo-random streams                       | Use `rng.Factory.Stream(seed,uint64(logicalPath))` and reduce path results by stable index.                  |
+| Worker-count-dependent Monte Carlo means/variance or an unbounded pending queue | `montecarlo` uses path-ID streams, coordinator-only `stats.Moments`, and a `2W` issue window.                |
+| A partial Monte Carlo prefix interpreted as a completed risk estimate           | Check `err`/`Complete`; `Completed` is a contiguous prefix, quantiles nil on failure.                        |
+| GBM annualized drift silently applied to a seconds grid                         | `gbm` rejects unit mismatches; callers must convert drift and volatility separately.                         |
+| Representable GBM price rejected through intermediate `S*exp` overflow          | Anchored log-growth and wide diffusion arithmetic defer conversion to a safe publication boundary.           |
+| GBM underflow replaced by a fake positive epsilon or partial payoff             | Zero/Inf prices yield `ErrOverflow`; only completed prefixes survive, never successful maturity substitutes. |
+| Full-window ACF mistaken for a causal streaming feature                         | Fit only a fixed permitted window; appending observations can revise every lag.                              |
+| Warmup zero mistaken for a computed zero                                        | `series.TransformResult.Valid` marks computed cells; retain it with `Values`.                                |
+| MFI zero-volume or unchanged-price bars silently dropped                        | Retain every observed transition slot; a missing candle is a separate feed-integrity error.                  |
+| MFI checkpoint Config mistaken for integrity proof                              | Authenticate the entire Snapshot and persist source offset; Config is only an algorithm/period identity.     |
+| First OBV candle incorrectly contributes its volume                             | Seed the first accepted Close only; its valid OBV must be exactly positive zero.                             |
+| OBV correction is lost after a large opposite-signed volume                     | Preserve sum and compensation across Push and Snapshot/Restore; do not flatten them.                         |
+| OBV checkpoint Config is treated as proof of authentic feed history             | Authenticate the entire snapshot and its external source cursor; Config hashes a public algorithm ID.        |
+| A/D bar zero is dropped or the multiplier forms 2*Close near MaxFloat64         | Include the first weighted contribution; use bounded distances and the flat-range branch.                    |
+| A/D loses low-order corrections or accepts an unauthenticated checkpoint        | Preserve both Neumaier coordinates; authenticate snapshot plus source epoch/offset externally.               |
+| DTW over-warps a signal                                                         | Use window and slope penalty deliberately.                                                                   |
+| Feature scale dominates multivariate DTW                                        | Normalize before `dtw.AlignMatrix`; it uses squared L2 row cost.                                             |
+| High-offset variance vanishes or intermediate `M2` overflows                    | `stats.Moments` uses scaled Welford/Chan; exact binary sum preserves the final mean.                         |
+| Holdout data refits a normalizer or constant features vanish                    | `stats.Standardizer` freezes training parameters; `UnitScaleConstant` preserves novel deviations.            |
+| PCA loadings drift after observing a holdout batch                              | `pca.Model.Transform` retains train-only origin, scales and loading basis; it does not refit.                |
+| Unconverged Jacobi result or negative eigenvalue is hidden                      | PCA rejects failed eigenpair/PSD checks and never silently substitutes ThinSVD.                              |
+| Zero-weight edge disappears in matrix adjacency                                 | Use zero-preserving matrix policy; absence becomes `+Inf`.                                                   |
+| Metric closure exported as fake topology                                        | Matrix refuses metric-closure export as ordinary graph topology.                                             |
+| TSP receives sparse unresolved `+Inf` matrix                                    | Use metric closure only when indirect travel is domain-valid; final kernels need finite completeness.        |
+| Christofides ratio claimed with greedy matching                                 | `tsp.BlossomMatch` is required for the formal `1.5` ratio.                                                   |
+| Branch-and-Bound timeout is mistaken for optimality                             | Inspect TSP `Result.TimedOut` and TSP `Result.Optimal`.                                                      |
+| Local-search TSP treated as proof                                               | 2-opt/3-opt improve tours; they do not certify global optimum.                                               |
+| Randomized tests/benchmarks drift                                               | Use fixed seeds or deterministic `builder` fixtures.                                                         |
+| Docs describe fictional APIs                                                    | `{package}/doc.go`, `docs/{PACKAGE}.md`, examples, and tests must stay synchronized.                         |
 
 ---
 
