@@ -3,7 +3,7 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/FAQ_&_TIPS.md
-  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd, mfi, obv and the wider lvlath package family
+  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd, mfi, obv, ad and the wider lvlath package family
   lvlath - FAQ & Tips
 
   Purpose:
@@ -33,6 +33,7 @@
     - MACD SMA-seeded EMAs, signed features, three readiness masks, checkpoint identity and hot-path ownership.
     - MFI fixed-transition OHLCV windows, zero-volume retention, compensated rebasing and checkpoint authentication.
     - OBV first-bar zero, cumulative Neumaier correction, zero-volume continuity and checkpoint trust boundaries.
+    - Chaikin A/D bounded multiplier, first-bar contribution, global batch error precedence and checkpoint replay integrity.
 
   License:
     lvlath is licensed under AGPL-3.0-only. See ../LICENSE.
@@ -76,6 +77,7 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
     13j. [MACD FAQ](#13j-macd-faq--sma-seeding-signed-values-batchstream-replay-and-feature-safety)
     13k. [MFI FAQ](#13k-mfi-faq-volume-weighted-transitions-compensated-windows-and-authenticated-replay)
     13l. [OBV FAQ](#13l-obv-faq-cumulative-signed-volume-and-replay-safety)
+    13m. [AD FAQ](#13m-ad-faq-close-location-volume-precision-and-checkpoint-safety)
 14. [Builder and gridgraph tips](#14-builder-and-gridgraph-tips)
 15. [Errors and diagnostics](#15-errors-and-diagnostics)
 16. [Determinism and concurrency](#16-determinism-and-concurrency)
@@ -117,6 +119,7 @@ Start with the question, not the algorithm name.
 | “How do fast and slow price trends diverge and how does that separation change?”           | `macd.ComputeDefault` / `NewDefault` | SMA-seeded EMA, three signed aligned series, independent readiness masks and replayable Stream.       |
 | “How much rising versus falling typical-price flow occurred over the most recent candles?” | `mfi.ComputeDefault` / `NewDefault`  | Volume-weighted last-P-transition MFI, warmup mask, compensated rolling ring and detached checkpoint. |
 | “What signed volume has accumulated since a chosen session origin?”                        | `obv.ComputeCandles` / `New`         | Closing-price direction, seed zero, Neumaier compensation, transactional replayable stream.           |
+| “How does close location inside each candle weight cumulative volume?”                     | `ad.ComputeCandles` / `New`          | Chaikin multiplier times current base volume, first-bar inclusion, Neumaier and snapshot replay.      |
 | “How do I build deterministic Monte Carlo, GBM or sensor-noise paths?”                     | `rng.Factory.Stream`                 | Pinned PCG-DXSM, logical path IDs and cached normals; not a cryptographic PRNG.                       |
 | “How do I build dependent-data bootstrap index ensembles?”                                 | `bootstrap.SampleIndices`            | Moving/Circular/Stationary blocks, replay ID and only complete rows.                                  |
 | “How do I infer a hidden operating regime from time-ordered observations?”                 | `hmm`                                | Typed causal filtering, smoothing, Viterbi, and independent-sequence EM.                              |
@@ -148,6 +151,7 @@ compute causal Wilder price strength   -> RSI ComputePeriod / Stream.Push
 compute signed trend-separation factor -> MACD ComputeDefault / Stream.Push
 compute volume-weighted OHLCV flow     -> MFI ComputeDefault / Stream.Push
 compute cumulative signed volume       -> OBV ComputeCandles / Stream.Push (no warmup)
+compute candle close-location flow    -> AD ComputeCandles / Stream.Push (first bar contributes)
 draw dependent-data index replicates   -> BOOTSTRAP SampleIndices (no statistic or CI)
 retrospective regime audit             -> HMM Smooth / Decode (future-conditioned)
 encode symbolic SAX words              -> SAX
@@ -3362,6 +3366,224 @@ golangci-lint run
 For complete mathematics, ABI, code examples and the trust model, see
 [`OBV.md`](OBV.md), [`../obv/doc.go`](../obv/doc.go) and the five
 [`../obv/example_test.go`](../obv/example_test.go) scenarios.
+
+---
+
+## 13m. AD FAQ: Close-Location Volume, Precision and Checkpoint Safety
+
+### Q13m.1. Is `ad` Advance/Decline, an OBV synonym, or a trading signal?
+
+No. `ad` is **Chaikin Accumulation/Distribution**, the cumulative sum of
+current-candle *close-location multiplier* times current-candle **base
+volume**. Advance/Decline is a market-breadth concept; automatic
+differentiation is unrelated. `obv` signs a candle's volume by comparing its
+close with the previous accepted close. `mfi` produces a bounded rolling
+Money Flow Index from typical-price transitions. `ad` neither generates
+thresholds nor identifies traders or future returns.
+
+### Q13m.2. Why is the first A/D output nonzero and already valid?
+
+The accumulator starts at zero **before** index zero, but the first candle
+has enough information to compute its own position in its High/Low range.
+For `Open=1.5, High=2, Low=1, Close=2, Volume=3`, the multiplier is `+1`
+and `Values[0]=3`, `Valid[0]=true`. `obv` deliberately seeds its first close
+without adding volume; transferring that rule to `ad` would be incorrect.
+There is no period and no warmup for any successful A/D batch.
+
+### Q13m.3. Why not compute `(2*Close-High-Low)/(High-Low)`?
+
+It can overflow **before** division if Close approaches
+`math.MaxFloat64`, even for a perfectly valid positive candle with a
+multiplier between `-1` and `1`. The implemented calculation forms
+`left=Close-Low`, `right=High-Close`, `spread=High-Low`, and divides
+`(left-right)/spread`. Positive finite accepted prices ensure these
+distances and spread are finite. There is no automatic multiplier clamp or
+price-epsilon repair; changing the formula changes numerical behavior.
+
+### Q13m.4. What if `High == Low` and Volume is enormous?
+
+A valid zero-spread candle must have all four OHLC prices equal. The
+multiplier is explicitly **zero**, so the contribution is **zero** even if
+Volume is `math.MaxFloat64`. The bar is still accepted and increments
+`Count`. No division occurs. A nonflat Open or Close outside the equal
+boundaries remains `ErrDomain`; flatness is not an exemption from geometry.
+
+### Q13m.5. Why validate Open when the formula only uses High, Low, Close?
+
+Open is part of the candle's public integrity contract. A record with
+`Open<Low` or `Open>High` is malformed and returns `ErrDomain`, even if
+its multiplier could be computed. The same rule applies to `obv` and
+`mfi` inputs. Prices must be finite and **strictly positive**; volumes
+must be finite and **nonnegative**. The package never repairs vendor data.
+
+### Q13m.6. Which shape and numeric error takes precedence?
+
+For `Compute(ad.Bars{...})`:
+
+```text
+any nil column -> ErrNilInput
+then non-nil empty Open -> ErrEmptyInput
+then unequal column lengths -> ErrShape
+then any nonfinite field anywhere -> ErrNonFinite
+then any price/volume/geometry violation anywhere -> ErrDomain
+then unrepresentable output allocation or arithmetic -> ErrOverflow
+```
+
+Both numeric categories are scanned across the **entire** history. Thus a
+NaN at the final index takes precedence over an invalid finite Open at
+index zero. This differs from the per-row precedence documented for `obv`.
+`ComputeCandles([]Bar)` has no five-column shape check but has the same
+global numeric-category ordering. `Stream.Push` validates just its current
+bar after checking the receiver. Classify errors using `errors.Is`.
+
+### Q13m.7. Which public facade fits my data layout?
+
+| Workload                                  | API                                          | Key cost or guarantee                                |
+|-------------------------------------------|----------------------------------------------|------------------------------------------------------|
+| Five aligned price/volume columns         | `ad.Compute(ad.Bars{...})`                   | O(n) time/space, detached `Result`                   |
+| Already-decoded row slice                 | `ad.ComputeCandles(candles)`                 | No five-column transposition; O(n) output            |
+| Last value from whole history             | `ad.Latest(bars)` / `ad.LatestCandles(rows)` | Delegate to complete batch; O(n) time **and memory** |
+| Each incoming completed candle            | `stream := ad.New(); stream.Push(bar)`       | Transactional O(1), zero steady-state heap allocs    |
+| New explicitly chosen accumulation origin | `stream.Reset()`                             | Clears count, sum, compensation                      |
+| Controlled service handoff                | `Snapshot()` / `Restore(state)`              | Detached and version-checked, not authenticated      |
+
+No `Options`, `NewPeriod`, `context.Context`, epsilon, or hidden fast mode exists.
+A zero-valued `ad.Stream{}` works exactly like `ad.New()`.
+
+### Q13m.8. What does `Valid=true` tell me?
+
+Only that the A/D observation was successfully computed. A valid A/D of
+zero may be a midpoint, a flat candle, a zero-volume candle, or cancellation
+of earlier contributions. All accepted bars have `Valid=true`, including
+bar zero. It does **not** certify feed authenticity or a statistically
+significant signal. `(*ad.Result).IsNil()` checks **pointer presence** for
+`core.Nilable`; an allocated empty `Result{}` is not a valid Compute result.
+
+### Q13m.9. Is the multiplier always in `[-1,1]`? Is A/D bounded too?
+
+Validated candle geometry guarantees the multiplier is in `[-1,1]` without
+clipping. Therefore a **single** contribution has magnitude at most the
+bar's Volume. The **cumulative** balance is not limited to `[-1,1]`, to
+`[0,100]`, or to any individual bar's Volume. Do not confuse the
+multiplier with the A/D line or the bounded MFI oscillator.
+
+### Q13m.10. Does a positive affine change of prices preserve the answer?
+
+In ideal arithmetic, any positive scale plus offset that preserves the
+candle's order preserves its relative close location. With binary64 inputs,
+that is only reliable when the transformed High/Low/Close differences remain
+representable. If rounding collapses a nonzero range, the library sees a
+flat bar instead. Do not promise exact affine invariance under arbitrary
+huge offsets or tiny spreads; test representable fixtures and rational
+oracles when validating numerical changes.
+
+### Q13m.11. Why keep both Neumaier components?
+
+Adding `+1e16`, `+1`, `-1e16` with ordinary float64 accumulation can lose
+the middle `1`. Neumaier stores a rounding correction; `sum+compensation`
+returns `1` for that fixture. Checkpoints **must not** replace the pair
+with the rounded displayed total, because later cancellation depends on
+both coordinates. The implementation still has finite `float64` limits.
+
+### Q13m.12. What does `ErrOverflow` mean, and is `Push` atomic?
+
+`ErrOverflow` means the fixed recurrence cannot represent the next
+compensated state as finite, or `Count` is exhausted; batch allocation
+byte-product overflow also uses this sentinel. An intermediate direct
+addition may overflow while an opposing stored correction makes a finite
+rebase possible, so the kernel tries a **cancellation-first rebase** before
+rejecting. On a failed `Push`, `value=0`, `valid=false`, and the stream's
+sum, correction, and Count are all unchanged. On any batch error, `Result`
+is nil with **no** published prefix. Runtime operating-system OOM is not a
+recoverable ErrOverflow guarantee.
+
+### Q13m.13. How can I check rollback without accessing private fields?
+
+Capture `before := stream.Snapshot()`, deliberately attempt an invalid
+candle or an unrepresentable contribution, and compare `before` to the
+snapshot after failure. Compare `FloatState` with `math.Float64bits` and
+check `Algorithm`, `Config`, `Count`, and both slice lengths. A check of
+only the displayed total can miss corrupted correction state. The tests
+remain in external `package ad_test`; no internal test hooks are required.
+
+### Q13m.14. What is the exact v1 checkpoint schema?
+
+```text
+Algorithm   "ad/chaikin-neumaier/v1"
+Config      lowercase SHA-256 of ASCII Algorithm
+Count       number of accepted bars
+FloatState  [sum, compensation] (exactly 2 finite float64 values)
+IntState    [] (length zero)
+```
+
+`sum+compensation` must be finite. `Count=0` requires both coordinates
+numerically zero and restores the canonical `Stream{}` state. A restored
+`Count=math.MaxUint64` is valid but the next Push fails with
+`ErrOverflow`. There is **no previousClose**, unlike the OBV snapshot.
+Nil `Snapshot` returns `Snapshot{}`; nil `Reset` does nothing; nil `Push`
+and `Restore` report `ErrNilInput`. A bad version/config/layout/numeric
+state returns `ErrStateVersion` **before modifying** the receiver.
+
+### Q13m.15. Can Config authenticate a checkpoint or prevent replay?
+
+No. `Config` hashes a **public fixed algorithm string**. An attacker can
+compute the same hash for a forged state, so it is only a compatibility
+fingerprint. Authenticate the **entire serialized snapshot** together with
+feed identity, asset, base-unit convention, cumulative epoch and last
+committed source offset. Enforce exactly-once replay externally and resume
+from the next unprocessed candle after Restore. The package does not read
+or validate that offset or use clocks or network I/O.
+
+### Q13m.16. What if a candle is missing, duplicated, or zero-volume?
+
+`ad` does not see timestamps. A present zero-volume candle is valid,
+produces zero contribution, and increases Count. A **missing** candle is
+not reconstructed; it can change the cumulative history and provenance.
+Use `series.Validate` or another explicit upstream integrity check to
+establish cadence. On a known gap, choose reject/replay or `Reset` to begin
+an entirely new origin. Comparing raw A/D levels across reset epochs or
+assets with incompatible base-volume units is not meaningful by itself.
+
+### Q13m.17. Are batch Results, snapshots and streams safe across goroutines?
+
+Returned `Values`, `Valid` and snapshot slices are detached, caller-owned
+memory; Restore copies two scalar coordinates and retains no input arrays.
+A **single mutable Stream** has no locks and must have one owner or
+external synchronization for Push, Snapshot, Restore and Reset. Separate
+streams can run simultaneously on stable inputs. Mutating a caller-owned
+batch column or row slice during Compute is unsupported and can race.
+
+### Q13m.18. Does price/A/D divergence prove accumulation or a breakout?
+
+No. A/D is a reproducible price-position-weighted **volume feature**, not a
+divergence detector, order-book model, causal attribution, or significance
+test. An application can compare A/D movement to price movement, but must
+define comparable windows/origins, volume units, data quality, a historical
+training/holdout split, and an independently validated decision rule. The
+`ad` package intentionally has no threshold or signal API.
+
+### Q13m.19. What must tests and benchmarks verify before integration?
+
+Use independent high/low/midpoint/flat-candle oracles, near-MaxFloat64 and
+large-offset cases, accurate cancellation and true overflow, exact global
+error precedence, failed-Push rollback, snapshot corruption, detached
+ownership, and checkpoint continuation at **every** prefix. Verify per-bar
+bitwise parity among Compute, ComputeCandles and Stream.Push, but never use
+parity as a substitute for independent mathematics. Benchmarks must drive
+nonflat candles with varying signed volume and check `Push` allocs/op.
+
+```sh
+go test ./ad -count=1 -cover
+go test ./ad -race -count=1
+go test ./ad -run '^Example' -count=1 -v
+go test ./ad -run '^$' -bench 'Benchmark(Compute|Push)' -benchmem
+go test ./...
+go vet ./...
+golangci-lint run
+```
+
+See [`AD.md`](AD.md), [`../ad/doc.go`](../ad/doc.go) and the six
+executable usage cases in [`../ad/example_test.go`](../ad/example_test.go).
 
 ---
 
