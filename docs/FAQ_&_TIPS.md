@@ -3,7 +3,7 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/FAQ_&_TIPS.md
-  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd, mfi, obv, ad, montecarlo, gbm and the wider lvlath package family
+  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion and the wider lvlath package family
   lvlath - FAQ & Tips
 
   Purpose:
@@ -36,6 +36,7 @@
     - Chaikin A/D bounded multiplier, first-bar contribution, global batch error precedence and checkpoint replay integrity.
     - Monte Carlo per-path RNG replay, 2W scheduling bounds, stable moments, exact quantiles, byte admission and interruption prefixes.
     - GBM exact-in-distribution lognormal paths, explicit time units, safe wide-number increments, and complete-prefix semantics.
+    - Merton jump diffusion with compensated drift, bounded exact Poisson kernels, stable RNG order, and complete-prefix safety.
 
   License:
     lvlath is licensed under AGPL-3.0-only. See ../LICENSE.
@@ -76,12 +77,13 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
     13g. [Bootstrap FAQ](#13g-bootstrap-faq---dependent-data-blocks-replay-and-safe-partial-results)
     13h. [RNG FAQ](#13h-rng-faq-replay-ownership-and-numeric-safety)
     13i. [RSI FAQ](#13i-rsi-faq-wilder-streaming-readiness-and-checkpoints)
-    13j. [MACD FAQ](#13j-macd-faq--sma-seeding-signed-values-batchstream-replay-and-feature-safety)
+    13j. [MACD FAQ](#13j-macd-faq---sma-seeding-signed-values-batchstream-replay-and-feature-safety)
     13k. [MFI FAQ](#13k-mfi-faq-volume-weighted-transitions-compensated-windows-and-authenticated-replay)
     13l. [OBV FAQ](#13l-obv-faq-cumulative-signed-volume-and-replay-safety)
     13m. [AD FAQ](#13m-ad-faq-close-location-volume-precision-and-checkpoint-safety)
     13n. [Monte Carlo FAQ](#13n-monte-carlo-faq-replay-scheduling-numerics-and-partial-results)
     13o. [GBM FAQ](#13o-gbm-faq-exact-lognormal-steps-units-overflow-and-complete-paths)
+    13p. [Jump Diffusion FAQ](#13p-jump-diffusion-faq-merton-compensation-poisson-counts-and-replay)
 14. [Builder and gridgraph tips](#14-builder-and-gridgraph-tips)
 15. [Errors and diagnostics](#15-errors-and-diagnostics)
 16. [Determinism and concurrency](#16-determinism-and-concurrency)
@@ -127,6 +129,7 @@ Start with the question, not the algorithm name.
 | “How do I build deterministic Monte Carlo, GBM or sensor-noise paths?”                                        | `rng.Factory.Stream`                  | Pinned PCG-DXSM, logical path IDs and cached normals; not a cryptographic PRNG.                       |
 | “How do I execute many independent stochastic paths with identical full-run statistics across worker counts?” | `montecarlo.Run` / `EstimateParallel` | Per-path RNG, ordered `stats.Moments`, bounded 2W dispatch and strict error/prefix law.               |
 | “How do I sample positive GBM prices at irregular explicit times?”                                            | `gbm.Simulate` / `SimulateSeeded`     | Exact-in-distribution lognormal endpoints, no implicit annualization, complete or valid prefix.       |
+| “How do I simulate compensated Poisson jump risk over GBM?”                                                   | `jumpdiffusion.Simulate`              | Discrete Poisson counts and aggregated normal log jumps; experimental scenario model.                 |
 | “How do I build dependent-data bootstrap index ensembles?”                                                    | `bootstrap.SampleIndices`             | Moving/Circular/Stationary blocks, replay ID and only complete rows.                                  |
 | “How do I infer a hidden operating regime from time-ordered observations?”                                    | `hmm`                                 | Typed causal filtering, smoothing, Viterbi, and independent-sequence EM.                              |
 | “How do I reduce multivariate dimensions without a response variable?”                                        | `pca`                                 | Validated covariance spectrum and a frozen loadings model for holdout inference.                      |
@@ -160,6 +163,7 @@ compute cumulative signed volume       -> OBV ComputeCandles / Stream.Push (no w
 compute candle close-location flow     -> AD ComputeCandles / Stream.Push (first bar contributes)
 drive independent stochastic trials    -> MONTECARLO Run / EstimateParallel (ordered vector moments)
 simulate exact lognormal GBM paths     -> GBM Simulate / SimulateSeeded (explicit time units, positive prices)
+simulate compensated Merton jumps      -> JUMPDIFFUSION Simulate / SimulateSeeded (no calibration)
 compute exact empirical path quantiles -> MONTECARLO RunWithQuantiles (budgeted raw storage)
 draw dependent-data index replicates   -> BOOTSTRAP SampleIndices (no statistic or CI)
 retrospective regime audit             -> HMM Smooth / Decode (future-conditioned)
@@ -3881,6 +3885,240 @@ Use independent `sigma=0` analytic solutions, zero-shock Itô-correction oracles
 
 ---
 
+## 13p. Jump Diffusion FAQ: Merton Compensation, Poisson Counts and Replay
+
+### Q13p.1. When should I use `jumpdiffusion` instead of `gbm`?
+
+Use `gbm` when a continuous lognormal diffusion with constant drift and
+volatility is the actual assumed model. Use `jumpdiffusion` when you
+**explicitly** want independent Poisson arrival counts with lognormally
+multiplicative discontinuities at observation-grid endpoints. Both return
+positive-price `Result` paths; jumpdiffusion is still **experimental** as a
+modeling component and does not calibrate itself to observed crash tails.
+The diffusion uses `gbm.Parameters`, not a duplicate parameter type.
+
+### Q13p.2. Does this model actually simulate the times of individual jumps?
+
+No. For `a=lambda*dt`, it draws the integer count `N~Poisson(a)` and one
+aggregate normal log jump `N*m+sqrt(N)*s*Z` when needed. The returned
+`Times` are **only the requested grid timestamps**. A path may hide a jump
+and subsequent recovery inside an interval. Continuous-barrier probability,
+intrastep extrema, order-book dynamics and event-by-event sequences need a
+different simulator.
+
+### Q13p.3. Why is `LogJumpMean` not the drift compensator?
+
+`m=E[Y]` is the mean of the *logarithm* of one price multiplier. The price
+jumps by `e^Y`, so its expected **relative arithmetic** jump is
+`k=E[e^Y-1]=expm1(m+s^2/2)`. Setting `k=m` biases the expected price, even
+if the error looks small on one sample. At `s>0`, Jensen's inequality already
+shows why the extra `s^2/2` matters. `math.Expm1` preserves precision when
+the exponent is near zero.
+
+### Q13p.4. What exactly do Compensated and Uncompensated mean?
+
+`Compensated` (zero-value enum) subtracts `lambda*k` from the proportional
+drift before the Itô `sigma^2/2` correction. The mathematical expected price
+is `S0*exp(mu*t)`. `Uncompensated` does not subtract the jump mean and yields
+`S0*exp((mu+lambda*k)*t)` when the expectations exist. Both simulate the
+same sampled jump/normal sequences for identical RNG states; the deterministic
+drift differs. **Neither setting chooses a real-world versus risk-neutral
+probability measure automatically.**
+
+### Q13p.5. Can I put `r-q` into `Diffusion.Drift` and directly price an option?
+
+Only if you have **separately selected and justified** a risk-neutral jump
+measure consistent with the model. Under that assumption, compensated
+`Diffusion.Drift=r-q` preserves the desired discounted stock expectation.
+The caller still computes the contractual payoff and discounts it by
+`exp(-r*T)`; `jumpdiffusion` does not price options or fit a volatility smile.
+See the checked `ExampleSimulateTerminal_optionPricing` for a caller-owned
+`montecarlo.Sampler` and a put–call-parity diagnostic.
+
+### Q13p.6. Why not replace a large Poisson count by a Gaussian approximation?
+
+Because `N` is an **integer random variable**. Rounded normals change low
+count probabilities and the compound-jump distribution, and can destroy tail
+risk comparisons. The package uses product inversion at `0<a<30` and
+Hörmann PTRS at `30<=a<=2^40`. There is **no Gaussian fallback**.
+
+### Q13p.7. Why does the Poisson algorithm switch at `a=30`?
+
+For small means, product inversion typically takes `O(a+1)` open uniforms;
+for large means, this is wasteful. PTRS proposes a count with transformed
+rejection and a squeeze test, using two open uniforms per attempt with
+bounded expected work in the intended regime. The threshold is a
+**versioned reproducibility boundary**: different branches consume different
+RNG sequences. A statistical distribution check does not prove byte-level
+sequence parity across the boundary.
+
+### Q13p.8. Can the rejection loop hang indefinitely on a bad RNG?
+
+No. Both methods are bounded by `2^20` attempts **per interval**, with a
+context check on each attempt. Exhaustion returns `ErrBudget` and the already
+completed path prefix. `UniformOpen` values must be finite and strictly in
+`(0,1)`; out-of-range endpoints return `ErrDomain`, while NaN/Inf returns
+`ErrNonFinite`. A custom RNG that blocks inside its method cannot be forcibly
+interrupted by a Go context—this is a limitation of the external interface.
+
+### Q13p.9. What are the mean and count limits?
+
+The per-interval Poisson mean is restricted to `0<=lambda*dt<=2^40`.
+An accepted count must be at most `2^53-1`, so it converts to a float64
+integer without loss of integer precision. Too large an interval mean is
+`ErrDomain` **before entropy consumption for that interval**. Values are
+checked per interval, not only for the model's total horizon.
+
+### Q13p.10. Why is `lambda*dt` evaluated with extended precision?
+
+Subtracting two large but distinct finite timestamps and then multiplying
+by a very small intensity can lose a positive result in binary64. The
+kernel forms the exact-input interval and product with a 2304-bit workspace
+before the `2^40` range check. If the positive product cannot survive its
+required float64 representation (rounds to zero), the simulator returns
+`ErrOverflow`; it does **not** pretend the model had `lambda=0`.
+
+### Q13p.11. What happens when `Intensity=0`?
+
+After validating both jump coefficients (`m` and `s` still must be finite,
+and `s>=0`), `Simulate` calls **`gbm.Simulate` directly**. This preserves
+GBM floating-point bits and its RNG consumption on the same starting stream.
+There are zero Poisson uniforms and zero jump normals. The result is a new
+`jumpdiffusion.Result` wrapper over the detached GBM path, not the same
+`*gbm.Result` pointer.
+
+### Q13p.12. When do stochastic draws occur, exactly?
+
+For each positive-intensity admitted step: `Normal()` for diffusion only if
+`sigma>0`; then `UniformOpen()` attempts for Poisson; then **one** jump
+`Normal()` only if `N>0 && s>0`. When `sigma=0` or `s=0`, its corresponding
+normal call is skipped. One-point `[0]` grids consume no interval draws.
+Because `rng` may cache a Box–Muller normal, **method order**, not just the
+normal count, is part of replay identity.
+
+### Q13p.13. Why does the package not generate `N` Gaussian jump draws?
+
+The sum of `N` independent `Normal(m,s^2)` marks is conditionally
+`Normal(N*m,N*s^2)`. The implementation uses `N*m+sqrt(N)*s*Z` for
+`N>0`, so cost does not scale with the realized count. If `s=0` it
+produces exactly `N*m` with **no jump normal draw**. This preserves the
+fixed-grid *distribution*, not the path of individually timestamped marks.
+
+### Q13p.14. Is `s=0, m=0` really a no-jump simulation?
+
+The sampled count still exists and consumes Poisson uniforms for every
+positive-intensity interval, but its price multiplier is exactly one. With
+`sigma=0`, the price is the deterministic drift trajectory, independent of
+the realized counts. Do **not** remove those count draws as an optimization:
+it would change the documented RNG consumption protocol. To suppress all
+jump entropy, use **`Intensity=0`**, which delegates to GBM.
+
+### Q13p.15. Which of the five facades should I use?
+
+| Need                                          | Public method                                 |
+|:----------------------------------------------|:----------------------------------------------|
+| An explicit irregular-grid path               | `Simulate(ctx,p,grid,random)`                 |
+| Timestamps already in the model unit          | `SimulatePath(ctx,p,times,random)`            |
+| A single positive expiry or zero-horizon mark | `SimulateTerminal(ctx,p,T,random)`            |
+| Reproducible stand-alone full path            | `SimulateSeeded(ctx,p,grid,seed,pathID)`      |
+| Reproducible stand-alone maturity             | `SimulateTerminalSeeded(ctx,p,T,seed,pathID)` |
+
+All return the canonical `*Result` with `Times`, `Values` and `Complete`.
+There is no alternate solver or automatic policy selection in the wrappers.
+
+### Q13p.16. What physical time unit is `Intensity` in?
+
+It is **expected jumps per `Diffusion.Unit`**. If the grid is in seconds,
+`Intensity=50` means 50 expected arrivals *per second*. If the grid is in
+years, `Intensity=2` means 2 expected arrivals *per model year*.
+`Diffusion.Drift` scales as inverse time and `Volatility` as inverse square
+root time. The package never assumes 252 trading days, 365 calendar days or
+an exchange schedule; choose a conversion externally and apply it to the
+grid, drift, volatility **and** intensity.
+
+### Q13p.17. Why can valid finite jump parameters still cause `ErrOverflow`?
+
+A finite `m,s` can make `exp(m+s^2/2)-1` unrepresentable as a finite
+float64. `Compensated` computes and validates `k` before simulation and
+returns a nil result with `ErrOverflow`. Wide arithmetic avoids premature
+`s*s` overflow, but cannot make an unrepresentable *final* compensator
+valid. `Uncompensated` skips this calculation; a simulated price may still
+fail at its publication boundary.
+
+### Q13p.18. Why is a positive subnormal price accepted but zero rejected?
+
+The model starts at `S0>0`; a strictly positive subnormal is still a valid
+binary64 price. Zero is not. `jumpdiffusion` accumulates anchored log growth
+in extended arithmetic and publishes only finite `price>0`. If the rounded
+candidate becomes `0` or infinity, it returns `ErrOverflow` with the
+previously completed prefix. There is **no epsilon clamp** and no
+`S_previous*exp(increment)` intermediate that can overflow unnecessarily.
+
+### Q13p.19. What is an incomplete `Result`, and can I price with its last value?
+
+No. A runtime failure publishes the completed pairs only, with
+`len(Times)==len(Values)>=1`, `Complete=false` and non-nil error.
+The unfinished interval and its candidate timestamp are absent. An
+invalid input or pre-canceled context instead returns **nil result**.
+`Result.IsNil()` is pointer identity, not a completed-horizon check.
+A `montecarlo.Sampler` must reject a failed/incomplete path, not use its
+last completed mark as if it were the requested expiry.
+
+### Q13p.20. What error category takes precedence for invalid inputs?
+
+Nil context, pre-canceled context, unit/convention mismatch, RNG/grid
+presence, grid origin/order and nonfinite timestamps, parameter finiteness,
+physical domain, then compensator arithmetic. Timestamps are scanned in
+ascending order; a first-index error is not overridden by a different error
+at a later index. `ErrBudget` and runtime `ErrDomain`/`ErrOverflow` carry
+completed prefixes. Use `errors.Is`, never error-string matching. Zero
+intensity preserves relevant underlying `gbm` sentinels through `errors.Is`.
+
+### Q13p.21. How should I implement `montecarlo.Sampler` correctly?
+
+Use the path-specific `rng.RNG` supplied by `Sampler.Sample`; call
+`SimulateTerminal` or `Simulate` with an immutable model; check **both**
+`err` and `Complete`; then return one new fixed-length finite payoff vector.
+Do not create `SimulateSeeded` inside the Sampler: the driver already keys
+streams by `(Seed,pathID)`. Store seed, path ID semantics, RNG version,
+model coefficients and grid for replay; scheduler worker IDs are not path IDs.
+
+### Q13p.22. Is a modeled flash crash frequency a validated real-world probability?
+
+No. A fixed-seed stress scenario describes **outcomes under chosen parameters**.
+Confidence intervals or Monte Carlo standard errors measure sampling error,
+not errors in jump arrival assumptions, jump magnitudes, market volatility,
+liquidity, clustering or calibration. The model has independent homogeneous
+Poisson arrivals and Gaussian log-jump sizes, not self-exciting arrival rates.
+
+### Q13p.23. Does the package require NumPy or Python?
+
+**No.** The Go implementation only calls methods of `rng.RNG` and Go
+standard-library numerics. `poisson.go` cites the published PTRS parameterization
+cross-checked against the NumPy 2.2.0 source, but neither NumPy nor Python is
+linked, imported or installed to run the model. `THIRD_PARTY_NOTICES.txt` records
+source attribution and the NumPy BSD-3-Clause notice, **not** a dependency.
+Do not remove it without a provenance/licensing review of the adapted PTRS
+source. See [`JUMPDIFFUSION.md`](../../../../Downloads/lvlath_jumpdiffusion_phase23_docs_sync%202/docs/JUMPDIFFUSION.md#13-algorithm-provenance-and-license-notices).
+
+### Q13p.24. What tests protect the mathematical contract?
+
+The external-package suite covers JD01–JD08, fixed-seed compensated moment
+checks, independent Poisson frequencies, exact count/draw-order fixtures,
+large-mean acceptance thresholds, partial publication, numerical underflow,
+context cancellation, result ownership and `core.Nilable`. `bench_test.go`
+measures 100/10,000 intervals at per-step means 0.1/50. A passing statistical
+test **cannot prove** distributional correctness by itself; independent
+acceptance oracles and algebraic expectation identities are also necessary.
+
+For exact formulas, sample code and the complete error matrix, see
+[`docs/JUMPDIFFUSION.md`](../../../../Downloads/lvlath_jumpdiffusion_phase23_docs_sync%202/docs/JUMPDIFFUSION.md),
+[`jumpdiffusion/doc.go`](../../../../Downloads/lvlath_jumpdiffusion_phase23_docs_sync%202/jumpdiffusion/doc.go),
+[`jumpdiffusion/example_test.go`](../jumpdiffusion/example_test.go)
+and [`GBM FAQ`](#13o-gbm-faq-exact-lognormal-steps-units-overflow-and-complete-paths).
+
+---
+
 ## 14. Builder and gridgraph tips
 
 ### Q14.1. When should I use `builder`?
@@ -4396,7 +4634,7 @@ feature and label policy. The package itself does not split datasets, fit
 models, produce probabilities or promise positive trading performance.
 
 See [`MACD.md`](MACD.md) and the streaming/failover example in the
-[Tutorial](TUTORIAL.md#11k-macd-foundations-sma-seeded-ema-signed-momentum-and-checkpoint-replay).
+[Tutorial](../../../../Downloads/lvlath_jumpdiffusion_phase23_docs_sync%202/docs/TUTORIAL.md#11k-macd-foundations-sma-seeded-ema-signed-momentum-and-checkpoint-replay).
 
 ---
 
@@ -4409,6 +4647,20 @@ Use a fixed, versioned `Sampler` and a stable seed. Call `montecarlo.RunWithQuan
 ### Recipe P. Replay a complete GBM path without silent time conversion
 
 Construct `gbm.Parameters` with an explicitly chosen `TimeUnit`, and `gbm.TimeGrid{Values: elapsedTimes, Unit: params.Unit}` whose first value is zero and whose entries are strictly increasing. For an independent synthetic scenario call `gbm.SimulateSeeded(ctx,params,grid,seed,pathID)`; check **both** `err==nil` and `result.Complete` before extracting the horizon price. If a `montecarlo.Sampler` needs the model, call `gbm.Simulate(ctx,params,grid,random)` with the **driver-supplied** path stream; forward errors instead of reducing an incomplete prefix. Changing from annual model coefficients to elapsed seconds requires external `mu/C` and `sigma/sqrt(C)` conversion, not matching enum labels without changing numeric values. See [`GBM.md`](GBM.md) and [`../examples/gbm/main.go`](../examples/gbm/main.go).
+
+---
+
+### Recipe Q. Reproduce a jump-aware collateral scenario without a truncated payoff
+
+Construct `jumpdiffusion.Parameters{Diffusion: gbm.Parameters{...}, Intensity: lambda,
+LogJumpMean: m, LogJumpStdDev: s, Convention: jumpdiffusion.Compensated}` with
+explicit matched time units. Call `jumpdiffusion.SimulateSeeded(ctx,p,grid,seed,pathID)`
+for a single reproducible scenario. Check **both** `err` and `Result.Complete`
+before computing terminal exposure or observed-grid drawdown. In a Monte Carlo
+sampler, use the supplied path-owned RNG rather than this seeded wrapper.
+Use `errors.Is(err, jumpdiffusion.ErrBudget)` or another sentinel to
+classify a failure; never count an incomplete prefix as an ordinary successful
+scenario. See [`JUMPDIFFUSION.md`](../../../../Downloads/lvlath_jumpdiffusion_phase23_docs_sync%202/docs/JUMPDIFFUSION.md).
 
 ---
 

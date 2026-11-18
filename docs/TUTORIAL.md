@@ -3,9 +3,9 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/TUTORIAL.md
-  Package reference: matrix, stats, ols, ridge, series, rsi, macd, mfi, obv, ad, montecarlo, gbm and the wider lvlath package family
+  Package reference: matrix, stats, ols, ridge, series, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion and the wider lvlath package family
   Contract status: learning guide; package doc.go and source define the public API.
-  Scope: graph, matrix, factorization, statistical and temporal workflows, including causal MACD, rolling MFI, cumulative OBV, Chaikin A/D, reproducible parallel Monte Carlo and exact-in-distribution GBM.
+  Scope: graph, matrix, factorization, statistical and temporal workflows, including causal MACD, rolling MFI, cumulative OBV, Chaikin A/D, reproducible parallel Monte Carlo and exact-in-distribution GBM and experimental Merton jump diffusion.
   lvlath - Repository Tutorial
 
   Purpose:
@@ -61,6 +61,7 @@ This tutorial is the beginning of the learning path. It introduces the objects a
     11n. [AD Foundations: Close-Location Volume and Deterministic Replay](#11n-ad-foundations-close-location-volume-and-deterministic-replay)
     11o. [Monte Carlo Foundations: Path-Indexed Simulation, Ordered Reduction and Bounded Parallelism](#11o-monte-carlo-foundations-path-indexed-simulation-ordered-reduction-and-bounded-parallelism)
     11p. [GBM Foundations: Exact Lognormal Paths and Explicit Time Units](#11p-gbm-foundations-exact-lognormal-paths-and-explicit-time-units)
+    11q. [Jump Diffusion Foundations: Discrete Jumps, Compensated Drift and Replay](#11q-jump-diffusion-foundations-discrete-jumps-compensated-drift-and-replay)
 12. [Algorithm Selection Guide](#12-algorithm-selection-guide)
 13. [Professional Best Practices](#13-professional-best-practices)
 14. [Where To Go Next](#14-where-to-go-next)
@@ -103,6 +104,7 @@ The library covers:
 * `rng` local pinned PCG-DXSM streams with SHA-256 seed derivation, strictly open uniforms and cached Box-Muller normals;
 * `montecarlo` bounded-parallel independent sampling with per-path versioned streams, path-ordered `stats.Moments`, exact empirical quantiles and prefix-only interruption results;
 * `gbm` exact-in-distribution lognormal paths on explicit irregular time grids, with strict unit matching, numerical overflow gates and detached completed prefixes;
+* `jumpdiffusion` experimental Merton compound-Poisson lognormal shocks on explicit GBM grids, with compensated drift and bounded PTRS;
 * `paa` exact fractional time-series compression, rational segment boundaries and value-only feature projection;
 * `sax` symbolic words from fractional PAA and compatible Euclidean MINDIST (not a DTW lower bound);
 * `tsp` matrix-backed tour optimization with exact, approximate, matching, and local-search regimes;
@@ -128,7 +130,8 @@ timestamp-grid inspection  *series.ValidationResult    exact cadence / missing s
 dependent index ensembles  *bootstrap.Result           detached complete rows / RNG replay revision
 versioned stochastic path  rng.RNG                     mutable PCG-DXSM draw stream, owned by one goroutine
 independent path ensemble  *montecarlo.Result          ordered means/variance/SE, optional exact quantiles and detached samples
-GBM lognormal path          *gbm.Result                 complete exact-distribution endpoints / valid prefix on error
+GBM lognormal path         *gbm.Result                 complete exact-distribution endpoints / valid prefix on error
+Merton jump-diffusion path *jumpdiffusion.Result      compensated compound-Poisson endpoints / valid prefix
 sample autocorrelation     *acf.Result                 fixed-window lag coefficients / pair counts
 Wilder RSI factor          *rsi.Result                 aligned oscillator / Valid mask
 MACD trend difference      *macd.Result                aligned Line / Signal / Histogram masks
@@ -236,6 +239,7 @@ Read these files as a learning path. `doc.go` files define implemented package c
 | 8o   | [`AD.md`](AD.md)                           | Chaikin close-location-weighted volume, first-bar inclusion, stable multiplier, Neumaier rebase and snapshot trust.         |
 | 8p   | [`MONTECARLO.md`](MONTECARLO.md)           | Parallel path streams, ordered moments, bounded dispatch, exact quantiles and partial-result policy.                        |
 | 8q   | [`GBM.md`](GBM.md)                         | Exact lognormal increments on irregular grids, strict unit matching, stable log-growth publication, RNG/MC bridge.          |
+| 8r   | [`JUMPDIFFUSION.md`](JUMPDIFFUSION.md)     | Compensated Merton jumps, inversion/PTRS, RNG order, errors and model limits.                                               |
 | 9    | [`DTW.md`](DTW.md)                         | `Align`, `AlignCostMatrix`, `AlignMatrix`, `AlignBounded`, exact `Search`, numeric and path artifacts.                      |
 | 9a   | [`DTW_SEARCH.md`](DTW_SEARCH.md)           | Fixed-length exact top-K, certified LB_Keogh, workers, budgets, and partial-result law.                                     |
 | 10   | [`TSP.md`](TSP.md)                         | Matrix-backed tours, exact regimes, Christofides, Blossom matching, local search, timeouts.                                 |
@@ -270,6 +274,7 @@ Working on numeric/time-series workflows:
   SERIES -> BOOTSTRAP.SampleIndices -> paired matrix/return/sensor resamples -> caller estimators
   RNG.Stream(seed, logicalPath) -> own sampler model -> MONTECARLO.Run (bounded jobs + indexed moments)
   RNG.Stream(seed, logicalPath) -> GBM.Simulate / SimulateTerminal -> payoff Sampler -> MONTECARLO.Run
+  RNG.Stream(seed, logicalPath) -> JUMPDIFFUSION.Simulate / SimulateTerminal -> complete payoff -> MONTECARLO.Run
   MONTECARLO.Run -> mean/variance/SE / optional exact quantiles -> application decision policy
   OLS/RIDGE residual window -> ACF -> investigate serial dependence (NOT a p-value)
   MATRICES -> HMM.Smooth / Decode -> offline incident reconstruction
@@ -400,6 +405,8 @@ Think of `lvlath` as a contract stack.
 ### Parallel stochastic execution bridge
 
 For an explicitly selected geometric Brownian motion model, `gbm` transforms path-owned normal draws into positive-price endpoints before the application turns a complete trajectory into a payoff. It does not schedule or aggregate paths.
+
+An explicitly selected Merton model instead uses `jumpdiffusion` to add bounded discrete Poisson counts and aggregated normal log jumps to the same physical GBM time grid. The two samplers are different mathematical assumptions; both leave experiment scheduling and payoff calculation to `montecarlo` and the application. Setting `Intensity=0` delegates directly to the GBM sampler.
 
 `rng` creates a deterministic single-owner stream; `montecarlo` adds a path-indexed bounded scheduler and canonical single-owner moments; `stats` provides the numeric recurrence; `matrix` stores optional detached results. The application continues to own the stochastic model and its domain assumptions. `bootstrap` instead returns block-resampled indices from already observed dependent data. These are composable but **not interchangeable** numerical questions.
 
@@ -904,9 +911,9 @@ Matrix-native statistics and linear solvers answer **different** questions:
        ┌───────┴────────┐                ┌────────────┴──────────────┐
 CenterColumns       Covariance     square full rank           tall full rank
        │                │                │                           │
-centered data       d×d moments       FactorLU                FactorQR
+centered data       d×d moments       FactorLU                    FactorQR
        │                │                │                           │
-NormalizeRowsL2    Correlation    row pivot + Solve      Householder + Solve
+NormalizeRowsL2    Correlation    row pivot + Solve         Householder + Solve
        │                │                └───────────┬───────────────┘
 feature geometry    pair relations             SolveResult
                                        solution / rank / residuals /
@@ -4033,6 +4040,188 @@ For the implementation derivation, complete validation precedence, overflow/subn
 
 ---
 
+## 11q. Jump Diffusion Foundations: Discrete Jumps, Compensated Drift and Replay
+
+`github.com/lvlath/go/jumpdiffusion` extends the **fixed-grid GBM scenario
+model** with an independent compound Poisson process: each elapsed interval
+has a discrete event count, and each event multiplies the price by the
+exponential of a Gaussian *log jump*. It is a modeling alternative to `gbm`,
+not a replacement for `rng` or `montecarlo`, and it does not infer parameters
+from observed data. The package is explicitly **experimental** until a
+validated scenario need and calibration policy justify its use.
+
+### 11q.1. Model a discontinuity without inventing event timestamps
+
+For elapsed interval `dt`, let `N~Poisson(lambda*dt)` be the jump count and
+`Y_j~Normal(m,s^2)` the log-multiplier marks. The aggregate is sampled as
+
+$$
+  J_N=Nm+\sqrt N\,sZ_J,\qquad J_0=0.
+$$
+
+This identity avoids a loop of `N` Gaussian calls while preserving the
+conditional distribution at the next **grid observation**. The returned
+`Times` do *not* contain individual event times or reveal intrastep extrema:
+a simulated 90-day terminal value cannot certify continuous-barrier
+survival. A flash-crash study should therefore choose and document a grid
+whose resolution suits the actual question.
+
+```text
+                         caller's declared model
+               GBM coefficients + lambda, m, s, convention
+                                |
+                    observation interval dt
+                                |
+               +----------------+-----------------+
+               |                                  |
+       diffusion Normal                     discrete Poisson N
+       (only if sigma>0)                   (inversion or PTRS)
+               |                                  |
+               |                           conditional log jump
+               |                         Nm + sqrt(N)*s*Z_J
+               +----------------+-----------------+
+                                |
+                    candidate wide log growth
+                                |
+                  positive finite price check
+                                |
+                   detached completed prefix
+```
+
+### 11q.2. Why the drift compensator matters
+
+A log-jump mean is not a price-jump expectation:
+
+$$
+  k=\mathbb E[e^Y-1]=\operatorname{expm1}(m+s^2/2).
+$$
+
+![Jump-drift compensation](https://latex.codecogs.com/svg.image?%5Cdisplaystyle%20k%3D%5Coperatorname%7Bexpm1%7D%28m%2Bs%5E2%2F2%29)
+
+With `Convention=jumpdiffusion.Compensated` (the zero-value convention),
+the per-interval log increment is
+
+$$
+  \Delta\log S=(\mu-\sigma^2/2-\lambda k)dt
+     +\sigma\sqrt{dt}Z+J_N.
+$$
+
+The Poisson exponential moment is `exp(lambda*k*t)`; it cancels the
+compensator's `exp(-lambda*k*t)` contribution, giving the mathematical
+identity **`E[S(t)]=S0*exp(mu*t)`**. In the explicitly selected
+`Uncompensated` mode, the expected growth becomes
+`S0*exp((mu+lambda*k)*t)`. Neither convention chooses a risk-neutral
+pricing measure or guarantees empirical calibration.
+
+### 11q.3. Choose an honest Poisson regime and time unit
+
+For `a=lambda*dt`:
+
+| Domain        | What the generator does                         |
+|:--------------|:------------------------------------------------|
+| `a=0`         | Count zero without Poisson entropy              |
+| `0<a<30`      | Product inversion, one open uniform per attempt |
+| `30<=a<=2^40` | Hörmann PTRS, two open uniforms per attempt     |
+| `a>2^40`      | `ErrDomain` before sampling the interval        |
+
+PTRS never substitutes a Gaussian count. Each interval has an attempt
+budget of `2^20`; an exhausted budget is `ErrBudget`, with only previously
+completed points returned. The accepted count fits `[0,2^53-1]`.
+Changing the algorithm threshold or the RNG draw order is a replay-breaking
+change, even if two implementations sample the same mathematical law.
+
+`Intensity` is **per `Diffusion.Unit`**. For `TimeYears`, `lambda=2`
+means two expected events per year. For `TimeSeconds`, `lambda=50`
+means 50 per second. If you convert years to days or seconds, transform
+**drift**, **volatility**, **intensity** and **grid timestamps** together.
+The library never assumes a trading calendar.
+
+### 11q.4. Runnable scenario: replay a jump-aware collateral checkpoint
+
+A risk team wants to replay a synthetic mark under a rare-gap model,
+inspect a quarter-end price and retain the exact input times for audit.
+The example uses explicit year fractions and a fixed `(seed,pathID)`;
+its result is a **modeled scenario**, not a measured risk probability.
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+
+    "github.com/lvlath/go/gbm"
+    "github.com/lvlath/go/jumpdiffusion"
+)
+
+func main() {
+    model := jumpdiffusion.Parameters{
+        Diffusion: gbm.Parameters{
+            Initial: 60_000, Drift: 0.03, Volatility: 0.65,
+            Unit: gbm.TimeYears,
+        },
+        Intensity: 2, LogJumpMean: -0.20, LogJumpStdDev: 0.10,
+        Convention: jumpdiffusion.Compensated,
+    }
+    grid := gbm.TimeGrid{
+        Values: []float64{0, 1.0 / 365, 7.0 / 365, 30.0 / 365, 90.0 / 365},
+        Unit:   gbm.TimeYears,
+    }
+    path, err := jumpdiffusion.SimulateSeeded(
+        context.Background(), model, grid, 2026, 17,
+    )
+    if err != nil {
+        fmt.Println("simulation:", err)
+        return
+    }
+    if path == nil || !path.Complete {
+        fmt.Println("incomplete risk scenario")
+        return
+    }
+    fmt.Printf("checkpoints=%d initial=%.0f elapsed-days=%.0f\n",
+        len(path.Values), path.Values[0], 365*path.Times[len(path.Times)-1],
+    )
+    // Output:
+    // checkpoints=5 initial=60000 elapsed-days=90
+}
+```
+
+The five independently checked `jumpdiffusion/example_test.go` scenarios
+also demonstrate a preselected collateral flash crash, jump-sensitive
+call/put Monte Carlo valuations, a high-intensity PTRS event-flow model,
+path-ID audit replay and a credit-event reserve. A deterministic scripted
+crash fixture is useful for **stress attribution**, not for estimating crash
+frequency.
+
+### 11q.5. Treat failures and ownership as part of the stochastic model
+
+`Simulate` and its wrappers `SimulatePath`, `SimulateTerminal`,
+`SimulateSeeded` and `SimulateTerminalSeeded` return detached
+`*jumpdiffusion.Result{Times,Values,Complete}`. The nil-safe
+`Result.IsNil()` is a pointer-absence check, not evidence of success.
+Invalid input returns `nil,error`. After a valid preflight, an interval
+cancellation, numeric failure, or `ErrBudget` returns **only completed
+observations**, `Complete=false` and the original classified error. Entropy
+spent on an abandoned interval is not rolled back.
+
+At `Intensity=0`, the facade **delegates directly to `gbm.Simulate`** for
+bitwise output and draw-sequence parity. Otherwise, the per-step calls are
+`Normal(diffusion)` if `sigma>0`, Poisson `UniformOpen`, and
+`Normal(jump)` if `N>0 && s>0`; one mutable stream belongs to exactly one
+path/goroutine. A `montecarlo.Sampler` must use the RNG it receives and
+return an error on an incomplete trajectory, never a truncated terminal
+payoff. Fixed seed and path ID are not enough for long-term replay without
+recording model/grid coefficients and RNG/kernel version.
+
+Continue with [`JUMPDIFFUSION.md`](JUMPDIFFUSION.md) for the independent
+Poisson acceptance equations, full error precedence, numeric bounds,
+benchmark regimes and licensing attribution, or the
+[Jump Diffusion FAQ](FAQ_%26_TIPS.md#13p-jump-diffusion-faq-merton-compensation-poisson-counts-and-replay)
+for operational troubleshooting. The original GBM laws remain in
+[`GBM.md`](GBM.md).
+
+---
+
 ## 12. Algorithm Selection Guide
 
 ### If the input is a graph
@@ -4090,6 +4279,7 @@ For the implementation derivation, complete validation precedence, overflow/subn
 | Reproducible stochastic simulation paths                  | `rng.NewFactory().Stream` / `rng.NewStream`   | Pinned PCG-DXSM, logical path IDs, one goroutine owner per stream.                                            |
 | Independent Monte Carlo paths and exact outcome quantiles | `montecarlo.Run` / `RunWithQuantiles`         | Path-indexed RNG streams, ordered vector sample moments, bounded worker window and explicit memory admission. |
 | Exact-in-distribution GBM on a chosen time grid           | `gbm.Simulate` / `gbm.SimulateSeeded`         | Detached strictly positive prices, explicit years/days/seconds and complete/prefix status.                    |
+| Compensated Poisson-jump price paths over GBM             | `jumpdiffusion.Simulate` / `SimulateSeeded`   | Exact-in-distribution grid endpoints; bounded Poisson and complete-prefix policy.                             |
 | Complete fixed index windows                              | `series.WindowRanges`                         | ordered half-open sample-index intervals.                                                                     |
 | Hidden-state streaming causal filtering                   | `hmm.FilterStep` / `FilterDefault`            | P(z_t given observations through t), no future-sample leakage.                                                |
 | Retrospective hidden-state attribution                    | `hmm.Smooth` / `hmm.Decode`                   | Full-sequence state marginals vs one optimal joint path; different contracts.                                 |
@@ -4228,13 +4418,27 @@ For Monte Carlo, pin the model revision, model parameter values and units, base 
 
 Use an explicit identical `TimeUnit` in `gbm.Parameters` and `gbm.TimeGrid`, rebasing timestamps to elapsed time starting at zero. On any time-unit conversion, change both `mu` (in inverse time) and `sigma` (in inverse square-root time) in caller code. Keep one `rng.RNG` per logical scenario; never treat a non-nil incomplete `*gbm.Result` as a valid maturity payoff. The exact-distribution endpoint law is not a guarantee of market-model accuracy or continuous-barrier monitoring. See [`GBM.md`](GBM.md) and [GBM FAQ](FAQ_%26_TIPS.md#13o-gbm-faq-exact-lognormal-steps-units-overflow-and-complete-paths).
 
+### 13.14. Separate jump-model assumptions, Poisson entropy, and calibration
+
+A Merton jump-diffusion step preserves its *mathematical* mean through the
+explicit `lambda*expm1(m+s^2/2)` drift compensator, not by adjusting
+sampled outcomes after the fact. Preserve the `Intensity==0` direct GBM
+parity path, the ordered diffusion–Poisson–jump draw protocol, the Poisson
+upper mean/count limits, and `Complete=false` on runtime errors. A reproducible
+Monte Carlo result is still conditional on the supplied jump intensity and
+log-mark distribution: estimate and validate parameters in a **separate
+modeling process** before using any result for business decisions.
+
+See [`JUMPDIFFUSION.md`](JUMPDIFFUSION.md) and its
+[FAQ](FAQ_%26_TIPS.md#13p-jump-diffusion-faq-merton-compensation-poisson-counts-and-replay).
+
 ## 14. Where To Go Next
 
 Use this tutorial as the entry point, then move into package-specific material:
 
 > If you are running reproducible stochastic engineering or risk experiments:
 >
->   [`RNG.md`](RNG.md) -> [`GBM.md`](GBM.md) (for a GBM model) -> [`MONTECARLO.md`](MONTECARLO.md) -> [`../gbm/example_test.go`](../gbm/example_test.go)
+>   [`RNG.md`](RNG.md) -> [`GBM.md`](GBM.md) (continuous model) or [`JUMPDIFFUSION.md`](JUMPDIFFUSION.md) (jump model) -> [`MONTECARLO.md`](MONTECARLO.md) -> [`../gbm/example_test.go`](../gbm/example_test.go) / [`../jumpdiffusion/example_test.go`](../jumpdiffusion/example_test.go)
 
 > If you are modeling topology first:
 >
