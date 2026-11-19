@@ -8,7 +8,7 @@
     This README is the public face of lvlath. It presents the library as a
     deterministic, contract-driven Go toolkit for graph algorithms, flow networks,
     dense graph algebra, routing, exact timestamp grids, causal time-series primitives, Wilder RSI batch/stream filtering, SMA-seeded MACD, compensated MFI, compensated cumulative OBV, Chaikin A/D, fixed-window ACF, fractional PAA,
-    symbolic SAX encoding, dependent-data block-index resampling, path-indexed parallel Monte Carlo simulation, exact-in-distribution GBM and Merton jump-diffusion paths, causal GJR-GARCH volatility and constrained Gaussian QMLE, alignment, and reproducible algorithm engineering. It should give a new reader immediate confidence in
+    symbolic SAX encoding, dependent-data block-index resampling, path-indexed parallel Monte Carlo simulation, exact-in-distribution GBM and Merton jump-diffusion paths, causal GJR-GARCH volatility, fixed-order conditional Gaussian ARIMA with anchored forecasts, alignment, and reproducible algorithm engineering. It should give a new reader immediate confidence in
     what lvlath can solve, how packages compose, where the formal contracts live,
     and why this repository is engineered beyond ad-hoc algorithm snippets.
 
@@ -48,7 +48,7 @@
 
 # lvlath
 
-**lvlath** is a pure-Go algorithm engineering library for graphs, flows, dense graph algebra, routing, exact timestamp grids, causal series transforms, fractional PAA, symbolic SAX time-series signatures, stable statistical moments, fitted feature scaling, sample autocorrelation, Wilder RSI, SMA-seeded MACD, compensated OHLCV Money Flow Index, cumulative On-Balance Volume, Chaikin Accumulation/Distribution, covariance PCA, causal Hidden Markov Models, version-pinned PCG-DXSM stochastic streams, time-series alignment, reproducible parallel Monte Carlo drivers, exact-in-distribution geometric Brownian motion and Merton jump-diffusion paths, asymmetric stationary GJR-GARCH conditional volatility, and reproducible test fixtures.
+**lvlath** is a pure-Go algorithm engineering library for graphs, flows, dense graph algebra, routing, exact timestamp grids, causal series transforms, fractional PAA, symbolic SAX time-series signatures, stable statistical moments, fitted feature scaling, sample autocorrelation, Wilder RSI, SMA-seeded MACD, compensated OHLCV Money Flow Index, cumulative On-Balance Volume, Chaikin Accumulation/Distribution, covariance PCA, causal Hidden Markov Models, version-pinned PCG-DXSM stochastic streams, time-series alignment, reproducible parallel Monte Carlo drivers, exact-in-distribution geometric Brownian motion and Merton jump-diffusion paths, asymmetric stationary GJR-GARCH conditional volatility, fixed-order conditional Gaussian ARIMA level forecasts, and reproducible test fixtures.
 
 It is built for people who need algorithmic tools they can explain in a code review, trust in CI, compose across packages, and debug from deterministic artifacts instead of guessing why an answer changed.
 
@@ -82,6 +82,7 @@ It is built for people who need algorithmic tools they can explain in a code rev
 * `gbm` simulates positive exact-in-distribution lognormal paths on irregular explicitly unit-typed grids, with robust log-growth arithmetic and an error-safe completed-prefix protocol;
 * `jumpdiffusion` adds compensated compound-Poisson lognormal jumps over GBM without hidden Gaussian count approximations, RNG-order drift or partial-payoff publication;
 * `gjrgarch` provides immutable asymmetric return-variance models, strictly causal filtering, expected-variance forecasts and constrained Gaussian QMLE;
+* `arima` fits a fixed nonseasonal conditional Gaussian ARIMA law, validates strict Schur roots and predicts anchored levels with marginal innovation variances;
 * `flow`, `mst`, `tsp`, `dtw`, `gridgraph`, and `builder` packages extend the same discipline into optimization, alignment, fixtures, and examples.
 
 ---
@@ -198,6 +199,14 @@ The common failures are familiar:
     approved model. Feed cadence, training/holdout separation and model review
     belong to the application.
 
+18. **ARIMA conditional likelihood is not exact diffuse Kalman MLE**
+
+    `arima` conditions on the first `max(p,q)` differenced observations,
+    profiles innovation variance only from later residuals, rejects unit
+    roots rather than clipping them, and reconstructs integrated levels
+    using historical anchors. Marginal innovation variance is not full
+    predictive parameter uncertainty or a risk quantile.
+
 ---
 
 ## Installation
@@ -243,6 +252,7 @@ lvlath/
 ├── gbm/                   # exact lognormal GBM paths, explicit units, positive-price prefix law
 ├── jumpdiffusion/         # experimental Merton Poisson jumps, compensated drift, PTRS
 ├── gjrgarch/              # causal asymmetric return variance, forecast and Gaussian QMLE
+├── arima/                 # conditional Gaussian ARIMA, anchored level/variance forecasts
 ├── gridgraph/             # 2D lattice graph generation
 ├── matrix/                # dense graph algebra, stable statistics, pivoted factors and solves
 ├── tsp/                   # tour construction, local search, exact small-instance routing
@@ -275,6 +285,7 @@ lvlath/
 │   ├── GBM.md
 │   ├── JUMPDIFFUSION.md
 │   ├── GJRGARCH.md
+│   ├── ARIMA.md
 │   ├── PAA.md
 │   ├── SAX.md
 │   ├── GRID_GRAPH.md
@@ -380,6 +391,12 @@ lvlath/docs/{PACKAGE}.md
                                    └────────────────────────────────────────────┘
 
                                    ┌────────────────────────────────────────────┐
+                                   │ arima                                      │
+                                   │ conditional ARMA on d-th differences       │
+                                   │ Schur roots / anchored level forecasts     │
+                                   └────────────────────────────────────────────┘
+
+                                   ┌────────────────────────────────────────────┐
                                    │ rsi                                        │
                                    │ causal Wilder changes / ready mask         │
                                    │ zero-allocation Push / versioned snapshot  │
@@ -447,6 +464,9 @@ Composition rule:
   explicitly unit-matched elapsed-time grids; stochastic draws come from rng,
   payoffs and calibration come from the caller, and ensemble reduction comes
   from montecarlo.
+ - arima owns fixed-order conditional Gaussian mean estimation, strict Schur AR/MA
+   admissibility, original-level anchor recovery and linear-memory marginal
+   innovation variances; cadence, order choice, holdout review and release are external.
  - gjrgarch owns deterministic stationary conditional-return variance, strictly
   lagged posterior filtering, expected-variance horizons and constrained
   Gaussian QMLE. It estimates no price path, risk quantile or trading policy.
@@ -546,6 +566,7 @@ approves risk-model deployment. Details follow in the
 | `montecarlo`    | Independent multidimensional stochastic experiments, bounded worker scheduling, ordered Welford moments and type-7 quantiles.                  | Bitwise worker-count parity on complete deterministic runs, checked optional-buffer admission and strict partial prefixes. | Option/risk valuation, structural fatigue screening, microgrid resilience, repeatable fault experiments.       |
 | `gbm`           | Exact-in-distribution GBM price paths on caller-specified irregular grids, with explicit years/days/seconds.                                   | Avoids spurious `S*exp`/`sigma²` overflows; detached prefix/errors, zero RNG draws at sigma zero.                          | European-option paths, synthetic tick stress, FX-liability scenarios and deterministic escalation.             |
 | `gjrgarch`      | Immutable GJR-GARCH(1,1) causal variance, forecast and Gaussian QMLE with explicit optimizer diagnostics.                                      | Causal lag indexing, sign-dependent shock, stationarity margin and deterministic KKT/BFGS.                                 | Next-day equity risk, collateral monitoring, model-risk audit and volatility term structure.                   |
+| `arima`         | Fixed-order conditional Gaussian ARIMA fit and anchored level forecasts.                                                                       | Schur-stable AR/MA, deterministic optimizer, historical anchors, `O(H)` horizon variance.                                  | GDP index planning, backlog staffing, liquidity spreads and industrial energy scheduling.                      |
 | `jumpdiffusion` | Merton compound-Poisson lognormal jump-diffusion on explicit GBM grids.                                                                        | `lambda=0` GBM parity, bounded discrete PTRS, drift compensator, partial prefix with errors.                               | Scenario-driven collateral gap stress, jump-sensitive European options, credit event sensitivity.              |
 | `bootstrap`     | Reproducible Moving/Circular/Stationary index resampling for dependent series with per-replicate streams and exact bounded integers.           | Detached complete-row results, memory admission and cancellation without interrupted-row publication.                      | Portfolio risk sensitivity, paired serial regression, telemetry alarm calibration.                             |
 | `acf`           | Direct fixed-window sample autocorrelation with two explicit denominator conventions and raw/centered origins.                                 | Scaled compensated products, no lag-specific recentering or clipping; caller-owned lag counts.                             | Residual audits, compressor cycles, vibration periodicity, signal pitch.                                       |
@@ -2052,6 +2073,91 @@ prices-to-returns monitoring with explicit fail-closed model release.
 
 ---
 
+### ARIMA: fixed-order conditional Gaussian forecasting with anchored levels
+
+`github.com/lvlath/go/arima` estimates a **specified** univariate
+nonseasonal ARIMA `(p,d,q)` under conditional Gaussian likelihood, then
+forecasts in **original level units**. It is separate from `gjrgarch`:
+ARIMA models the conditional mean of differenced observations with a fixed
+innovation variance, whereas GJR-GARCH models time-varying asymmetric
+conditional return variance. Neither package silently fits the other.
+
+![ARIMA differenced-space equation](https://latex.codecogs.com/svg.image?y_t%3D%5CDelta%5Ed%20x_t%3Dc%2B%5Csum_%7Bi%3D1%7D%5Ep%5Cphi_i%20y_%7Bt-i%7D%2B%5Cvarepsilon_t%2B%5Csum_%7Bj%3D1%7D%5Eq%5Ctheta_j%5Cvarepsilon_%7Bt-j%7D)
+
+Here `Drift=c` is the **intercept after differencing**, not necessarily
+the mean level or a constant growth rate. The first `max(p,q)` differenced
+observations condition the residual recursion; they are not part of the
+SSE/likelihood. The AR and MA polynomials must be strictly stationary and
+invertible in differenced space; unit roots are rejected, never clipped.
+
+| Requirement             | Public API                                | Key contract                                                      |
+|-------------------------|-------------------------------------------|-------------------------------------------------------------------|
+| Fixed-order calibration | `arima.Fit(ctx,values,Options{...})`      | `p,q=0..8`, `d=0..2`; `Options{}` means white noise without drift |
+| Differenced intercept   | `arima.FitWithDrift(ctx,values,order)`    | Fit `c`, whose long-run differenced mean is `c/(1-sum(phi))`      |
+| Exactly zero intercept  | `arima.FitWithoutDrift(ctx,values,order)` | Fix `c=0`; no hidden recentering                                  |
+| Stationary ARMA         | `arima.FitARMA(ctx,values,p,q,drift)`     | `d=0` convenience facade                                          |
+| Integrated white noise  | `arima.FitIntegrated(ctx,values,d,drift)` | ARIMA(0,d,0), analytical estimation                               |
+| Validated model         | `arima.New(arima.Parameters{...})`        | Immutable coefficients, strict AR/MA Schur checks                 |
+| Horizon forecast        | `model.Forecast(ctx,history,H)`           | Anchored `Mean`, marginal `Variance` and `Horizon`                |
+| Next observation        | `model.ForecastNext(ctx,history)`         | Same canonical forecast with H=1                                  |
+
+For `d=1` the level origin is the last observed value; for `d=2` the
+origin additionally retains the last observed first difference. The
+horizon variance is accumulated from the **integrated impulse response**
+with `O(H)` working memory, without a dense forecast covariance matrix.
+Both levels and variances are detached, and an immutable model supports
+independent concurrent forecasting on stable histories.
+
+A minimal operating example projects three days of a reviewed incident
+backlog. It deliberately chooses an analytical integrated model to avoid
+requiring a nonlinear optimizer for this introduction:
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+
+    "github.com/lvlath/go/arima"
+)
+
+func main() {
+    dailyBacklog := []float64{
+        200, 204, 207, 211, 215, 218, 222,
+        225, 229, 233, 236, 240, 244,
+    }
+    fit, err := arima.FitIntegrated(context.Background(), dailyBacklog, 1, true)
+    if err != nil {
+        fmt.Println("fit:", err)
+        return
+    }
+    forecast, err := fit.Model.Forecast(context.Background(), dailyBacklog, 3)
+    if err != nil {
+        fmt.Println("forecast:", err)
+        return
+    }
+    fmt.Printf("day+3=%.1f tickets; innovation variance=%.2f tickets^2\n",
+        forecast.Mean[2], forecast.Variance[2])
+    // Output: day+3=255.0 tickets; innovation variance=0.67 tickets^2
+}
+```
+
+This deterministic sample is an **illustrative fixture**, not an observed
+service ledger. Callers validate timestamp cadence, choose their model order,
+score a chronological holdout and control the decision threshold. `Fit` may
+return a last accepted candidate **with `ErrNotConverged`**; using it in
+production requires an explicit failed-fit review policy. `IsNil()` checks
+only pointer presence and `Model.ID()` is a content fingerprint, not
+authenticated data provenance.
+
+Full mathematics, independent oracles, error precedence, Schur conventions,
+uncertainty limits and examples: [`docs/ARIMA.md`](docs/ARIMA.md),
+[`arima/doc.go`](arima/doc.go), [`arima/example_test.go`](arima/example_test.go),
+[`examples/arima/main.go`](examples/arima/main.go),
+[the tutorial](docs/TUTORIAL.md#11s-arima-foundations-conditional-likelihood-differencing-and-anchored-forecasts),
+and [the FAQ](docs/FAQ_%26_TIPS.md#13r-arima-faq-conditional-gaussian-fit-schur-constraints-and-anchored-forecasts).
+
 ### HMM: causal regime filtering, retrospective smoothing and reproducible EM
 
 `github.com/lvlath/go/hmm` models **hidden operating regimes** behind categorical events or finite multichannel telemetry. Its two immutable model families share the same transition mathematics but have distinct, typed observation contracts:
@@ -2119,6 +2225,7 @@ See [`docs/HMM.md`](docs/HMM.md) for formal log-domain equations, EM counts and 
 | Monte Carlo driver             | [`docs/MONTECARLO.md`](docs/MONTECARLO.md)       | Path-keyed replay, bounded dispatch, vector moments, exact empirical quantiles, memory limits and prefix failures.              |
 | GBM exact lognormal paths      | [`docs/GBM.md`](docs/GBM.md)                     | Model equations, unit dimensions, input precedence, robust price publication and Monte Carlo bridge.                            |
 | GJR-GARCH conditional variance | [`docs/GJRGARCH.md`](docs/GJRGARCH.md)           | Strict causality, asymmetric shock mathematics, stationary forecasts, QMLE gradient, KKT projection and release policy.         |
+| ARIMA mean/level forecasting   | [`docs/ARIMA.md`](docs/ARIMA.md)                 | Conditional Gaussian fit, burn-in, Schur roots, anchor recovery, impulse variance and operational limits.                       |
 | Merton jump-diffusion          | [`docs/JUMPDIFFUSION.md`](docs/JUMPDIFFUSION.md) | Compound Poisson log-jump law, compensation, bounded PTRS, RNG replay, errors and source attribution.                           |
 | Stable statistics              | [`docs/STATS.md`](docs/STATS.md)                 | Welford/Chan, exact mean sum, scaled M2, fitted scaling, sentinels, immutable inference.                                        |
 | Stable Ridge regression        | [`docs/RIDGE.md`](docs/RIDGE.md)                 | Positive-Lambda augmented QR, strict intercept policy, wide/collinear designs, nonzero tiny coefficients and frozen prediction. |
@@ -2703,6 +2810,7 @@ incidence matrix:       columns are edge identities, not vertex-pair weights
 | "How do I parallelize independent Monte Carlo paths with ordered, reproducible moments?"       | `montecarlo.Run` / `EstimateParallel`                              | One RNG per path, bounded 2W window, single ordered reducer, optional budgeted quantiles.             |
 | "How do I generate a positive lognormal price path on an irregular grid?"                      | `gbm.Simulate` / `SimulateSeeded`                                  | Model units are explicit, price publication is finite, runtime failures retain only completed points. |
 | "How should the next variance react to a negative return shock?"                               | `gjrgarch.FilterStationary` / `Step` / `ForecastVariance`          | Strictly lagged conditional variance with leverage and stationary expected-variance horizons.         |
+| "How do I predict future original levels with a fixed ARIMA order?"                            | `arima.Fit` / `Model.Forecast`                                     | Conditional innovations, strict roots, original-level anchors, and marginal innovation variance.      |
 | "How do I model sudden positive or negative price jumps on that GBM grid?"                     | `jumpdiffusion.Simulate` / `SimulateSeeded`                        | Compensated Merton log-jump model, bounded discrete Poisson counts and explicit model limitations.    |
 | "How do I build repeatable graphs?"                                                            | `builder` / `gridgraph`                                            | Generated fixtures should be deterministic.                                                           |
 
@@ -2738,6 +2846,11 @@ incidence matrix:       columns are edge identities, not vertex-pair weights
 | Current GJR residual used to compute its own conditional variance               | The observation at t contributes only to h[t+1]; never update h[t] from epsilon[t].                          |
 | GJR likelihood silently clamps variance below the floor                         | Reject infeasible candidates; clipping computed h[t] changes both loss and analytic gradient.                |
 | GJR optimizer candidate treated as successfully fitted                          | Check `err==nil` AND `Diagnostics.Converged`; `IsNil` is only pointer presence.                              |
+| ARIMA drift `c` mistaken for stationary mean or long-run price growth           | `c` is the differenced intercept; when stationary, mean `c/(1-sum(phi))`.                                    |
+| Integrated ARIMA forecasts accidentally start at level/slope zero               | Anchor `d=1` on last level, `d=2` on last level and last first difference.                                   |
+| Conditional SSE includes burn-in or uses raw `n` for variance                   | First `max(p,q)` differenced observations condition only; profile over `EffectiveN`.                         |
+| ARIMA root boundary silently clipped or nonconverged fit deployed               | Reject Schur unit roots; classify `ErrNotConverged` and retain only a diagnostic candidate.                  |
+| Horizon covariance materialized or uncertainty interpreted as complete          | Linear impulse-response marginal variance excludes parameter uncertainty and joint horizon covariance.       |
 | Merton log-jump mean `m` used as the compensator `k`                            | Compensated Merton drift uses `lambda*expm1(m+s^2/2)`, never `lambda*m`.                                     |
 | Poisson count replaced by a Gaussian at high intensity                          | Use bounded PTRS at mean>=30, not a continuous approximation.                                                |
 | An incomplete jump path silently priced as a maturity scenario                  | Reject `!Complete` in `montecarlo.Sampler`; retain diagnostic prefix only.                                   |

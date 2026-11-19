@@ -3,9 +3,9 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/TUTORIAL.md
-  Package reference: matrix, stats, ols, ridge, series, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch and the wider lvlath package family
+  Package reference: matrix, stats, ols, ridge, series, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima and the wider lvlath package family
   Contract status: learning guide; package doc.go and source define the public API.
-  Scope: graph, matrix, factorization, statistical and temporal workflows, including causal MACD, rolling MFI, cumulative OBV, Chaikin A/D, reproducible parallel Monte Carlo, exact-in-distribution GBM, experimental Merton jump diffusion, and GJR-GARCH causal volatility with constrained Gaussian QMLE.
+  Scope: graph, matrix, factorization, statistical and temporal workflows, including causal MACD, rolling MFI, cumulative OBV, Chaikin A/D, reproducible parallel Monte Carlo, exact-in-distribution GBM, experimental Merton jump diffusion, GJR-GARCH causal volatility with constrained Gaussian QMLE, and fixed-order conditional Gaussian ARIMA with anchored forecasts.
   lvlath - Repository Tutorial
 
   Purpose:
@@ -25,7 +25,7 @@
 
 > **hard math on an easy level**
 
-Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fitted feature scaling, covariance PCA, causal Wilder RSI, SMA-seeded MACD, rolling Money Flow Index, compensated On-Balance Volume, Chaikin A/D, reproducible parallel Monte Carlo, exact-lognormal GBM paths, stationary asymmetric GJR-GARCH conditional variance, and time-series alignment.
+Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fitted feature scaling, covariance PCA, causal Wilder RSI, SMA-seeded MACD, rolling Money Flow Index, compensated On-Balance Volume, Chaikin A/D, reproducible parallel Monte Carlo, exact-lognormal GBM paths, stationary asymmetric GJR-GARCH conditional variance, fixed-order conditional Gaussian ARIMA, and time-series alignment.
 
 This tutorial is the beginning of the learning path. It introduces the objects and ideas that most packages share: graphs, matrices, options, result artifacts, error contracts, and deterministic algorithm execution.
 
@@ -63,6 +63,7 @@ This tutorial is the beginning of the learning path. It introduces the objects a
     11p. [GBM Foundations: Exact Lognormal Paths and Explicit Time Units](#11p-gbm-foundations-exact-lognormal-paths-and-explicit-time-units)
     11q. [Jump Diffusion Foundations: Discrete Jumps, Compensated Drift and Replay](#11q-jump-diffusion-foundations-discrete-jumps-compensated-drift-and-replay)
     11r. [GJR-GARCH Foundations: Causal Leverage, Variance Forecasts and Auditable QMLE](#11r-gjr-garch-foundations-causal-leverage-variance-forecasts-and-auditable-qmle)
+    11s. [ARIMA Foundations: Conditional Likelihood, Differencing and Anchored Forecasts](#11s-arima-foundations-conditional-likelihood-differencing-and-anchored-forecasts)
 12. [Algorithm Selection Guide](#12-algorithm-selection-guide)
 13. [Professional Best Practices](#13-professional-best-practices)
 14. [Where To Go Next](#14-where-to-go-next)
@@ -107,6 +108,7 @@ The library covers:
 * `gbm` exact-in-distribution lognormal paths on explicit irregular time grids, with strict unit matching, numerical overflow gates and detached completed prefixes;
 * `jumpdiffusion` experimental Merton compound-Poisson lognormal shocks on explicit GBM grids, with compensated drift and bounded PTRS;
 * `gjrgarch` stationary asymmetric conditional return variance, causal posterior filtering and constrained deterministic Gaussian QMLE;
+* `arima` fixed-order conditional Gaussian ARIMA, strict AR/MA Schur roots, anchored level forecasts and marginal innovation variance;
 * `paa` exact fractional time-series compression, rational segment boundaries and value-only feature projection;
 * `sax` symbolic words from fractional PAA and compatible Euclidean MINDIST (not a DTW lower bound);
 * `tsp` matrix-backed tour optimization with exact, approximate, matching, and local-search regimes;
@@ -135,6 +137,7 @@ independent path ensemble  *montecarlo.Result          ordered means/variance/SE
 GBM lognormal path         *gbm.Result                 complete exact-distribution endpoints / valid prefix on error
 Merton jump-diffusion path *jumpdiffusion.Result       compensated compound-Poisson endpoints / valid prefix
 GJR-GARCH fit candidate    *gjrgarch.FitResult         immutable Model / accepted diagnostics / explicit nonconvergence
+ARIMA forecast levels      *arima.ForecastResult       anchored mean / marginal innovation variance / horizon
 sample autocorrelation     *acf.Result                 fixed-window lag coefficients / pair counts
 Wilder RSI factor          *rsi.Result                 aligned oscillator / Valid mask
 MACD trend difference      *macd.Result                aligned Line / Signal / Histogram masks
@@ -244,6 +247,7 @@ Read these files as a learning path. `doc.go` files define implemented package c
 | 8q   | [`GBM.md`](GBM.md)                         | Exact lognormal increments on irregular grids, strict unit matching, stable log-growth publication, RNG/MC bridge.          |
 | 8r   | [`JUMPDIFFUSION.md`](JUMPDIFFUSION.md)     | Compensated Merton jumps, inversion/PTRS, RNG order, errors and model limits.                                               |
 | 8s   | [`GJRGARCH.md`](GJRGARCH.md)               | Causal asymmetric variance, stationary forecast, deterministic constrained Gaussian QMLE and risk release gates.            |
+| 8t   | [`ARIMA.md`](ARIMA.md)                     | Conditional Gaussian ARIMA, Schur root validation, differenced drift, anchors and innovation-only forecast variance.        |
 | 9    | [`DTW.md`](DTW.md)                         | `Align`, `AlignCostMatrix`, `AlignMatrix`, `AlignBounded`, exact `Search`, numeric and path artifacts.                      |
 | 9a   | [`DTW_SEARCH.md`](DTW_SEARCH.md)           | Fixed-length exact top-K, certified LB_Keogh, workers, budgets, and partial-result law.                                     |
 | 10   | [`TSP.md`](TSP.md)                         | Matrix-backed tours, exact regimes, Christofides, Blossom matching, local search, timeouts.                                 |
@@ -281,6 +285,7 @@ Working on numeric/time-series workflows:
   RNG.Stream(seed, logicalPath) -> JUMPDIFFUSION.Simulate / SimulateTerminal -> complete payoff -> MONTECARLO.Run
   SERIES.LogReturns -> GJRGARCH.FilterStationary -> State/Step -> next-session risk forecast
   SERIES + frozen training split -> GJRGARCH.Fit -> holdout predictive log-score -> model review
+  SERIES.Validate -> frozen training levels -> ARIMA.Fit -> anchored Forecast -> chronological holdout review
   MONTECARLO.Run -> mean/variance/SE / optional exact quantiles -> application decision policy
   OLS/RIDGE residual window -> ACF -> investigate serial dependence (NOT a p-value)
   MATRICES -> HMM.Smooth / Decode -> offline incident reconstruction
@@ -351,6 +356,12 @@ Think of `lvlath` as a contract stack.
                          │ acf                                           │
                          │ fixed-window, scaled direct autocorrelation   │
                          │ common / lag-adjusted; not causal streaming   │
+                         └───────────────────────────────────────────────┘
+
+                         ┌───────────────────────────────────────────────┐
+                         │ arima                                         │
+                         │ fixed-order conditional ARMA on differences   │
+                         │ original-level anchors / impulse variances    │
                          └───────────────────────────────────────────────┘
 
                          ┌───────────────────────────────────────────────┐
@@ -4406,6 +4417,132 @@ and [`examples/gjrgarch/main.go`](../examples/gjrgarch/main.go).
 
 ---
 
+## 11s. ARIMA Foundations: Conditional Likelihood, Differencing and Anchored Forecasts
+
+`github.com/lvlath/go/arima` provides an auditable **conditional mean**
+forecasting baseline for one scalar series with a fixed nonseasonal order.
+It is an estimation-and-forecasting tool, not a simulator, volatility
+filter, seasonality detector or missing-timestamp repair system.
+
+### 11s.1. Fix the data origin and the statistical estimand
+
+ARIMA takes differences before applying the ARMA recurrence:
+
+![ARIMA differenced-space recurrence](https://latex.codecogs.com/svg.image?y_t%3D%5CDelta%5Ed%20x_t%3Dc%2B%5Csum_%7Bi%3D1%7D%5Ep%5Cphi_i%20y_%7Bt-i%7D%2B%5Cvarepsilon_t%2B%5Csum_%7Bj%3D1%7D%5Eq%5Ctheta_j%5Cvarepsilon_%7Bt-j%7D)
+
+`Order{AR:p,Difference:d,MA:q}` accepts `p,q=0..8` and `d=0..2`.
+`Order{}` is **white noise**, not a search for the best order. Its drift
+`c` is the intercept *after* differencing. In stationary differenced
+coordinates, `E[y]=c/(1-sum(phi))`; with autoregressive terms,
+`c` is therefore not the long-run per-period increase.
+
+Conditional Gaussian fitting sets `b=max(p,q)` initial innovations to
+zero, excludes these from SSE and uses `EffectiveN=(n-d)-b`. It requires
+`EffectiveN > p+q+I(IncludeDrift)+1` to estimate the remaining terms.
+Unlike exact diffuse Kalman fitting, this estimand assumes the specified
+conditioning history and a profiled innovation variance `SSE/EffectiveN`.
+
+### 11s.2. Two historic coordinates are needed after second differencing
+
+```text
+last known level x[n-1]
+       |
+       +--> d=1: add the future predicted first differences
+       |
+       +--> d=2: retain x[n-1]-x[n-2] as last known slope
+                    |
+                    +--> add predicted second difference to slope
+                    +--> add updated slope to level
+
+Example: [1, 3, 6], d=2, future accelerations [0, 0, 0]
+         slope=3, next levels [9, 12, 15]
+```
+
+The forecast's `history` is the **only current origin**; the immutable
+`Model` does not carry a live history cursor. It recomputes conditional
+historical innovations before forecasting. Previously observed MA shocks
+may contribute to short horizons; future expected innovations are zero.
+Never integrate from zero or append previous forecasts as if they were
+*observed* innovations.
+
+### 11s.3. Predict a level and its marginal innovation uncertainty
+
+The stationary ARMA impulse response has `psi[0]=1` and
+`psi[j]=theta[j]+sum(phi_i*psi[j-i])`. After `d` cumulative integrations,
+the level-response coefficients `Psi[j]` give
+`sigmaSquared*sum_{j=0}^{h-1}Psi[j]^2`. For a zero-drift random walk with
+`sigmaSquared=2`, three forecast variances are `[2,4,6]`; for a twice
+integrated unit-variance white noise they are `[1,5,14]`.
+
+This variance does **not** incorporate uncertainty about estimated
+coefficients, shocks from omitted covariates or operational tail calibration.
+The kernel uses `O(H)` horizon memory, not a dense `H x H` covariance.
+
+### 11s.4. Runnable service-queue forecast: drift is measured in tickets/day
+
+The fixture is a regularly sampled, illustrative daily backlog. Its model
+is an explicitly drift-enabled integrated white noise, so fitting is
+analytical and the public result still exposes the full variance trajectory.
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+
+    "github.com/lvlath/go/arima"
+)
+
+func main() {
+    backlog := []float64{
+        200, 204, 207, 211, 215, 218, 222,
+        225, 229, 233, 236, 240, 244,
+    }
+    fit, err := arima.FitIntegrated(context.Background(), backlog, 1, true)
+    if err != nil {
+        fmt.Println("fit:", err)
+        return
+    }
+    forecast, err := fit.Model.Forecast(context.Background(), backlog, 3)
+    if err != nil {
+        fmt.Println("forecast:", err)
+        return
+    }
+    fmt.Printf("drift=%.2f tickets/day; day+3=%.1f; variance=%.2f\n",
+        fit.Model.Parameters().Drift, forecast.Mean[2], forecast.Variance[2])
+    // Output: drift=3.67 tickets/day; day+3=255.0; variance=0.67
+}
+```
+
+This is a **planning baseline**, not a guarantee of backlog counts or staff
+needs. A production service must validate daily cadence (no silent weekend
+slots), reserve future decisions for a chronological holdout, and decide
+externally how to act on forecast uncertainty.
+
+### 11s.5. Validation, identity and release discipline
+
+`FitWithDrift`, `FitWithoutDrift`, `FitARMA` and `FitIntegrated` only
+select policies over `Fit`; `ForecastNext` delegates to `Forecast(H=1)`.
+`New` validates supplied parameters through strict AR/MA Schur conditions
+and never clips a unit root. An uninitialized model cannot forecast.
+`Parameters()` returns detached arrays; `Model.ID()` is a versioned
+SHA-256 fingerprint, **not** data provenance or a digital signature.
+
+Fitting uses deterministic bounded L-BFGS when `p+q>0`. An exhausted
+solver may return the last accepted model **with** `ErrNotConverged`, which
+is a failed deployment gate; cancellation returns no partial result.
+A valid immutable model supports concurrent independent forecasting
+against stable histories. `FitResult.IsNil()` checks only pointer presence.
+
+For a complete error table, conditional likelihood derivation, independent
+AR(1)/MA(1)/integrated oracles, tested operational examples and complexity,
+continue to [`ARIMA.md`](ARIMA.md), [`arima/doc.go`](../arima/doc.go),
+[`arima/example_test.go`](../arima/example_test.go) and
+[`examples/arima/main.go`](../examples/arima/main.go).
+
+---
+
 ## 12. Algorithm Selection Guide
 
 ### If the input is a graph
@@ -4432,50 +4569,51 @@ and [`examples/gjrgarch/main.go`](../examples/gjrgarch/main.go).
 
 ### If the input is numeric data
 
-| Problem                                                   | Package                                                   | Main output                                                                                                   |
-|:----------------------------------------------------------|:----------------------------------------------------------|:--------------------------------------------------------------------------------------------------------------|
-| Dense algebra                                             | `matrix`                                                  | matrix result with shape/error policy.                                                                        |
-| Stable mean and population/sample variance                | `stats.Summarize`                                         | detached `Summary`, exact binary-input mean and scaled variance.                                              |
-| Streaming/partitioned moments                             | `stats.Moments`                                           | error-atomic Welford updates and Chan merges.                                                                 |
-| Training-only feature scaling                             | `stats.FitStandardizer`                                   | immutable model and detached fit metadata.                                                                    |
-| Numeric cleaning                                          | `matrix`                                                  | sanitized matrix.                                                                                             |
-| Matrix-native normalization                               | `matrix`                                                  | matrix-specific transforms under their own contract.                                                          |
-| Covariance/correlation                                    | `matrix`                                                  | stable sample moments and direct Pearson coefficients.                                                        |
-| Fitted PCA subspace and reconstruction                    | `pca.FitWithComponents` / `Model.Reconstruct`             | Frozen orthogonal basis, strict eigenpair gate, original-unit reconstruction.                                 |
-| Square linear solve with pivoting                         | `matrix.FactorLU`                                         | reusable factor, `P*A=L*U`, exact residual diagnostics.                                                       |
-| Tall full-column-rank least squares                       | `matrix.SolveLeastSquares` / `FactorQR`                   | Householder QR; numerical rank and `kappa_1(R)` measurement.                                                  |
-| Regularized regression for collinear/wide features        | `ridge.Fit` / `ridge.FitStandardized`                     | Positive-Lambda slope shrinkage, unpenalized intercept, frozen original-unit coefficients.                    |
-| Fitted regression for future physical inputs              | `ols.Fit` / `ols.FitStandardized`                         | Immutable Model, original-unit coefficients, training SSE, no refit.                                          |
-| Symmetric positive-definite system                        | `matrix.FactorCholesky`                                   | accepted symmetric midpoint, SPD check, reusable solves.                                                      |
-| Symmetric spectral analysis                               | `matrix`                                                  | eigenvalues/eigenvectors.                                                                                     |
-| Exact nanosecond cadence checks                           | `series.Validate`                                         | sample count + ordered gap metadata.                                                                          |
-| Dependent-data resampling index ensembles                 | `bootstrap.SampleIndices`                                 | Detached Moving/Circular/Stationary `[][]int`, replay ID, partial completion law.                             |
-| Causal lag/difference/returns                             | `series`                                                  | length-preserving values + validity mask.                                                                     |
-| Fractional equal-duration scalar compression              | `paa.Transform` / `paa.TransformRange`                    | Detached PAA means, exact rational intervals, original window length.                                         |
-| Fixed-alphabet symbolic window encoding                   | `sax.Encode` / `sax.Encoder.Encode`                       | Detached symbol word, policy identity and optional transformed PAA.                                           |
-| Compatible Euclidean symbolic lower bound                 | `sax.Encoder.Mindist` / `sax.MindistValues`               | Lower-bound dissimilarity in the selected transformed space, never a general DTW bound.                       |
-| Direct sample ACF by integer lag                          | `acf.ComputeDefault` / `acf.Compute`                      | One fitted window, explicit denominator convention and pair counts; not causal streaming.                     |
-| Causal Wilder price-strength oscillator                   | `rsi.ComputePeriod` / `rsi.NewPeriod`                     | Aligned Values+Valid or single-owner zero-allocation stream with explicit Reset.                              |
-| SMA-seeded MACD and trend separation                      | `macd.ComputeDefault` / `macd.NewDefault`                 | Three aligned signed outputs; independently gated Line and Signal/Histogram; zero-allocation Push.            |
-| Volume-weighted OHLCV price direction and rolling MFI     | `mfi.ComputeDefault` / `mfi.NewDefault`                   | Finite `[0,100]` feature, one Valid mask, compensated ring and versioned snapshots.                           |
-| Cumulative volume signed by close direction               | `obv.ComputeCandles` / `obv.New`                          | Valid-first-bar zero, Neumaier state, unbounded finite balance and externally protected snapshots.            |
-| Cumulative volume weighted by close position              | `ad.ComputeCandles` / `ad.New`                            | Valid first-bar contribution, bounded multiplier, Neumaier and external replay trust.                         |
-| Reproducible stochastic simulation paths                  | `rng.NewFactory().Stream` / `rng.NewStream`               | Pinned PCG-DXSM, logical path IDs, one goroutine owner per stream.                                            |
-| Independent Monte Carlo paths and exact outcome quantiles | `montecarlo.Run` / `RunWithQuantiles`                     | Path-indexed RNG streams, ordered vector sample moments, bounded worker window and explicit memory admission. |
-| Exact-in-distribution GBM on a chosen time grid           | `gbm.Simulate` / `gbm.SimulateSeeded`                     | Detached strictly positive prices, explicit years/days/seconds and complete/prefix status.                    |
-| Causal asymmetric return variance and bounded forecast    | `gjrgarch.FilterStationary` / `Step` / `ForecastVariance` | One-shock next variance, then stationary expected-variance curve; no price path or VaR guarantee.             |
-| Deterministic constrained Gaussian volatility QMLE        | `gjrgarch.Fit` / `EvaluateGaussianQMLE`                   | Explicit Initial, hard variance floor, analytic score and nonconvergence candidate policy.                    |
-| Compensated Poisson-jump price paths over GBM             | `jumpdiffusion.Simulate` / `SimulateSeeded`               | Exact-in-distribution grid endpoints; bounded Poisson and complete-prefix policy.                             |
-| Complete fixed index windows                              | `series.WindowRanges`                                     | ordered half-open sample-index intervals.                                                                     |
-| Hidden-state streaming causal filtering                   | `hmm.FilterStep` / `FilterDefault`                        | P(z_t given observations through t), no future-sample leakage.                                                |
-| Retrospective hidden-state attribution                    | `hmm.Smooth` / `hmm.Decode`                               | Full-sequence state marginals vs one optimal joint path; different contracts.                                 |
-| Independent categorical/Gaussian sequence training        | `hmm.FitCategorical` / `hmm.FitGaussian`                  | MAP Baum-Welch with no cross-sequence transitions and explicit convergence diagnostics.                       |
-| Scalar sequence alignment                                 | `dtw.Align`                                               | DTW `Result` with distance/reachability.                                                                      |
-| Inclusive-limit scalar alignment                          | `dtw.AlignBounded`                                        | Exact/above-limit/unreachable status.                                                                         |
-| Globally exact window top-K                               | `dtw.Search`                                              | Sorted fixed-length squared-DTW matches.                                                                      |
-| Precomputed local-cost alignment                          | `dtw.AlignCostMatrix`                                     | DTW over caller-owned finite cost surface.                                                                    |
-| Multivariate time-series alignment                        | `dtw.AlignMatrix`                                         | squared-L2 row-cost alignment result.                                                                         |
-| Complete route matrix optimization                        | `tsp.SolveMatrix`                                         | tour, cost, exactness/timeout/ratio metadata.                                                                 |
+| Problem                                                     | Package                                                   | Main output                                                                                                   |
+|:------------------------------------------------------------|:----------------------------------------------------------|:--------------------------------------------------------------------------------------------------------------|
+| Dense algebra                                               | `matrix`                                                  | matrix result with shape/error policy.                                                                        |
+| Stable mean and population/sample variance                  | `stats.Summarize`                                         | detached `Summary`, exact binary-input mean and scaled variance.                                              |
+| Streaming/partitioned moments                               | `stats.Moments`                                           | error-atomic Welford updates and Chan merges.                                                                 |
+| Training-only feature scaling                               | `stats.FitStandardizer`                                   | immutable model and detached fit metadata.                                                                    |
+| Numeric cleaning                                            | `matrix`                                                  | sanitized matrix.                                                                                             |
+| Matrix-native normalization                                 | `matrix`                                                  | matrix-specific transforms under their own contract.                                                          |
+| Covariance/correlation                                      | `matrix`                                                  | stable sample moments and direct Pearson coefficients.                                                        |
+| Fitted PCA subspace and reconstruction                      | `pca.FitWithComponents` / `Model.Reconstruct`             | Frozen orthogonal basis, strict eigenpair gate, original-unit reconstruction.                                 |
+| Square linear solve with pivoting                           | `matrix.FactorLU`                                         | reusable factor, `P*A=L*U`, exact residual diagnostics.                                                       |
+| Tall full-column-rank least squares                         | `matrix.SolveLeastSquares` / `FactorQR`                   | Householder QR; numerical rank and `kappa_1(R)` measurement.                                                  |
+| Regularized regression for collinear/wide features          | `ridge.Fit` / `ridge.FitStandardized`                     | Positive-Lambda slope shrinkage, unpenalized intercept, frozen original-unit coefficients.                    |
+| Fitted regression for future physical inputs                | `ols.Fit` / `ols.FitStandardized`                         | Immutable Model, original-unit coefficients, training SSE, no refit.                                          |
+| Symmetric positive-definite system                          | `matrix.FactorCholesky`                                   | accepted symmetric midpoint, SPD check, reusable solves.                                                      |
+| Symmetric spectral analysis                                 | `matrix`                                                  | eigenvalues/eigenvectors.                                                                                     |
+| Exact nanosecond cadence checks                             | `series.Validate`                                         | sample count + ordered gap metadata.                                                                          |
+| Dependent-data resampling index ensembles                   | `bootstrap.SampleIndices`                                 | Detached Moving/Circular/Stationary `[][]int`, replay ID, partial completion law.                             |
+| Causal lag/difference/returns                               | `series`                                                  | length-preserving values + validity mask.                                                                     |
+| Fractional equal-duration scalar compression                | `paa.Transform` / `paa.TransformRange`                    | Detached PAA means, exact rational intervals, original window length.                                         |
+| Fixed-alphabet symbolic window encoding                     | `sax.Encode` / `sax.Encoder.Encode`                       | Detached symbol word, policy identity and optional transformed PAA.                                           |
+| Compatible Euclidean symbolic lower bound                   | `sax.Encoder.Mindist` / `sax.MindistValues`               | Lower-bound dissimilarity in the selected transformed space, never a general DTW bound.                       |
+| Direct sample ACF by integer lag                            | `acf.ComputeDefault` / `acf.Compute`                      | One fitted window, explicit denominator convention and pair counts; not causal streaming.                     |
+| Causal Wilder price-strength oscillator                     | `rsi.ComputePeriod` / `rsi.NewPeriod`                     | Aligned Values+Valid or single-owner zero-allocation stream with explicit Reset.                              |
+| SMA-seeded MACD and trend separation                        | `macd.ComputeDefault` / `macd.NewDefault`                 | Three aligned signed outputs; independently gated Line and Signal/Histogram; zero-allocation Push.            |
+| Volume-weighted OHLCV price direction and rolling MFI       | `mfi.ComputeDefault` / `mfi.NewDefault`                   | Finite `[0,100]` feature, one Valid mask, compensated ring and versioned snapshots.                           |
+| Cumulative volume signed by close direction                 | `obv.ComputeCandles` / `obv.New`                          | Valid-first-bar zero, Neumaier state, unbounded finite balance and externally protected snapshots.            |
+| Cumulative volume weighted by close position                | `ad.ComputeCandles` / `ad.New`                            | Valid first-bar contribution, bounded multiplier, Neumaier and external replay trust.                         |
+| Reproducible stochastic simulation paths                    | `rng.NewFactory().Stream` / `rng.NewStream`               | Pinned PCG-DXSM, logical path IDs, one goroutine owner per stream.                                            |
+| Independent Monte Carlo paths and exact outcome quantiles   | `montecarlo.Run` / `RunWithQuantiles`                     | Path-indexed RNG streams, ordered vector sample moments, bounded worker window and explicit memory admission. |
+| Exact-in-distribution GBM on a chosen time grid             | `gbm.Simulate` / `gbm.SimulateSeeded`                     | Detached strictly positive prices, explicit years/days/seconds and complete/prefix status.                    |
+| Causal asymmetric return variance and bounded forecast      | `gjrgarch.FilterStationary` / `Step` / `ForecastVariance` | One-shock next variance, then stationary expected-variance curve; no price path or VaR guarantee.             |
+| Fixed-order nonseasonal conditional mean and level forecast | `arima.Fit` / `Model.Forecast`                            | Schur-stable ARMA, anchored d=1/2 levels, marginal innovation-only variance.                                  |
+| Deterministic constrained Gaussian volatility QMLE          | `gjrgarch.Fit` / `EvaluateGaussianQMLE`                   | Explicit Initial, hard variance floor, analytic score and nonconvergence candidate policy.                    |
+| Compensated Poisson-jump price paths over GBM               | `jumpdiffusion.Simulate` / `SimulateSeeded`               | Exact-in-distribution grid endpoints; bounded Poisson and complete-prefix policy.                             |
+| Complete fixed index windows                                | `series.WindowRanges`                                     | ordered half-open sample-index intervals.                                                                     |
+| Hidden-state streaming causal filtering                     | `hmm.FilterStep` / `FilterDefault`                        | P(z_t given observations through t), no future-sample leakage.                                                |
+| Retrospective hidden-state attribution                      | `hmm.Smooth` / `hmm.Decode`                               | Full-sequence state marginals vs one optimal joint path; different contracts.                                 |
+| Independent categorical/Gaussian sequence training          | `hmm.FitCategorical` / `hmm.FitGaussian`                  | MAP Baum-Welch with no cross-sequence transitions and explicit convergence diagnostics.                       |
+| Scalar sequence alignment                                   | `dtw.Align`                                               | DTW `Result` with distance/reachability.                                                                      |
+| Inclusive-limit scalar alignment                            | `dtw.AlignBounded`                                        | Exact/above-limit/unreachable status.                                                                         |
+| Globally exact window top-K                                 | `dtw.Search`                                              | Sorted fixed-length squared-DTW matches.                                                                      |
+| Precomputed local-cost alignment                            | `dtw.AlignCostMatrix`                                     | DTW over caller-owned finite cost surface.                                                                    |
+| Multivariate time-series alignment                          | `dtw.AlignMatrix`                                         | squared-L2 row-cost alignment result.                                                                         |
+| Complete route matrix optimization                          | `tsp.SolveMatrix`                                         | tour, cost, exactness/timeout/ratio metadata.                                                                 |
 
 ### If the goal is documentation or testing
 
@@ -4630,6 +4768,16 @@ return. Never reset to stationary h[0] in the middle of a live holdout.
 error and the convergence flag, then independent predictive/residual validation.
 An expected-variance curve and Gaussian quasi-likelihood are **not** approved
 VaR/ES or margin requirements. See [`GJRGARCH.md`](GJRGARCH.md).
+
+### 13.16. Keep conditional ARIMA fitting, integration and evaluation separate
+
+Choose `(p,d,q)` and the drift interpretation explicitly. Check the
+conditional burn-in and strict Schur stability in the fitted model, preserve
+the original historical level/slope anchors during multi-horizon inference,
+and evaluate on a frozen chronological holdout. Treat `ErrNotConverged` as a
+failed deployment gate even when a candidate model exists. A marginal
+innovation variance cannot replace heldout error calibration or data-lineage
+controls. See [`ARIMA.md`](ARIMA.md) and the [ARIMA FAQ](FAQ_%26_TIPS.md#13r-arima-faq-conditional-gaussian-fit-schur-constraints-and-anchored-forecasts).
 
 ## 14. Where To Go Next
 

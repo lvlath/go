@@ -3,7 +3,7 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/FAQ_&_TIPS.md
-  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch and the wider lvlath package family
+  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima and the wider lvlath package family
   lvlath - FAQ & Tips
 
   Purpose:
@@ -38,6 +38,7 @@
     - GBM exact-in-distribution lognormal paths, explicit time units, safe wide-number increments, and complete-prefix semantics.
     - Merton jump diffusion with compensated drift, bounded exact Poisson kernels, stable RNG order, and complete-prefix safety.
     - GJR-GARCH causal state, asymmetric shock coefficients, stationary forecast, Gaussian QMLE and explicit nonconvergence.
+    - Fixed-order conditional Gaussian ARIMA, Schur roots, burn-in, anchored integration and marginal innovation variance.
 
   License:
     lvlath is licensed under AGPL-3.0-only. See ../LICENSE.
@@ -86,6 +87,7 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
     13o. [GBM FAQ](#13o-gbm-faq-exact-lognormal-steps-units-overflow-and-complete-paths)
     13p. [Jump Diffusion FAQ](#13p-jump-diffusion-faq-merton-compensation-poisson-counts-and-replay)
     13q. [GJR-GARCH FAQ](#13q-gjr-garch-faq-causal-variance-leverage-qmle-and-model-release)
+    13r. [ARIMA FAQ](#13r-arima-faq-conditional-gaussian-fit-schur-constraints-and-anchored-forecasts)
 14. [Builder and gridgraph tips](#14-builder-and-gridgraph-tips)
 15. [Errors and diagnostics](#15-errors-and-diagnostics)
 16. [Determinism and concurrency](#16-determinism-and-concurrency)
@@ -133,6 +135,7 @@ Start with the question, not the algorithm name.
 | “How do I sample positive GBM prices at irregular explicit times?”                                            | `gbm.Simulate` / `SimulateSeeded`     | Exact-in-distribution lognormal endpoints, no implicit annualization, complete or valid prefix.       |
 | “How do I simulate compensated Poisson jump risk over GBM?”                                                   | `jumpdiffusion.Simulate`              | Discrete Poisson counts and aggregated normal log jumps; experimental scenario model.                 |
 | “How does a negative return shock change the next conditional variance?”                                      | `gjrgarch`                            | Immutable asymmetric variance, causal `Step`/`Filter`, first-shock forecast and constrained QMLE.     |
+| “How do I estimate and forecast fixed-order nonseasonal ARIMA levels?”                                        | `arima.Fit` / `Model.Forecast`        | Conditional Gaussian estimand, strict Schur roots, anchored levels and marginal innovation variance.  |
 | “How do I build dependent-data bootstrap index ensembles?”                                                    | `bootstrap.SampleIndices`             | Moving/Circular/Stationary blocks, replay ID and only complete rows.                                  |
 | “How do I infer a hidden operating regime from time-ordered observations?”                                    | `hmm`                                 | Typed causal filtering, smoothing, Viterbi, and independent-sequence EM.                              |
 | “How do I reduce multivariate dimensions without a response variable?”                                        | `pca`                                 | Validated covariance spectrum and a frozen loadings model for holdout inference.                      |
@@ -168,6 +171,7 @@ drive independent stochastic trials    -> MONTECARLO Run / EstimateParallel (ord
 simulate exact lognormal GBM paths     -> GBM Simulate / SimulateSeeded (explicit time units, positive prices)
 simulate compensated Merton jumps      -> JUMPDIFFUSION Simulate / SimulateSeeded (no calibration)
 measure causal asymmetric variance     -> GJRGARCH Filter/Step / ForecastVariance (no price simulation)
+fit a fixed-order conditional mean     -> ARIMA Fit / Model.Forecast (not exact diffuse MLE)
 fit conditional Gaussian QMLE          -> GJRGARCH Fit with explicit Initial (check convergence)
 compute exact empirical path quantiles -> MONTECARLO RunWithQuantiles (budgeted raw storage)
 draw dependent-data index replicates   -> BOOTSTRAP SampleIndices (no statistic or CI)
@@ -4278,6 +4282,236 @@ conditional variance is one input to a risk framework, not its release gate.
 [`gjrgarch/doc.go`](../gjrgarch/doc.go),
 [`gjrgarch/example_test.go`](../gjrgarch/example_test.go) and
 [`examples/gjrgarch/main.go`](../examples/gjrgarch/main.go).
+
+---
+
+## 13r. ARIMA FAQ: Conditional Gaussian Fit, Schur Constraints and Anchored Forecasts
+
+### Q13r.1. When is ARIMA preferable to ACF, GJR-GARCH, GBM or HMM?
+
+Use `arima` for an explicitly chosen fixed-order **conditional mean model**
+for a single, uniformly sampled scalar series, with future level predictions
+and marginal Gaussian innovation variances. `acf` measures retrospective
+fixed-window correlations; it does not fit an ARIMA model. `gjrgarch` models
+causal conditional **variance** of returns, including asymmetric shocks;
+ARIMA's single innovation variance is constant under the fitted model.
+`gbm` and `jumpdiffusion` generate different assumed price-path laws;
+`hmm` models latent regime probabilities. Do not turn any of these into a
+joint pipeline without stating the additional modeling assumption.
+
+### Q13r.2. Which data and orders are allowed?
+
+`Order{AR:p,Difference:d,MA:q}` requires `0<=p,q<=8`, `0<=d<=2`, with
+`Order{}` an ordinary white-noise model. All data must be finite and in
+ascending **sample** order. Time units, exact spacing and missing dates are
+not encoded by `[]float64`: validate those separately (for example via
+`series.Validate`) and reject/segment gaps before using ARIMA.
+
+After differencing, `N=n-d`, the conditioning span is `b=max(p,q)`, and
+`EffectiveN=N-b`. Fitting requires the **strict** threshold
+`EffectiveN > p+q+I(IncludeDrift)+1`. A separately constructed model can
+forecast from `n>=d+b+1` levels even when that is too short to estimate
+all of its coefficients from scratch.
+
+### Q13r.3. Does `Drift` mean unconditional level growth?
+
+No. It is the literal intercept `c` in
+`y[t]=c+sum(phi_i*y[t-i])+epsilon[t]+sum(theta_j*epsilon[t-j])`, where
+`y=Delta^d x`. In stationary differenced coordinates,
+`E[y]=c/(1-sum(phi))`. Thus an AR(1) with `phi=0.5,c=1` has stationary
+expected increment `2`, **not** `1`, when `d=1`. With `d=2`, a nonzero
+intercept can represent an average acceleration, not a constant trend.
+
+`FitWithoutDrift` fixes `c=0`; `FitWithDrift` fits it. `New` does neither:
+it validates explicitly supplied `Parameters.Drift` without an inclusion flag.
+
+### Q13r.4. Why does ARIMA not have an exact Kalman log likelihood?
+
+This package implements **conditional Gaussian** likelihood with
+`b=max(p,q)`. It sets `epsilon[t]=0` for `t<b`, uses those samples only
+as conditioning lag values, and forms SSE solely from `t>=b`.
+`InnovationVariance=SSE/EffectiveN` is the profiled MLE denominator, not
+`n`, `n-1` or a sample-variance degrees-of-freedom correction.
+The reported objective is the **negative total** conditional Gaussian
+log likelihood; `FitResult.LogLikelihood` has the opposite sign.
+
+Exact diffuse state-space/Kalman MLE would use a different likelihood
+initialization and is **not** a hidden fallback. Comparisons with
+statsmodels/R require matching this conditioning, MA sign and drift
+convention first.
+
+### Q13r.5. Why does a constant series fail instead of producing zero variance?
+
+Exactly zero effective SSE would require `log(0)` in a profiled Gaussian
+likelihood and a nonpositive innovation variance. This version has no
+separate deterministic zero-noise model. It returns `ErrSingular` instead
+of inventing a variance floor or marking an undefined objective as success.
+For caller-supplied `New` parameters, `InnovationVariance` must be finite
+and strictly positive.
+
+### Q13r.6. What happens to an AR/MA root at exactly one?
+
+`New` checks the AR polynomial `1-sum(phi_i*z^i)` and MA polynomial
+`1+sum(theta_j*z^j)` using a Schur step-down recurrence. Every reflection
+coefficient must satisfy **strictly** `abs(k)<1`; equality is invalid.
+For AR(1), `phi=1` gives `ErrNonStationary`; for MA(1), `theta=1` gives
+`ErrNonInvertible`. The solver uses `k=tanh(u)` but rejects a candidate
+rounded to exactly +/-1 rather than silently clipping it.
+The MA check uses **negative** theta as its stable-polynomial coefficients;
+reversing this sign would change the model.
+
+### Q13r.7. Where do the integration anchors come from?
+
+From the original observed `history` passed to *this particular* Forecast
+call. For `d=1`, the first predicted level adds the predicted difference
+to `history[n-1]`. For `d=2`, first accumulate against the last **observed
+slope** `history[n-1]-history[n-2]`, then against the last actual level.
+
+```text
+history = [1, 3, 6], d=2, future second differences = [0, 0, 0]
+last level = 6; last slope = 6-3 = 3
+future levels = [9, 12, 15]
+```
+
+Do not initialize either anchor at zero. Do not pass pre-differenced data
+to a model that still specifies `Difference>0`.
+
+### Q13r.8. How is the MA part forecast when future errors are unknown?
+
+`Forecast` recomputes historical conditional residuals using the same
+burn-in as `Fit`. A historical innovation at index `t` can enter a future
+MA term while its lag remains within `q`. **All future innovations are set
+to conditional mean zero**, not recycled from the most recently observed
+error. For `theta=+0.5`, `history=[0,2]` and `b=1`, we obtain
+`epsilon[0]=0`, `epsilon[1]=2`, and the first two predicted means `[1,0]`.
+The sign of the first forecast is a useful independent test.
+
+### Q13r.9. Why are integrated forecast variances increasing?
+
+The stationary ARMA impulse response satisfies `psi[0]=1` and
+`psi[j]=theta[j]+sum(phi_i*psi[j-i])`; apply one cumulative sum for `d=1`
+or two for `d=2` to obtain `Psi[j]`. The marginal horizon-h variance is
+`sigmaSquared*sum_{j=0}^{h-1}Psi[j]^2`. For a random walk with
+`sigmaSquared=2`, the first three values are `[2,4,6]`; for a twice
+integrated unit-variance white noise they are `[1,5,14]`.
+
+These are **innovation-only marginal** uncertainties. There is no
+`H x H` forecast covariance, estimated-parameter uncertainty, joint
+simultaneous-horizon band or tail-risk calibration guarantee.
+
+### Q13r.10. Which convenience wrapper should I select?
+
+| Purpose                                      | Canonical facade                                    |
+|----------------------------------------------|-----------------------------------------------------|
+| Fixed `(p,d,q)` and custom solver controls   | `arima.Fit(ctx, values, arima.Options{...})`        |
+| Explicit differenced-space intercept         | `arima.FitWithDrift(ctx, values, order)`            |
+| Explicitly zero intercept                    | `arima.FitWithoutDrift(ctx, values, order)`         |
+| Stationary ARMA with `d=0`                   | `arima.FitARMA(ctx, values, p, q, includeDrift)`    |
+| Integrated white noise (with optional drift) | `arima.FitIntegrated(ctx, values, d, includeDrift)` |
+| One-step level **and variance**              | `model.ForecastNext(ctx, history)`                  |
+| Several horizons                             | `model.Forecast(ctx, history, horizon)`             |
+
+Wrappers preserve the result type and error classes; none invents an
+alternative likelihood or silently chooses a model order.
+
+### Q13r.11. What does `ErrNotConverged` publish?
+
+A **last accepted** `FitResult` with `Diagnostics.Converged=false` and
+`ErrNotConverged`. It may be inspected for model development, but is not a
+successful deployment candidate. `Diagnostics.Iterations` counts accepted
+L-BFGS steps, and `Objective[0]` is the initialized loss (later values are
+accepted losses only). A failed search does not publish its rejected trial.
+A pre-canceled or subsequently canceled context returns `nil,ctx.Err()`;
+there is no cancellation partial result.
+
+Use:
+
+```go
+fit, err := arima.Fit(ctx, observed, opts)
+if errors.Is(err, arima.ErrNotConverged) {
+    // fit can be a diagnostic candidate; do not deploy it automatically.
+    return
+}
+if err != nil || fit == nil || !fit.Diagnostics.Converged {
+    return
+}
+// The application still needs a holdout and model-approval policy.
+```
+
+This snippet assumes `ctx`, `observed` and `opts` are already defined;
+for a complete runnable pipeline use [`ARIMA.md`](ARIMA.md).
+
+### Q13r.12. What is the error precedence?
+
+For `Fit`: context, order/solver options, nil input, empty input,
+effective sample length, then nonfinite input and numerical evaluation.
+For `Forecast`: context, initialized model and positive horizon, nil/empty
+history, minimum length, nonfinite history, allocation admission, then
+computation. For `New`: order/parameter lengths, finite scalars, positive
+variance, finite coefficient arrays, then Schur stability/invertibility.
+
+A nil context returns `ErrInvalidOption`, while an already canceled context
+returns `ctx.Err()` **before** other validation. Use `errors.Is`; no failure
+is diagnosed through substrings in error text. `ErrNonFinite` describes
+invalid **caller data**; `ErrOverflow` describes invalid **computed data**.
+
+### Q13r.13. Are returned arrays detached and is the model thread-safe?
+
+Yes. `New` owns copies of input coefficient slices. `Model.Parameters()`
+returns new AR/MA slices; returned forecast means/variances and accepted
+objective histories are detached. A `Model` is immutable and independent
+Forecast calls can execute concurrently with stable caller-owned inputs.
+The caller may **not** mutate a history slice during a Forecast call.
+
+`FitResult.IsNil()` and `ForecastResult.IsNil()` test **pointer presence
+only**, including when a typed-nil pointer is stored in `core.Nilable`.
+They do not test convergence or field completeness.
+
+### Q13r.14. Is `Model.ID()` proof of source-data integrity?
+
+No. It is a deterministic SHA-256 **content identifier** of the model
+method/version, order, canonical binary64 parameters, drift and variance.
+`+0` and `-0` have identical canonical floating encoding. It does not
+include the original training feed, timestamp ledger, data permissions,
+authorization or external checkpoint content. Authenticate externally and
+keep a separate model registry/source-lineage record. A nil or zero-value
+model returns an empty ID; a zero-value model cannot forecast.
+
+### Q13r.15. Can I append future observations and still claim prefix causality?
+
+A forecast at a fixed origin reads only the history supplied to that call.
+To evaluate a chronological holdout, fit on a **frozen training prefix**;
+for each next observation, call `ForecastNext` on the prefix ending just
+*before* it, record the prediction, and only then reveal the observation.
+Using the whole dataset before splitting or conditioning on a future
+observation invalidates a predictive backtest. A new origin intentionally
+has more information and therefore may produce a different forecast.
+
+### Q13r.16. Is the forecast computation linear in horizon memory?
+
+Yes. The horizon impulse buffer and marginal variance arrays require
+`O(H)` space. Historical residual reconstruction adds `O(N)` workspace,
+and total forecast time is `O((N+H)*(p+q+d+1))`. The implementation
+never forms a dense `H x H` covariance matrix. Avoid interpreting this as
+a guaranteed memory limit for arbitrarily large H; allocation-size guards
+cannot predict operating-system OOM.
+
+### Q13r.17. What should I check before approving an ARIMA baseline?
+
+Establish cadence and missing-data policy; justify `p,d,q` and drift;
+require `err==nil` **and** convergence; test that residual behavior is
+adequately modeled on independent chronological holdout data; compare to
+a naive persistence or seasonal baseline; inspect stability across
+recalibration windows and extreme numerical regimes; evaluate uncertainty
+coverage **without** treating innovation variance as full parameter risk;
+and record an externally authenticated model/data revision. Application
+thresholds, economic consequences and approvals remain outside ARIMA.
+
+**Further reading:** [`ARIMA.md`](ARIMA.md),
+[`arima/doc.go`](../arima/doc.go),
+[`arima/example_test.go`](../arima/example_test.go),
+[`examples/arima/main.go`](../examples/arima/main.go),
+[`ACF.md`](ACF.md) and [`SERIES.md`](SERIES.md).
 
 ---
 

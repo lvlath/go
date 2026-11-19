@@ -217,3 +217,85 @@ func ExampleModel_Parameters_releaseFingerprint() {
 		forecast.Mean[0])
 	// Output: release sha256=true unchanged=true forecast-next=1.580
 }
+
+// ExampleModel_ForecastNext_chronologicalWaterDemandAudit demonstrates a frozen
+// forecasting model evaluated on a later, strictly chronological observation stream.
+// A municipal water-operations team compares a drift-based daily demand baseline
+// with simple persistence before it considers changing pump-capacity schedules.
+//
+// Implementation:
+//   - Stage 1: fit an integrated-noise baseline on a fixed initial training window.
+//   - Stage 2: forecast each held-out day from only observations preceding that day.
+//   - Stage 3: compare both absolute-error baselines and inspect marginal coverage.
+//
+// Behavior highlights:
+//   - The same immutable model is used at every origin; no holdout refit occurs.
+//   - The next observation is revealed only after that day's forecast is recorded.
+//   - The Gaussian interval is an innovation-only diagnostic, not a service SLA.
+//
+// Inputs:
+//   - Fixed illustrative daily cubic-meter demand readings with uniform day spacing.
+//
+// Returns:
+//   - Deterministic holdout MAEs, Gaussian coverage count, and model identity check.
+//
+// Errors:
+//   - Fit/Forecast errors are reported and stop the demonstration without a partial score.
+//
+// Determinism:
+//   - Origins are visited in ascending sample index; only fixed binary64 data are read.
+//
+// Complexity:
+//   - Time O(T^2) for rolling one-step forecasts that rebuild a T-length
+//     conditional history per origin; Space O(T) peak per independent call.
+//
+// Notes:
+//   - Values are a synthetic operational fixture, not audited metering records.
+//   - Coverage on this small holdout is diagnostic and has no population guarantee.
+//
+// AI-Hints:
+//   - Do not fit on the entire series and then score its training observations
+//     as holdout predictions: that would leak future parameter information.
+//   - In production, validate calendar cadence and freeze the training split.
+func ExampleModel_ForecastNext_chronologicalWaterDemandAudit() {
+	readingsM3 := []float64{
+		550, 555, 559, 563, 568, 572, 575, 581, 584,
+		589, 594, 596, 601, 605, 609, 614, 617, 623,
+		627, 632, 636, 640, 645, 649, 654, 657, 662,
+		668, 671, 675, 681, 686, 689, 693, 697, 702,
+	}
+	const trainingDays = 26
+	const gaussian95 = 1.96
+	ctx := context.Background()
+
+	// Fit only the observations available before the first evaluated day.
+	fit, err := arima.FitIntegrated(ctx, readingsM3[:trainingDays], 1, true)
+	if err != nil {
+		fmt.Println("demand fit failed:", err)
+		return
+	}
+	frozenID := fit.Model.ID()
+
+	var fittedAbsoluteError, persistenceAbsoluteError float64
+	covered := 0
+	for next := trainingDays; next < len(readingsM3); next++ {
+		// history ends immediately before the observation being evaluated.
+		forecast, forecastErr := fit.Model.ForecastNext(ctx, readingsM3[:next])
+		if forecastErr != nil {
+			fmt.Println("demand forecast failed:", forecastErr)
+			return
+		}
+		actual := readingsM3[next]
+		lastObserved := readingsM3[next-1]
+		fittedAbsoluteError += math.Abs(actual - forecast.Mean[0])
+		persistenceAbsoluteError += math.Abs(actual - lastObserved)
+		if math.Abs(actual-forecast.Mean[0]) <= gaussian95*math.Sqrt(forecast.Variance[0]) {
+			covered++
+		}
+	}
+	holdoutDays := len(readingsM3) - trainingDays
+	fmt.Printf("water holdout=%d forecast-MAE=%.2f persistence-MAE=%.2f within95=%d model-frozen=%t\n",
+		holdoutDays, fittedAbsoluteError/float64(holdoutDays),
+		persistenceAbsoluteError/float64(holdoutDays), covered, fit.Model.ID() == frozenID)
+	// Output: water holdout=10 forecast-MAE=0.90 persistence-MAE=4.50 within95=10 model-frozen=true
+}
