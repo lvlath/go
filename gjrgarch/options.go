@@ -28,7 +28,29 @@ const (
 //   - Stage 2: replace explicit zero defaults without inventing an Initial model.
 //   - Stage 3: validate Initial and the stricter optimization feasible polytope.
 //
-// Complexity: Time O(1), Space O(1).
+// Behavior highlights:
+//   - No random or data-dependent parameter guess is created.
+//
+// Inputs:
+//   - o: caller-owned value copy; MaxIterations/Tolerance/Floor nonnegative and finite where floating.
+//
+// Returns:
+//   - Options: normalized independent value on success, zero Options on error.
+//
+// Errors:
+//   - ErrInvalidOption plus preserved parameter cause via errors.Join where applicable.
+//
+// Determinism:
+//   - Precedence is options before observations, with fixed field and constraint checks.
+//
+// Complexity:
+// Time O(1), Space O(1).
+//
+// Notes:
+//   - New accepts valid stationary models below QMLE floor; Fit starts at the stricter feasible point.
+//
+// AI-Hints:
+//   - Never infer Initial from returns when the caller did not supply it.
 func prepareOptions(o Options) (Options, error) {
 	if o.MaxIterations < 0 || !finite(o.Tolerance) || o.Tolerance < 0 ||
 		!finite(o.VarianceFloor) || o.VarianceFloor < 0 {

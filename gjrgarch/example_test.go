@@ -32,13 +32,15 @@ func equityStressReturns() []float64 {
 //
 // Scenario:
 //   - A portfolio risk desk receives daily close-to-close equity returns.
-//   - A sudden -3% shock is tested against +3%, using an identical prior variance.
+//   - Equal-magnitude +/-3% *innovations* are tested around the model mean
+//     using the identical prior variance; this isolates Gamma from Mean.
 //   - The volatility difference is an exposure-control input, not an order signal.
 //
 // Process:
 //   - Filter a fixed 40-session stress-like path from stationary initialization.
 //   - Construct two posterior states differing only in the last signed innovation.
-//   - Compare the next conditional volatilities and report basis-point difference.
+//   - Compare the next conditional volatilities, basis-point gap, and
+//     exposure-scaled sigma difference for a $75m gross equity position.
 //
 // Policy:
 //   - Fixed illustrative returns, not an actual S&P 500 historical dataset.
@@ -59,12 +61,17 @@ func ExampleModel_equityGapStress() {
 		return
 	}
 	latestVariance := variances[len(variances)-1]
-	fall, err := model.InitialState(-0.03, latestVariance)
+	// Center the stress returns around mu so the *innovations* have exactly
+	// equal absolute magnitude. Comparing raw +/-3% returns with nonzero Mean
+	// would incorrectly mix leverage with a small difference in shock sizes.
+	const stressInnovation = 0.03
+	mean := model.Parameters().Mean
+	fall, err := model.InitialState(mean-stressInnovation, latestVariance)
 	if err != nil {
 		fmt.Println("invalid downside scenario")
 		return
 	}
-	rebound, err := model.InitialState(0.03, latestVariance)
+	rebound, err := model.InitialState(mean+stressInnovation, latestVariance)
 	if err != nil {
 		fmt.Println("invalid upside scenario")
 		return
@@ -81,10 +88,14 @@ func ExampleModel_equityGapStress() {
 	}
 	// Convert decimal daily sigma into basis points of index return.
 	gapBasisPoints := math.Round((math.Sqrt(fallVariance) - math.Sqrt(reboundVariance)) * 10000)
-	fmt.Printf("equity sessions=%d downside_vol_higher=%t gap_bp=%.0f\n",
-		len(observations), fallVariance > reboundVariance, gapBasisPoints)
+	const grossExposureUSD = 75_000_000.0
+	// Translate a difference in one-session sigma to a cash-equivalent
+	// exposure-sensitivity, NOT to an approved margin or VaR requirement.
+	extraSigmaExposureUSD := grossExposureUSD * (math.Sqrt(fallVariance) - math.Sqrt(reboundVariance))
+	fmt.Printf("equity sessions=%d downside_vol_higher=%t gap_bp=%.0f extra_sigma_exposure_kusd=%.0f\n",
+		len(observations), fallVariance > reboundVariance, gapBasisPoints, extraSigmaExposureUSD/1000)
 	// Output:
-	// equity sessions=40 downside_vol_higher=true gap_bp=39
+	// equity sessions=40 downside_vol_higher=true gap_bp=38 extra_sigma_exposure_kusd=282
 }
 
 // ExampleModel_cryptoCollateralFeed models a margin-monitoring input from
@@ -100,6 +111,7 @@ func ExampleModel_equityGapStress() {
 // Process:
 //   - Start with an explicitly chosen pre-feed conditional variance.
 //   - Consume fixed illustrative five-minute return bars using State and Step.
+//   - Persist a value-state checkpoint and replay the remaining exact bar suffix.
 //   - Query each next-bar variance with the no-slice ForecastNextVariance facade.
 func ExampleModel_cryptoCollateralFeed() {
 	model, err := gjrgarch.New(gjrgarch.Parameters{
@@ -125,6 +137,8 @@ func ExampleModel_cryptoCollateralFeed() {
 	}
 	const volatilityReviewLevel = 0.009 // 0.9% conditional sigma per five-minute bar.
 	alerts := 0
+	const checkpointAfterBar = 23
+	var checkpoint gjrgarch.State
 	for i, observed := range bars {
 		if i > 0 {
 			state, err = model.Step(state, observed)
@@ -141,10 +155,27 @@ func ExampleModel_cryptoCollateralFeed() {
 		if math.Sqrt(variance) >= volatilityReviewLevel {
 			alerts++
 		}
+		if i == checkpointAfterBar {
+			// The application must persist the source bar cursor with this value.
+			// ModelID alone does not authenticate checkpoint provenance.
+			checkpoint = state
+		}
 	}
-	fmt.Printf("futures bars=%d next_bar_review_events=%d causal_steps=%d\n", len(bars), alerts, state.Steps)
+	// Simulate an independent process restart at the stored source offset.
+	// The immutable model can be shared; the copied State advances privately.
+	replayed := checkpoint
+	for _, observed := range bars[checkpointAfterBar+1:] {
+		replayed, err = model.Step(replayed, observed)
+		if err != nil {
+			fmt.Println("checkpoint replay failed")
+			return
+		}
+	}
+	parity := replayed == state
+	fmt.Printf("futures bars=%d next_bar_review_events=%d causal_steps=%d replay_identical=%t\n",
+		len(bars), alerts, state.Steps, parity)
 	// Output:
-	// futures bars=48 next_bar_review_events=18 causal_steps=48
+	// futures bars=48 next_bar_review_events=18 causal_steps=48 replay_identical=true
 }
 
 // ExampleModel_tenDayLiquidityBuffer constructs a forecast-based liquidity
@@ -159,7 +190,8 @@ func ExampleModel_cryptoCollateralFeed() {
 // Process:
 //   - Forecast from a known downside observation with a known variance.
 //   - Add expected daily variances and compute a 99% Gaussian planning proxy.
-//   - Compare that proxy against a budget chosen outside the algorithm.
+//   - Convert the proxy to cash on a fixed $25m equity exposure and compare
+//     against a review budget chosen outside the algorithm.
 func ExampleModel_tenDayLiquidityBuffer() {
 	model, err := gjrgarch.New(gjrgarch.Parameters{
 		Omega: 0.000018, Alpha: 0.09, Gamma: 0.14, Beta: 0.72,
@@ -185,10 +217,78 @@ func ExampleModel_tenDayLiquidityBuffer() {
 	const gaussian99Quantile = 2.3263478740408408
 	const tenDayLossReviewLevel = 0.12 // 12% equity-exposure loss proxy.
 	proxy := gaussian99Quantile * math.Sqrt(cumulativeVariance)
-	fmt.Printf("treasury horizon=%d day1_vol=%.1f%% gaussian_proxy=%.1f%% review=%t\n",
-		len(curve), 100*math.Sqrt(curve[0]), 100*proxy, proxy > tenDayLossReviewLevel)
+	const grossEquityExposureUSD = 25_000_000.0
+	// Treasury can compare this approximate risk-exposure sensitivity with a
+	// *separate* liquidity budget; do not call it model-certified 99% VaR.
+	planningCashUSD := grossEquityExposureUSD * proxy
+	fmt.Printf("treasury horizon=%d day1_vol=%.1f%% gaussian_proxy=%.1f%% planning_cash_musd=%.2f review=%t\n",
+		len(curve), 100*math.Sqrt(curve[0]), 100*proxy, planningCashUSD/1_000_000,
+		proxy > tenDayLossReviewLevel)
 	// Output:
-	// treasury horizon=10 day1_vol=2.1% gaussian_proxy=13.1% review=true
+	// treasury horizon=10 day1_vol=2.1% gaussian_proxy=13.1% planning_cash_musd=3.28 review=true
+}
+
+// chronologicalGaussianLoss scores one held-out return at a time from the
+// training-terminal posterior of an immutable candidate model. Unlike a fresh
+// EvaluateGaussianQMLE call on the held-out slice, this preserves the causal
+// pre-holdout volatility history instead of resetting to stationary h[0].
+//
+// Implementation:
+//   - Stage 1: filter only training returns and construct their terminal State.
+//   - Stage 2: score each held-out innovation using the variance forecast BEFORE Step.
+//   - Stage 3: update the posterior and average the finite conditional density loss.
+//
+// Inputs:
+//   - ctx: active context; model: validated immutable model.
+//   - training/heldOut: fixed, nonempty chronological return slices, same units/frequency.
+//
+// Returns:
+//   - float64: negative average held-out Gaussian conditional log-score.
+//   - error: state, arithmetic, or context failure; no partial score on error.
+//
+// Determinism:
+//   - One ascending training traversal followed by one ascending held-out traversal.
+//
+// Complexity:
+//   - Time O(T+H), Space O(T) from the detached training variance series.
+//
+// Notes:
+//   - This is application-level predictive scoring, not Gaussian QMLE refitting.
+//
+// AI-Hints:
+//   - Never call Step before scoring the return it consumes: that is look-ahead leakage.
+func chronologicalGaussianLoss(ctx context.Context, model *gjrgarch.Model, training, heldOut []float64) (float64, error) {
+	trainingVariance, err := model.FilterStationary(ctx, training)
+	if err != nil {
+		return 0, err
+	}
+	state, err := model.InitialState(training[len(training)-1], trainingVariance[len(trainingVariance)-1])
+	if err != nil {
+		return 0, err
+	}
+	mean := model.Parameters().Mean
+	totalLoss := 0.0
+	for _, observed := range heldOut {
+		variance, forecastErr := model.ForecastNextVariance(state)
+		if forecastErr != nil {
+			return 0, forecastErr
+		}
+		residual := observed - mean
+		standardized := residual / math.Sqrt(variance)
+		contribution := 0.5 * (math.Log(2*math.Pi) + math.Log(variance) + standardized*standardized)
+		if math.IsNaN(contribution) || math.IsInf(contribution, 0) {
+			return 0, gjrgarch.ErrOverflow
+		}
+		totalLoss += contribution
+		if math.IsNaN(totalLoss) || math.IsInf(totalLoss, 0) {
+			return 0, gjrgarch.ErrOverflow
+		}
+		state, err = model.Step(state, observed)
+		if err != nil {
+			return 0, err
+		}
+	}
+	return totalLoss / float64(len(heldOut)), nil
 }
 
 // ExampleFit_modelValidationGate evaluates a frozen candidate against a strictly
@@ -202,6 +302,8 @@ func ExampleModel_tenDayLiquidityBuffer() {
 //
 // Process:
 //   - Obtain the candidate and verify its training objective did not deteriorate.
+//   - Compare chronological holdout loss against the explicit pre-fit baseline.
+//   - Show why a better *training* objective can still worsen held-out loss.
 //   - Filter training returns once and construct their terminal posterior state.
 //   - Predict each held-out variance before advancing with that held-out return.
 //   - Keep the release gate closed until convergence and independent risk review.
@@ -228,42 +330,31 @@ func ExampleFit_modelValidationGate() {
 		fmt.Println("candidate missing")
 		return
 	}
-	// The last in-sample h belongs to the last in-sample return. The first
-	// held-out forecast must incorporate that return before scoring day one.
-	trainingVariances, err := fit.Model.FilterStationary(ctx, training)
+	// Evaluate the accepted model against a frozen, non-optimized baseline.
+	// The baseline was the *caller-selected* initial point, not data-derived.
+	baseline, err := gjrgarch.New(initial)
 	if err != nil {
-		fmt.Println("training history invalid")
+		fmt.Println("baseline invalid")
 		return
 	}
-	state, err := fit.Model.InitialState(training[len(training)-1], trainingVariances[len(trainingVariances)-1])
+	baselineLoss, err := chronologicalGaussianLoss(ctx, baseline, training, heldOut)
 	if err != nil {
-		fmt.Println("terminal posterior invalid")
+		fmt.Println("baseline holdout failed")
 		return
 	}
-	mean := fit.Model.Parameters().Mean
-	averageHeldOutLoss := 0.0
-	for _, observed := range heldOut {
-		variance, forecastErr := fit.Model.ForecastNextVariance(state)
-		if forecastErr != nil {
-			fmt.Println("held-out variance unavailable")
-			return
-		}
-		innovation := (observed - mean) / math.Sqrt(variance)
-		averageHeldOutLoss += 0.5 * (math.Log(2*math.Pi) + math.Log(variance) + innovation*innovation)
-		state, err = fit.Model.Step(state, observed)
-		if err != nil {
-			fmt.Println("held-out posterior invalid")
-			return
-		}
+	averageHeldOutLoss, err := chronologicalGaussianLoss(ctx, fit.Model, training, heldOut)
+	if err != nil {
+		fmt.Println("candidate holdout failed")
+		return
 	}
-	averageHeldOutLoss /= float64(len(heldOut))
 	history := fit.Diagnostics.Objective
 	objectiveNotWorse := history[len(history)-1] <= history[0]
 	deployable := fitErr == nil && fit.Diagnostics.Converged
-	fmt.Printf("training=%d holdout=%d objective_not_worse=%t heldout_nll=%.3f deployable=%t\n",
-		len(training), len(heldOut), objectiveNotWorse, averageHeldOutLoss, deployable)
+	fmt.Printf("training=%d holdout=%d objective_not_worse=%t heldout_nll=%.3f beats_baseline=%t deployable=%t\n",
+		len(training), len(heldOut), objectiveNotWorse, averageHeldOutLoss,
+		averageHeldOutLoss < baselineLoss, deployable)
 	// Output:
-	// training=40 holdout=16 objective_not_worse=true heldout_nll=-2.724 deployable=false
+	// training=40 holdout=16 objective_not_worse=true heldout_nll=-2.724 beats_baseline=false deployable=false
 }
 
 // ExampleFit_failClosedRiskDeployment illustrates release governance with a
@@ -305,9 +396,15 @@ func ExampleFit_failClosedRiskDeployment() {
 		fmt.Println("incumbent forecast failed")
 		return
 	}
-	fmt.Printf("release_blocked=%t stale_state_rejected=%t incumbent_next_variance_positive=%t\n",
+	const incumbentExposureUSD = 50_000_000.0
+	const gaussianReviewQuantile = 2.3263478740408408
+	// This scenario reserve is an application-owned planning sensitivity,
+	// not a claim that QMLE alone validates the Gaussian tail distribution.
+	oneBarReviewUSD := incumbentExposureUSD * gaussianReviewQuantile * math.Sqrt(fallbackVariance)
+	fmt.Printf("release_blocked=%t stale_state_rejected=%t incumbent_sigma=%.2f%% review_cash_musd=%.2f\n",
 		errors.Is(fitErr, gjrgarch.ErrNotConverged),
-		errors.Is(stateErr, gjrgarch.ErrStateVersion), fallbackVariance > 0)
+		errors.Is(stateErr, gjrgarch.ErrStateVersion), 100*math.Sqrt(fallbackVariance),
+		oneBarReviewUSD/1_000_000)
 	// Output:
-	// release_blocked=true stale_state_rejected=true incumbent_next_variance_positive=true
+	// release_blocked=true stale_state_rejected=true incumbent_sigma=1.80% review_cash_musd=2.09
 }

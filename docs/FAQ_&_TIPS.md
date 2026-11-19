@@ -3,7 +3,7 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/FAQ_&_TIPS.md
-  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion and the wider lvlath package family
+  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch and the wider lvlath package family
   lvlath - FAQ & Tips
 
   Purpose:
@@ -37,6 +37,7 @@
     - Monte Carlo per-path RNG replay, 2W scheduling bounds, stable moments, exact quantiles, byte admission and interruption prefixes.
     - GBM exact-in-distribution lognormal paths, explicit time units, safe wide-number increments, and complete-prefix semantics.
     - Merton jump diffusion with compensated drift, bounded exact Poisson kernels, stable RNG order, and complete-prefix safety.
+    - GJR-GARCH causal state, asymmetric shock coefficients, stationary forecast, Gaussian QMLE and explicit nonconvergence.
 
   License:
     lvlath is licensed under AGPL-3.0-only. See ../LICENSE.
@@ -84,6 +85,7 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
     13n. [Monte Carlo FAQ](#13n-monte-carlo-faq-replay-scheduling-numerics-and-partial-results)
     13o. [GBM FAQ](#13o-gbm-faq-exact-lognormal-steps-units-overflow-and-complete-paths)
     13p. [Jump Diffusion FAQ](#13p-jump-diffusion-faq-merton-compensation-poisson-counts-and-replay)
+    13q. [GJR-GARCH FAQ](#13q-gjr-garch-faq-causal-variance-leverage-qmle-and-model-release)
 14. [Builder and gridgraph tips](#14-builder-and-gridgraph-tips)
 15. [Errors and diagnostics](#15-errors-and-diagnostics)
 16. [Determinism and concurrency](#16-determinism-and-concurrency)
@@ -130,6 +132,7 @@ Start with the question, not the algorithm name.
 | “How do I execute many independent stochastic paths with identical full-run statistics across worker counts?” | `montecarlo.Run` / `EstimateParallel` | Per-path RNG, ordered `stats.Moments`, bounded 2W dispatch and strict error/prefix law.               |
 | “How do I sample positive GBM prices at irregular explicit times?”                                            | `gbm.Simulate` / `SimulateSeeded`     | Exact-in-distribution lognormal endpoints, no implicit annualization, complete or valid prefix.       |
 | “How do I simulate compensated Poisson jump risk over GBM?”                                                   | `jumpdiffusion.Simulate`              | Discrete Poisson counts and aggregated normal log jumps; experimental scenario model.                 |
+| “How does a negative return shock change the next conditional variance?”                                      | `gjrgarch`                            | Immutable asymmetric variance, causal `Step`/`Filter`, first-shock forecast and constrained QMLE.     |
 | “How do I build dependent-data bootstrap index ensembles?”                                                    | `bootstrap.SampleIndices`             | Moving/Circular/Stationary blocks, replay ID and only complete rows.                                  |
 | “How do I infer a hidden operating regime from time-ordered observations?”                                    | `hmm`                                 | Typed causal filtering, smoothing, Viterbi, and independent-sequence EM.                              |
 | “How do I reduce multivariate dimensions without a response variable?”                                        | `pca`                                 | Validated covariance spectrum and a frozen loadings model for holdout inference.                      |
@@ -164,6 +167,8 @@ compute candle close-location flow     -> AD ComputeCandles / Stream.Push (first
 drive independent stochastic trials    -> MONTECARLO Run / EstimateParallel (ordered vector moments)
 simulate exact lognormal GBM paths     -> GBM Simulate / SimulateSeeded (explicit time units, positive prices)
 simulate compensated Merton jumps      -> JUMPDIFFUSION Simulate / SimulateSeeded (no calibration)
+measure causal asymmetric variance     -> GJRGARCH Filter/Step / ForecastVariance (no price simulation)
+fit conditional Gaussian QMLE          -> GJRGARCH Fit with explicit Initial (check convergence)
 compute exact empirical path quantiles -> MONTECARLO RunWithQuantiles (budgeted raw storage)
 draw dependent-data index replicates   -> BOOTSTRAP SampleIndices (no statistic or CI)
 retrospective regime audit             -> HMM Smooth / Decode (future-conditioned)
@@ -4099,7 +4104,7 @@ cross-checked against the NumPy 2.2.0 source, but neither NumPy nor Python is
 linked, imported or installed to run the model. `THIRD_PARTY_NOTICES.txt` records
 source attribution and the NumPy BSD-3-Clause notice, **not** a dependency.
 Do not remove it without a provenance/licensing review of the adapted PTRS
-source. See [`JUMPDIFFUSION.md`](../../../../Downloads/lvlath_jumpdiffusion_phase23_docs_sync%202/docs/JUMPDIFFUSION.md#13-algorithm-provenance-and-license-notices).
+source. See [`JUMPDIFFUSION.md`](JUMPDIFFUSION.md#13-algorithm-provenance-and-license-notices).
 
 ### Q13p.24. What tests protect the mathematical contract?
 
@@ -4112,10 +4117,167 @@ test **cannot prove** distributional correctness by itself; independent
 acceptance oracles and algebraic expectation identities are also necessary.
 
 For exact formulas, sample code and the complete error matrix, see
-[`docs/JUMPDIFFUSION.md`](../../../../Downloads/lvlath_jumpdiffusion_phase23_docs_sync%202/docs/JUMPDIFFUSION.md),
-[`jumpdiffusion/doc.go`](../../../../Downloads/lvlath_jumpdiffusion_phase23_docs_sync%202/jumpdiffusion/doc.go),
+[`docs/JUMPDIFFUSION.md`](JUMPDIFFUSION.md),
+[`jumpdiffusion/doc.go`](../jumpdiffusion/doc.go),
 [`jumpdiffusion/example_test.go`](../jumpdiffusion/example_test.go)
 and [`GBM FAQ`](#13o-gbm-faq-exact-lognormal-steps-units-overflow-and-complete-paths).
+
+## 13q. GJR-GARCH FAQ: Causal Variance, Leverage, QMLE and Model Release
+
+### Q13q.1. When should I use GJR-GARCH rather than GBM, Merton jumps, ACF or HMM?
+
+Use `gjrgarch` to **measure conditional return variance and its sign-dependent
+persistence**. `gbm` and `jumpdiffusion` simulate price-path distributions
+under explicitly chosen stochastic assumptions; `acf` measures
+*fixed-window* lag correlation and is not a causal volatility filter; `hmm`
+models latent states with filtering and future-conditioned smoothing. None of
+these packages automatically establishes an empirical GJR fit. Combining them
+requires an application-owned modeling assumption, not a hidden adapter.
+
+### Q13q.2. Why does `Filter` return the initial variance as its first element?
+
+The contract defines `h[t]` as the variance **assigned to return[t] before
+return[t] is observed**. Thus `h[0]=initialVariance`, and its first residual
+may influence only `h[1]`. Using `epsilon[0]` inside `h[0]` would leak the
+observation into its own risk estimate. Appending a valid future suffix cannot
+revise an existing variance prefix when the starting variance is fixed.
+
+### Q13q.3. What is stored in `State` and how do I resume an online filter?
+
+`InitialState(firstReturn,h0)` constructs `State{LastResidual:epsilon[0],
+LastVariance:h[0],Steps:1,ModelID:...}`. `Step(previous,nextReturn)` consumes
+exactly one later return and creates the next independent value. Copy the
+previous `State` and persist the feed's source offset **outside this package**.
+On restart, validate the feed offset and model version before continuing.
+A zero `State`, mismatched ID, nonfinite variance/residual, `h<=0` or `Steps=0`
+returns `ErrStateVersion`; do not invent a posterior from zero-value fields.
+The identity is a **model-compatibility hash**, not authentication of a mutable
+external checkpoint.
+
+### Q13q.4. Does the current return determine its own predicted variance?
+
+**No.** For each call:
+
+```text
+old State(epsilon[t],h[t])
+    -> h[t+1] = Omega + shock(epsilon[t]) + Beta*h[t]
+    -> epsilon[t+1] = nextObservedReturn - Mean
+    -> new State(epsilon[t+1],h[t+1])
+```
+
+The incoming residual must be recorded only after the next variance is fixed.
+`ForecastNextVariance(oldState)` uses the same prior shock without changing
+state; it can be queried *before* the next market observation arrives.
+
+### Q13q.5. Is a negative Gamma invalid or a mistake?
+
+Not necessarily. Valid parameters satisfy `Omega>0`, `Alpha>=0`, `Beta>=0`,
+`Alpha+Gamma>=0`, and `rho=Alpha+Beta+Gamma/2<1`. Negative `Gamma`
+is legitimate when downside shocks produce a **smaller** subsequent conditional
+variance response than equal-sized positive shocks. The indicator is strictly
+`epsilon<0`, so `+0` and `-0` use the nonnegative-shock coefficient.
+
+### Q13q.6. Why is persistence `Alpha+Beta+Gamma/2` instead of `Alpha+Beta+Gamma`?
+
+For **symmetric**, unit-variance standardized innovations,
+`E[z²*I(z<0)]=1/2`. Only half the asymmetric shock contribution enters
+the unconditional second-moment recurrence. The resulting stationary level
+is `Omega/(1-rho)`. For skewed innovation distributions the expectation must
+be rederived; GJR-GARCH v1 deliberately does not support a skewed likelihood.
+
+### Q13q.7. Why is the first forecast different from the remaining horizons?
+
+The first forecast is based on the **known** last residual: its exact sign and
+magnitude are in `State`. Later residuals are unknown. `ForecastVariance`
+therefore uses the expected recursion `Omega+rho*h` from the second forecast
+onward. `ForecastVolatility` returns `sqrt(E[h])`, not `E[sqrt(h)]` or a
+full predictive distribution. A 10-day Gaussian `z*sqrt(sum(forecastVariances))`
+is a planning proxy, not a calibrated tail-risk or VaR/ES guarantee.
+
+### Q13q.8. Does a variance floor repair an otherwise invalid fit?
+
+**No.** `VarianceFloor` is a hard feasibility bound in **squared return
+units**. Fit requires `Omega>=VarianceFloor` and nonnegative shock/lag
+coefficients; a computed variance below the floor causes candidate rejection.
+Clamping the likelihood's `h[t]` after computation would change the objective,
+its derivatives, and the stochastic model. `New` has no QMLE floor requirement;
+therefore constructing a valid `Model` does **not** prove that the model is a
+feasible candidate for a particular Fit policy.
+
+### Q13q.9. How is QMLE different from maximum likelihood and from the fit result?
+
+The Gaussian conditional log-likelihood is used as a **quasi**-likelihood:
+innovations need not actually be Gaussian for it to be a useful estimation
+criterion under additional assumptions. The objective is *negative average*
+log-likelihood, while `FitResult.LogLikelihood` is the **total**, nonnegated
+quantity. `Diagnostics.Objective[0]` corresponds to the requested initial
+point; later entries correspond only to accepted optimizer moves. A lower
+training objective does not certify predictive accuracy or standard errors.
+
+### Q13q.10. Why does the initial variance affect the analytic gradient?
+
+Every evaluated parameter candidate uses `h[0]=Omega/(1-rho)`, not a frozen
+variance from the initial solver iterate. Changing `Omega`, `Alpha`, `Gamma`
+or `Beta` changes both the current h[0] and every later recurrence. The
+analytic score differentiates those dependencies and the explicit
+`epsilon[t]=r[t]-Mean` derivative. Dropping the initial derivative may still
+produce superficially decreasing objectives, but it is **not** the derivative
+of the documented likelihood.
+
+### Q13q.11. Can `EvaluateGaussianQMLE` score held-out data?
+
+It evaluates a **fixed candidate** with a fresh stationary `h[0]` and returns
+`Objective`, `LogLikelihood`, `Gradient`, and `Observations`; it neither fits
+parameters nor continues an earlier posterior. This is useful for an
+independently initialized window or numeric-gradient audit, **not** for an
+already-live conditional log-score. For a chronological holdout, continue
+from the last training State and score each observation using the variance
+forecast *before* updating with that same observation. The runnable pipeline
+is in [`GJRGARCH.md`](GJRGARCH.md#5-conditional-gaussian-qmle-and-analytic-score).
+
+### Q13q.12. What if `Fit` returns a model together with `ErrNotConverged`?
+
+Keep the prior production model. A non-nil `*FitResult` can be a **diagnostic
+candidate**, not an approved replacement. Inspect both `errors.Is(err,
+gjrgarch.ErrNotConverged)` and `result.Diagnostics.Converged`; `IsNil()`
+checks pointer presence only. A canceled context before initial evaluation
+returns `nil,ctx.Err()`; a later cancellation can return the last validated
+candidate with `ctx.Err()`. No false success or unmarked fallback is allowed.
+
+### Q13q.13. Which input errors take precedence?
+
+For Fit the order is context, option validation including `Initial`, nil
+input, empty input, full nonfinite scan, then numerical computation. A nil
+context is `ErrInvalidOption`; a previously canceled context returns its
+original context error. `ErrNonFinite` is invalid **caller input**;
+`ErrOverflow` is unrepresentable **arithmetic**. A foreign state or invalid
+posterior h is `ErrStateVersion`. Classify every branch with `errors.Is`;
+never match error-message text.
+
+### Q13q.14. Are models shareable, and do returned arrays alias caller data?
+
+`Model` is immutable and safe for independent concurrent read-only inference
+with stable inputs. `State` is a copied value; the caller must serialize
+updates of its own mutable state variable. Input return slices are not
+mutated or retained, but concurrent mutation during a call is unsupported.
+`Filter`/forecast slices are detached; `FitResult.Clone()` deep-copies the
+mutable diagnostics while sharing the safe immutable model. A successful
+`Step` and `ForecastNextVariance` avoid result-slice allocations.
+
+### Q13q.15. What do I need before using a GJR estimate for collateral or VaR?
+
+Validate a continuous return sampling frequency and mask-aware price
+conversion; retain raw source timestamps; choose the economic shock law and
+parameter start explicitly; check `err==nil` and convergence; compare with a
+symmetric GARCH and fixed-volatility baseline on **strictly held-out** data;
+inspect standardized residual dynamics and tails; assess parameter stability
+and forecast calibration; obtain independent model-risk approval. GJR's
+conditional variance is one input to a risk framework, not its release gate.
+
+**Further reading:** [`GJRGARCH.md`](GJRGARCH.md),
+[`gjrgarch/doc.go`](../gjrgarch/doc.go),
+[`gjrgarch/example_test.go`](../gjrgarch/example_test.go) and
+[`examples/gjrgarch/main.go`](../examples/gjrgarch/main.go).
 
 ---
 
@@ -4634,7 +4796,7 @@ feature and label policy. The package itself does not split datasets, fit
 models, produce probabilities or promise positive trading performance.
 
 See [`MACD.md`](MACD.md) and the streaming/failover example in the
-[Tutorial](../../../../Downloads/lvlath_jumpdiffusion_phase23_docs_sync%202/docs/TUTORIAL.md#11k-macd-foundations-sma-seeded-ema-signed-momentum-and-checkpoint-replay).
+[Tutorial](TUTORIAL.md#11k-macd-foundations-sma-seeded-ema-signed-momentum-and-checkpoint-replay).
 
 ---
 
@@ -4660,7 +4822,7 @@ before computing terminal exposure or observed-grid drawdown. In a Monte Carlo
 sampler, use the supplied path-owned RNG rather than this seeded wrapper.
 Use `errors.Is(err, jumpdiffusion.ErrBudget)` or another sentinel to
 classify a failure; never count an incomplete prefix as an ordinary successful
-scenario. See [`JUMPDIFFUSION.md`](../../../../Downloads/lvlath_jumpdiffusion_phase23_docs_sync%202/docs/JUMPDIFFUSION.md).
+scenario. See [`JUMPDIFFUSION.md`](JUMPDIFFUSION.md).
 
 ---
 

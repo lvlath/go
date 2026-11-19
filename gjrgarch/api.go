@@ -60,14 +60,26 @@ func New(p Parameters) (*Model, error) {
 //   - Stage 1: test the receiver for nil.
 //   - Stage 2: return the precomputed immutable string without re-hashing.
 //
+// Behavior highlights:
+//   - Nil receiver maps to the empty identity without dereferencing.
+//
+// Inputs:
+//   - m: immutable model receiver, possibly nil.
+//
 // Returns:
 //   - string: 64 lowercase hexadecimal digits, or an empty string for a nil model.
+//
+// Errors:
+//   - None; nil receiver is a defined empty value.
 //
 // Determinism:
 //   - The identity is fixed at New; normalized negative zero hashes as positive zero.
 //
 // Complexity:
 //   - Time O(1), Space O(1); no output allocation.
+//
+// Notes:
+//   - The ID binds parameters and numeric-policy version, not persisted-state authenticity.
 //
 // AI-Hints:
 //   - Compare state.ModelID against ID rather than trusting user-supplied state fields.
@@ -81,15 +93,31 @@ func (m *Model) ID() string {
 // Parameters returns a value copy of the model's validated coefficients.
 // Changing that copy never mutates the model or its identity.
 //
+// Implementation:
+//   - Stage 1: Check receiver.
+//   - Stage 2: Copy the five stored float64 fields to a value.
+//
+// Behavior highlights:
+//   - Changing the returned scalar value cannot alter model state.
+//
+// Inputs:
+//   - m: immutable model receiver, possibly nil.
+//
 // Returns:
 //   - Parameters: immutable model values copied into caller-owned scalar fields;
 //     the zero Parameters value for a nil receiver.
+//
+// Errors:
+//   - None; nil receiver is represented by the zero value.
 //
 // Determinism:
 //   - Field values and signed-zero representation are preserved exactly.
 //
 // Complexity:
 //   - Time O(1), Space O(1); no heap ownership transfer.
+//
+// Notes:
+//   - The zero value returned for nil is not a valid stationary model.
 //
 // AI-Hints:
 //   - Construct a new Model after changing the returned Parameters value.
@@ -106,6 +134,12 @@ func (m *Model) Parameters() Parameters {
 // Implementation:
 //   - Stage 1: reject a nil model.
 //   - Stage 2: divide its validated intercept by the positive stationarity gap.
+//
+// Behavior highlights:
+//   - This is the stationary expected variance, not a data-driven seed.
+//
+// Inputs:
+//   - m: validated model receiver, or nil.
 //
 // Returns:
 //   - float64: positive finite long-run conditional variance, or zero on failure.
@@ -138,6 +172,9 @@ func (m *Model) UnconditionalVariance() (float64, error) {
 //   - Stage 1: check model presence and finite return/variance values.
 //   - Stage 2: require positive variance and compute epsilon[0]=r[0]-Mean.
 //   - Stage 3: bind the state to ModelID with Steps=1.
+//
+// Behavior highlights:
+//   - The observed residual is retained for the next transition, not used to revise initial variance.
 //
 // Inputs:
 //   - observedReturn: first finite return, in the model's return units.
@@ -183,6 +220,9 @@ func (m *Model) InitialState(observedReturn, variance float64) (State, error) {
 //   - Stage 2: apply the canonical variance recurrence to the PRIOR residual.
 //   - Stage 3: store the new residual and return the updated independent State.
 //
+// Behavior highlights:
+//   - Failed calls publish the zero State and cannot mutate the caller-held value.
+//
 // Inputs:
 //   - state: caller-owned State for observation t; Steps>=1.
 //   - observedReturn: finite observation at t+1, in return units.
@@ -226,6 +266,9 @@ func (m *Model) Step(state State, observedReturn float64) (State, error) {
 //   - Stage 1: enforce context, model, input presence, finiteness, and initial variance.
 //   - Stage 2: traverse observations in ascending index order using the Step kernel.
 //   - Stage 3: publish an owning variance slice only on complete success.
+//
+// Behavior highlights:
+//   - A singleton still validates its first residual; runtime errors discard the entire output.
 //
 // Inputs:
 //   - ctx: non-nil, active context; cancellation is checked between observations.
@@ -280,6 +323,9 @@ func (m *Model) Filter(ctx context.Context, returns []float64, initialVariance f
 //   - Stage 2: obtain Omega/(1-rho) without using any future return.
 //   - Stage 3: delegate input validation, causality, and allocation to Filter.
 //
+// Behavior highlights:
+//   - No sample moment is estimated to choose h[0].
+//
 // Inputs:
 //   - ctx: non-nil context; returns: caller-owned finite nonempty series.
 //
@@ -294,6 +340,9 @@ func (m *Model) Filter(ctx context.Context, returns []float64, initialVariance f
 //
 // Complexity:
 //   - Time O(T), Space O(T).
+//
+// Notes:
+//   - A stationary start is an assumption; it is not a reconstructed pre-sample posterior.
 //
 // AI-Hints:
 //   - Stationary initialization is a modeling choice, not a learned pre-sample state.
@@ -315,6 +364,9 @@ func (m *Model) FilterStationary(ctx context.Context, returns []float64) ([]floa
 //   - Stage 1: delegate all validation and recurrence work to Filter.
 //   - Stage 2: transform the private detached variance slice in place.
 //
+// Behavior highlights:
+//   - Returns standard deviation per observation, not an annualized volatility estimate.
+//
 // Inputs:
 //   - ctx, returns, initialVariance: identical to Filter.
 //
@@ -329,6 +381,9 @@ func (m *Model) FilterStationary(ctx context.Context, returns []float64) ([]floa
 //
 // Complexity:
 //   - Time O(T), Space O(T); no additional slice allocation.
+//
+// Notes:
+//   - Returned values are conditional sigmas, not predictive return quantiles.
 //
 // AI-Hints:
 //   - For percentage-point volatility multiply the returned decimal result by 100.
@@ -350,6 +405,9 @@ func (m *Model) FilterVolatility(ctx context.Context, returns []float64, initial
 //   - Stage 1: reject foreign/invalid State, nonpositive horizon, and allocation overflow.
 //   - Stage 2: apply the known-shock canonical variance transition for horizon one.
 //   - Stage 3: advance expected variance with Omega+rho*h for remaining horizons.
+//
+// Behavior highlights:
+//   - Only horizon one incorporates the known last residual sign.
 //
 // Inputs:
 //   - state: valid caller-owned posterior state bound to this model.
@@ -394,6 +452,9 @@ func (m *Model) ForecastVariance(state State, horizon int) ([]float64, error) {
 //   - Stage 1: check model and posterior state identity.
 //   - Stage 2: apply the canonical nextVariance transition once.
 //
+// Behavior highlights:
+//   - A point-query wrapper without horizon-slice allocation.
+//
 // Inputs:
 //   - state: valid posterior state containing epsilon[t] and h[t].
 //
@@ -408,6 +469,9 @@ func (m *Model) ForecastVariance(state State, horizon int) ([]float64, error) {
 //
 // Complexity:
 //   - Time O(1), Space O(1); no heap allocation.
+//
+// Notes:
+//   - Does not advance State or incorporate an unobserved future return.
 //
 // AI-Hints:
 //   - Prefer this wrapper in hot-path margin-monitoring without needing a forecast slice.
@@ -424,6 +488,9 @@ func (m *Model) ForecastNextVariance(state State) (float64, error) {
 // Implementation:
 //   - Stage 1: delegate validations and forecast mathematics to ForecastVariance.
 //   - Stage 2: square-root each element of its private detached slice in place.
+//
+// Behavior highlights:
+//   - Computes sqrt(E[h]), not E[sqrt(h)].
 //
 // Inputs:
 //   - state, horizon: exactly the inputs of ForecastVariance.
@@ -519,6 +586,9 @@ func Fit(ctx context.Context, returns []float64, options Options) (*FitResult, e
 //   - Stage 1: build Options with the caller-provided Initial.
 //   - Stage 2: delegate all validation and optimization to canonical Fit.
 //
+// Behavior highlights:
+//   - Default iteration/floor/tolerance controls are selected by Fit, not this wrapper.
+//
 // Inputs:
 //   - ctx: non-nil training context; returns: read-only finite training series.
 //   - initial: caller-selected stationary and floor-feasible starting model.
@@ -534,6 +604,9 @@ func Fit(ctx context.Context, returns []float64, options Options) (*FitResult, e
 //
 // Complexity:
 //   - Identical to Fit; O(1) additional configuration work.
+//
+// Notes:
+//   - Prefer Fit when an explicit training budget/floor is required.
 //
 // AI-Hints:
 //   - This convenience wrapper still requires an explicit economically defensible Initial.

@@ -25,8 +25,29 @@ const identityPolicy = "gjrgarch/gjr11/symmetric/v1/initial-variance-h0"
 //   - Stage 2: encode Mean,Omega,Alpha,Gamma,Beta as little-endian float bits.
 //   - Stage 3: hex-encode SHA-256 as a stable lowercase 64-character identifier.
 //
-// Complexity: Time O(1), Space O(1) for a fixed five-parameter model.
-// AI-Hints: Do not add dates, seeds, or mutable options to this hash.
+// Behavior highlights:
+//   - Negative zero is normalized only for hashing; caller parameters preserve their bits.
+//
+// Inputs:
+//   - p: validated fixed five-coefficient value, no pointers or slices.
+//
+// Returns:
+//   - string: lowercase 64-hex-character SHA-256 digest.
+//
+// Errors:
+//   - None for validated parameters; error classification belongs to New.
+//
+// Determinism:
+//   - Byte order is policy marker followed by five little-endian binary64 bit patterns.
+//
+// Complexity:
+// Time O(1), Space O(1) for a fixed five-parameter model.
+//
+// Notes:
+//   - A digest binds model compatibility but does not authenticate external mutable state.
+//
+// AI-Hints:
+// Do not add dates, seeds, or mutable options to this hash.
 func modelIdentity(p Parameters) string {
 	hash := sha256.New()
 	_, _ = hash.Write([]byte(identityPolicy))

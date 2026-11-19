@@ -8,7 +8,7 @@
     This README is the public face of lvlath. It presents the library as a
     deterministic, contract-driven Go toolkit for graph algorithms, flow networks,
     dense graph algebra, routing, exact timestamp grids, causal time-series primitives, Wilder RSI batch/stream filtering, SMA-seeded MACD, compensated MFI, compensated cumulative OBV, Chaikin A/D, fixed-window ACF, fractional PAA,
-    symbolic SAX encoding, dependent-data block-index resampling, path-indexed parallel Monte Carlo simulation, exact-in-distribution GBM and Merton jump-diffusion paths, alignment, and reproducible algorithm engineering. It should give a new reader immediate confidence in
+    symbolic SAX encoding, dependent-data block-index resampling, path-indexed parallel Monte Carlo simulation, exact-in-distribution GBM and Merton jump-diffusion paths, causal GJR-GARCH volatility and constrained Gaussian QMLE, alignment, and reproducible algorithm engineering. It should give a new reader immediate confidence in
     what lvlath can solve, how packages compose, where the formal contracts live,
     and why this repository is engineered beyond ad-hoc algorithm snippets.
 
@@ -48,7 +48,7 @@
 
 # lvlath
 
-**lvlath** is a pure-Go algorithm engineering library for graphs, flows, dense graph algebra, routing, exact timestamp grids, causal series transforms, fractional PAA, symbolic SAX time-series signatures, stable statistical moments, fitted feature scaling, sample autocorrelation, Wilder RSI, SMA-seeded MACD, compensated OHLCV Money Flow Index, cumulative On-Balance Volume, Chaikin Accumulation/Distribution, covariance PCA, causal Hidden Markov Models, version-pinned PCG-DXSM stochastic streams, time-series alignment, reproducible parallel Monte Carlo drivers, exact-in-distribution geometric Brownian motion and Merton jump-diffusion paths, and reproducible test fixtures.
+**lvlath** is a pure-Go algorithm engineering library for graphs, flows, dense graph algebra, routing, exact timestamp grids, causal series transforms, fractional PAA, symbolic SAX time-series signatures, stable statistical moments, fitted feature scaling, sample autocorrelation, Wilder RSI, SMA-seeded MACD, compensated OHLCV Money Flow Index, cumulative On-Balance Volume, Chaikin Accumulation/Distribution, covariance PCA, causal Hidden Markov Models, version-pinned PCG-DXSM stochastic streams, time-series alignment, reproducible parallel Monte Carlo drivers, exact-in-distribution geometric Brownian motion and Merton jump-diffusion paths, asymmetric stationary GJR-GARCH conditional volatility, and reproducible test fixtures.
 
 It is built for people who need algorithmic tools they can explain in a code review, trust in CI, compose across packages, and debug from deterministic artifacts instead of guessing why an answer changed.
 
@@ -81,6 +81,7 @@ It is built for people who need algorithmic tools they can explain in a code rev
 * `montecarlo` orchestrates independent seeded simulation paths with bounded worker scheduling, canonical vector moments, exact empirical quantiles and auditable interruption prefixes;
 * `gbm` simulates positive exact-in-distribution lognormal paths on irregular explicitly unit-typed grids, with robust log-growth arithmetic and an error-safe completed-prefix protocol;
 * `jumpdiffusion` adds compensated compound-Poisson lognormal jumps over GBM without hidden Gaussian count approximations, RNG-order drift or partial-payoff publication;
+* `gjrgarch` provides immutable asymmetric return-variance models, strictly causal filtering, expected-variance forecasts and constrained Gaussian QMLE;
 * `flow`, `mst`, `tsp`, `dtw`, `gridgraph`, and `builder` packages extend the same discipline into optimization, alignment, fixtures, and examples.
 
 ---
@@ -189,6 +190,14 @@ The common failures are familiar:
     interrupted interval into a complete terminal payoff; the model remains
     experimental until its parameters and use case are independently validated.
 
+17. **Conditional volatility is not a look-ahead price scenario**
+
+    `gjrgarch` assigns `h[t]` before seeing `r[t]`, updates from the prior residual,
+    and estimates parameters with an explicit deterministic QMLE start. A forecast
+    variance is not a VaR tail quantile; a nonconverged `FitResult` is not an
+    approved model. Feed cadence, training/holdout separation and model review
+    belong to the application.
+
 ---
 
 ## Installation
@@ -233,6 +242,7 @@ lvlath/
 ├── montecarlo/            # bounded parallel paths, ordered moments, exact sample quantiles
 ├── gbm/                   # exact lognormal GBM paths, explicit units, positive-price prefix law
 ├── jumpdiffusion/         # experimental Merton Poisson jumps, compensated drift, PTRS
+├── gjrgarch/              # causal asymmetric return variance, forecast and Gaussian QMLE
 ├── gridgraph/             # 2D lattice graph generation
 ├── matrix/                # dense graph algebra, stable statistics, pivoted factors and solves
 ├── tsp/                   # tour construction, local search, exact small-instance routing
@@ -264,6 +274,7 @@ lvlath/
 │   ├── MONTECARLO.md
 │   ├── GBM.md
 │   ├── JUMPDIFFUSION.md
+│   ├── GJRGARCH.md
 │   ├── PAA.md
 │   ├── SAX.md
 │   ├── GRID_GRAPH.md
@@ -436,6 +447,9 @@ Composition rule:
   explicitly unit-matched elapsed-time grids; stochastic draws come from rng,
   payoffs and calibration come from the caller, and ensemble reduction comes
   from montecarlo.
+ - gjrgarch owns deterministic stationary conditional-return variance, strictly
+  lagged posterior filtering, expected-variance horizons and constrained
+  Gaussian QMLE. It estimates no price path, risk quantile or trading policy.
  - jumpdiffusion owns an explicitly selected Merton compound-Poisson model
   on the same GBM grid and parameters: lambda=0 delegates to gbm, while
   positive lambda uses bounded discrete Poisson inversion/PTRS and a
@@ -489,6 +503,29 @@ The stochastic branch of the architecture is deliberately separate from graph tr
                     application policy
 ```
 
+
+A separate **conditional-variance branch** consumes historical returns, not
+GBM/Merton price-path RNG draws:
+
+```text
+positive prices --series.LogReturns/Valid--> ordered returns
+                                               |
+                     frozen explicit Parameters/Initial
+                                               |
+                                     gjrgarch.New / Fit
+                                               |
+                              immutable Model + causal State
+                                               |
+                     ForecastNextVariance / ForecastVariance
+                                               |
+                       application-owned holdout/risk review
+```
+
+`gjrgarch.Fit` can return an unfinished candidate with `ErrNotConverged`;
+neither an immutable model identity nor a decreasing training objective
+approves risk-model deployment. Details follow in the
+[GJR-GARCH section](#gjr-garch-stationary-causal-volatility-and-asymmetric-downside-response).
+
 ## Package roles and strengths
 
 | Package         | What it gives you                                                                                                                              | Concrete strength                                                                                                          | Typical scenario                                                                                               |
@@ -508,6 +545,7 @@ The stochastic branch of the architecture is deliberately separate from graph tr
 | `rng`           | Version-pinned SHA-256/PCG-DXSM128/64 streams, strict uniform midpoints, cached Box-Muller normals and batch facades.                          | Immutable factory, logical path isolation, no hot-loop allocation and exact raw consumption.                               | Monte Carlo paths, risk simulation, sensor fault injection, repeatable stress experiments.                     |
 | `montecarlo`    | Independent multidimensional stochastic experiments, bounded worker scheduling, ordered Welford moments and type-7 quantiles.                  | Bitwise worker-count parity on complete deterministic runs, checked optional-buffer admission and strict partial prefixes. | Option/risk valuation, structural fatigue screening, microgrid resilience, repeatable fault experiments.       |
 | `gbm`           | Exact-in-distribution GBM price paths on caller-specified irregular grids, with explicit years/days/seconds.                                   | Avoids spurious `S*exp`/`sigma²` overflows; detached prefix/errors, zero RNG draws at sigma zero.                          | European-option paths, synthetic tick stress, FX-liability scenarios and deterministic escalation.             |
+| `gjrgarch`      | Immutable GJR-GARCH(1,1) causal variance, forecast and Gaussian QMLE with explicit optimizer diagnostics.                                      | Causal lag indexing, sign-dependent shock, stationarity margin and deterministic KKT/BFGS.                                 | Next-day equity risk, collateral monitoring, model-risk audit and volatility term structure.                   |
 | `jumpdiffusion` | Merton compound-Poisson lognormal jump-diffusion on explicit GBM grids.                                                                        | `lambda=0` GBM parity, bounded discrete PTRS, drift compensator, partial prefix with errors.                               | Scenario-driven collateral gap stress, jump-sensitive European options, credit event sensitivity.              |
 | `bootstrap`     | Reproducible Moving/Circular/Stationary index resampling for dependent series with per-replicate streams and exact bounded integers.           | Detached complete-row results, memory admission and cancellation without interrupted-row publication.                      | Portfolio risk sensitivity, paired serial regression, telemetry alarm calibration.                             |
 | `acf`           | Direct fixed-window sample autocorrelation with two explicit denominator conventions and raw/centered origins.                                 | Scaled compensated products, no lag-specific recentering or clipping; caller-owned lag counts.                             | Residual audits, compressor cycles, vibration periodicity, signal pitch.                                       |
@@ -1919,6 +1957,101 @@ for model-selection and numerical pitfalls.
 
 ---
 
+### GJR-GARCH: stationary causal volatility and asymmetric downside response
+
+`github.com/lvlath/go/gjrgarch` estimates and forecasts the **conditional
+variance of returns**, not a price trajectory or a fully specified tail-risk
+distribution. Its immutable `Model` uses a strictly lagged asymmetric shock:
+
+
+![Causal GJR-GARCH variance recurrence](https://latex.codecogs.com/svg.image?h_%7Bt%2B1%7D%3D%5Comega%2B%28%5Calpha%2B%5Cgamma%5Cmathbf%7B1%7D_%7B%5C%7B%5Cepsilon_t%3C0%5C%7D%7D%29%5Cepsilon_t%5E2%2B%5Cbeta%20h_t)
+
+Here `epsilon[t]=r[t]-Mean`, `h[t]` is assigned *before* observing `r[t]`,
+`Omega>0`, `Alpha>=0`, `Beta>=0`, `Alpha+Gamma>=0`, and symmetric-innovation
+persistence `rho=Alpha+Beta+Gamma/2<1`. **Gamma may be negative**. Negative
+shocks influence the **next** variance; they cannot change the variance already
+assigned to their own observation.
+
+| Need                               | Public API                                           | Honest interpretation                                                                             |
+|------------------------------------|------------------------------------------------------|---------------------------------------------------------------------------------------------------|
+| Validate and freeze parameters     | `gjrgarch.New(parameters)`                           | Immutable, model-identified stationary law                                                        |
+| Start from the first observation   | `model.InitialState(firstReturn,h0)`                 | Posterior `(epsilon[0],h[0],Steps=1)`; zero State is invalid                                      |
+| Update one observation             | `model.Step(state,newReturn)`                        | Uses the **old** residual for new variance; successful hot path allocates no slice                |
+| Filter a fixed sample              | `model.Filter(ctx,returns,h0)`                       | Detached `[h0,...,h[T-1]]`; no future leakage or partial output                                   |
+| Use long-run initialization        | `model.FilterStationary(ctx,returns)`                | Explicit `Omega/(1-rho)` starting variance                                                        |
+| Predict next-period variance       | `model.ForecastNextVariance(state)`                  | Exact known-shock first horizon                                                                   |
+| Predict an H-period variance curve | `model.ForecastVariance(state,H)`                    | One known shock, then `Omega+rho*h` conditional expectations                                      |
+| Fit with explicit initial model    | `gjrgarch.Fit(ctx,returns,Options{Initial:...})`     | Deterministic projected BFGS; error and convergence must both be checked                          |
+| Audit a fixed Gaussian candidate   | `gjrgarch.EvaluateGaussianQMLE(ctx,returns,p,floor)` | Negative average loss and five-coordinate **analytic gradient**, not a holdout-continuation score |
+
+A minimal stress comparison using the same prior conditional variance:
+
+```go
+package main
+
+import (
+	"fmt"
+	"math"
+
+	"github.com/lvlath/go/gjrgarch"
+)
+
+func main() {
+	model, err := gjrgarch.New(gjrgarch.Parameters{
+		Omega: 0.00002, Alpha: 0.08, Gamma: 0.14, Beta: 0.72,
+	})
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	down, err := model.InitialState(-0.03, 0.00030)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	up, err := model.InitialState(0.03, 0.00030)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	downVariance, err := model.ForecastNextVariance(down)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	upVariance, err := model.ForecastNextVariance(up)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Printf("downside_greater=%t down_sigma=%.2f%% up_sigma=%.2f%%\n",
+		downVariance > upVariance,
+		100*math.Sqrt(downVariance), 100*math.Sqrt(upVariance))
+	// Output:
+	// downside_greater=true down_sigma=2.08% up_sigma=1.75%
+}
+```
+
+For a real market-risk pipeline, first validate timestamps and obtain returns
+from `series.LogReturns` **using its `Valid` mask**. Feed the training period to
+`Fit` with an economically justified starting point; on `ErrNotConverged`, a
+non-nil `FitResult` is only a diagnostic candidate. **Never** approve a model
+from training likelihood or convergence alone. For a chronological held-out
+log-score, continue from the last training `State`, forecast before observing
+the next return, then call `Step`; `EvaluateGaussianQMLE` uses a fresh stationary
+start and does not provide this continuation.
+
+The Gaussian likelihood is quasi-likelihood. It does not certify VaR/ES,
+regulatory margin levels, parameter uncertainty or market adequacy. See
+[`docs/GJRGARCH.md`](docs/GJRGARCH.md) for KKT/gradient mathematics, numeric
+constraints, model-ID semantics, errors and deployment evidence;
+[`gjrgarch/doc.go`](gjrgarch/doc.go) for the canonical charter;
+[`gjrgarch/example_test.go`](gjrgarch/example_test.go) for five operational
+examples; and [`examples/gjrgarch/main.go`](examples/gjrgarch/main.go) for
+prices-to-returns monitoring with explicit fail-closed model release.
+
+---
+
 ### HMM: causal regime filtering, retrospective smoothing and reproducible EM
 
 `github.com/lvlath/go/hmm` models **hidden operating regimes** behind categorical events or finite multichannel telemetry. Its two immutable model families share the same transition mathematics but have distinct, typed observation contracts:
@@ -1968,42 +2101,43 @@ See [`docs/HMM.md`](docs/HMM.md) for formal log-domain equations, EM counts and 
 
 ## Current contract documentation
 
-| Layer                     | File                                             | Purpose                                                                                                                         |
-|:--------------------------|:-------------------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------|
-| Tutorial                  | [`docs/TUTORIAL.md`](docs/TUTORIAL.md)           | First guided entry into graph/matrix concepts, package roles, examples, and best practices.                                     |
-| Core spec                 | [`docs/CORE.md`](docs/CORE.md)                   | Graph model, capability law, deterministic enumeration, locks, topology invariants.                                             |
-| BFS spec                  | [`docs/BFS.md`](docs/BFS.md)                     | Hop-distance math, BFS result semantics, partial results, weak components.                                                      |
-| DFS spec                  | [`docs/DFS.md`](docs/DFS.md)                     | Post-order semantics, cycle witnesses, DFS forest, topological sort.                                                            |
-| Shortest paths spec       | [`docs/DIJKSTRA.md`](docs/DIJKSTRA.md)           | Full SSSP vs four target methods, consistency proofs, balanced potentials, exact arithmetic and runnable scenarios.             |
-| MST spec                  | [`docs/MST.md`](docs/MST.md)                     | Exact Prim/Kruskal, KMB Steiner approximation, tree-covering walks, original IDs, numeric/error contracts.                      |
-| Flow spec                 | [`docs/FLOW.md`](docs/FLOW.md)                   | Max-flow/min-cut math, residual networks, Ford-Fulkerson, Edmonds-Karp, Dinic.                                                  |
-| DTW spec                  | [`docs/DTW.md`](docs/DTW.md)                     | Dynamic programming, numeric classification, windows, penalties and path recovery.                                              |
-| DTW exact search          | [`docs/DTW_SEARCH.md`](docs/DTW_SEARCH.md)       | Bounded classification, fixed-length top-K, certified pruning, budgets and worker law.                                          |
-| Fractional PAA            | [`docs/PAA.md`](docs/PAA.md)                     | Exact step-function geometry, output ownership, nearest-even arithmetic, wrappers and integration.                              |
-| Symbolic SAX              | [`docs/SAX.md`](docs/SAX.md)                     | Canonical words, Euclidean MINDIST proof, versioned identity, errors and false-DTW-pruning counterexample.                      |
-| Series primitives         | [`docs/SERIES.md`](docs/SERIES.md)               | Exact integer grids, causal transforms, result masks, numeric safeguards, index windows.                                        |
-| Deterministic RNG streams | [`docs/RNG.md`](docs/RNG.md)                     | Pinned PCG-DXSM128/64, SHA-256 state mapping, strict uniform, Gaussian spare and replay.                                        |
-| Monte Carlo driver        | [`docs/MONTECARLO.md`](docs/MONTECARLO.md)       | Path-keyed replay, bounded dispatch, vector moments, exact empirical quantiles, memory limits and prefix failures.              |
-| GBM exact lognormal paths | [`docs/GBM.md`](docs/GBM.md)                     | Model equations, unit dimensions, input precedence, robust price publication and Monte Carlo bridge.                            |
-| Merton jump-diffusion     | [`docs/JUMPDIFFUSION.md`](docs/JUMPDIFFUSION.md) | Compound Poisson log-jump law, compensation, bounded PTRS, RNG replay, errors and source attribution.                           |
-| Stable statistics         | [`docs/STATS.md`](docs/STATS.md)                 | Welford/Chan, exact mean sum, scaled M2, fitted scaling, sentinels, immutable inference.                                        |
-| Stable Ridge regression   | [`docs/RIDGE.md`](docs/RIDGE.md)                 | Positive-Lambda augmented QR, strict intercept policy, wide/collinear designs, nonzero tiny coefficients and frozen prediction. |
-| Dependent index bootstrap | [`docs/BOOTSTRAP.md`](docs/BOOTSTRAP.md)         | Moving/Circular/Stationary laws, exact integer mapping, replay, budget and partial rows.                                        |
-| Sample autocorrelation    | [`docs/ACF.md`](docs/ACF.md)                     | Common/lag-adjusted ACF, full-window centering, Toeplitz PSD proof and numeric limitations.                                     |
-| Wilder RSI                | [`docs/RSI.md`](docs/RSI.md)                     | Stable ratio math, exact seed/warmup, batch/stream equivalence, sentinels and checkpoint ABI.                                   |
-| SMA-seeded MACD           | [`docs/MACD.md`](docs/MACD.md)                   | Appel EMA seed/recurrence, signed values, aligned masks, batch/stream parity, checkpoint safety.                                |
-| Compensated MFI           | [`docs/MFI.md`](docs/MFI.md)                     | Typical-price OHLCV flow, transition windows, Neumaier rebase, warmup masks and versioned state.                                |
-| Cumulative OBV            | [`docs/OBV.md`](docs/OBV.md)                     | First-bar zero, signed close comparisons, Neumaier compensation, atomic Push and snapshot trust model.                          |
-| Chaikin A/D               | [`docs/AD.md`](docs/AD.md)                       | First-bar weighted contribution, stable close-location geometry, Neumaier rebase, global errors and fixed snapshot ABI.         |
-| Finite-state HMM          | [`docs/HMM.md`](docs/HMM.md)                     | Causal log-domain filtering, retrospective smoothing, Viterbi, multi-sequence MAP-EM, error and identity laws.                  |
-| Fitted covariance PCA     | [`docs/PCA.md`](docs/PCA.md)                     | Train-only orthogonal projection, checked covariance eigenpairs, numerical rank and leakage-safe reconstruction.                |
-| Stable OLS regression     | [`docs/OLS.md`](docs/OLS.md)                     | Pivoted Householder QR, explicit intercept, physical coefficients, SSE, frozen Model and holdout pitfalls.                      |
-| Grid spec                 | [`docs/GRID_GRAPH.md`](docs/GRID_GRAPH.md)       | Grid/lattice graph modeling and pathfinding-oriented construction.                                                              |
-| Matrix spec               | [`docs/MATRICES.md`](docs/MATRICES.md)           | Canonical dense/graph/statistics/factorization reference; [`MATRIX.md`](docs/MATRIX.md) is a navigation alias.                  |
-| TSP spec                  | [`docs/TSP.md`](docs/TSP.md)                     | Tour optimization, exact vs approximate methods, metric assumptions.                                                            |
-| Engineering standard      | [`docs/lvlath_UES.md`](docs/lvlath_UES.md)       | Repository engineering standard and quality expectations.                                                                       |
-| FAQ                       | [`docs/FAQ_&_TIPS.md`](docs/FAQ_%26_TIPS.md)     | Troubleshooting, common pitfalls, usage tips.                                                                                   |
-| Contribution guide        | [`CONTRIBUTING.md`](CONTRIBUTING.md)             | Branching, tests, linting, coverage, PR rules.                                                                                  |
+| Layer                          | File                                             | Purpose                                                                                                                         |
+|:-------------------------------|:-------------------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------|
+| Tutorial                       | [`docs/TUTORIAL.md`](docs/TUTORIAL.md)           | First guided entry into graph/matrix concepts, package roles, examples, and best practices.                                     |
+| Core spec                      | [`docs/CORE.md`](docs/CORE.md)                   | Graph model, capability law, deterministic enumeration, locks, topology invariants.                                             |
+| BFS spec                       | [`docs/BFS.md`](docs/BFS.md)                     | Hop-distance math, BFS result semantics, partial results, weak components.                                                      |
+| DFS spec                       | [`docs/DFS.md`](docs/DFS.md)                     | Post-order semantics, cycle witnesses, DFS forest, topological sort.                                                            |
+| Shortest paths spec            | [`docs/DIJKSTRA.md`](docs/DIJKSTRA.md)           | Full SSSP vs four target methods, consistency proofs, balanced potentials, exact arithmetic and runnable scenarios.             |
+| MST spec                       | [`docs/MST.md`](docs/MST.md)                     | Exact Prim/Kruskal, KMB Steiner approximation, tree-covering walks, original IDs, numeric/error contracts.                      |
+| Flow spec                      | [`docs/FLOW.md`](docs/FLOW.md)                   | Max-flow/min-cut math, residual networks, Ford-Fulkerson, Edmonds-Karp, Dinic.                                                  |
+| DTW spec                       | [`docs/DTW.md`](docs/DTW.md)                     | Dynamic programming, numeric classification, windows, penalties and path recovery.                                              |
+| DTW exact search               | [`docs/DTW_SEARCH.md`](docs/DTW_SEARCH.md)       | Bounded classification, fixed-length top-K, certified pruning, budgets and worker law.                                          |
+| Fractional PAA                 | [`docs/PAA.md`](docs/PAA.md)                     | Exact step-function geometry, output ownership, nearest-even arithmetic, wrappers and integration.                              |
+| Symbolic SAX                   | [`docs/SAX.md`](docs/SAX.md)                     | Canonical words, Euclidean MINDIST proof, versioned identity, errors and false-DTW-pruning counterexample.                      |
+| Series primitives              | [`docs/SERIES.md`](docs/SERIES.md)               | Exact integer grids, causal transforms, result masks, numeric safeguards, index windows.                                        |
+| Deterministic RNG streams      | [`docs/RNG.md`](docs/RNG.md)                     | Pinned PCG-DXSM128/64, SHA-256 state mapping, strict uniform, Gaussian spare and replay.                                        |
+| Monte Carlo driver             | [`docs/MONTECARLO.md`](docs/MONTECARLO.md)       | Path-keyed replay, bounded dispatch, vector moments, exact empirical quantiles, memory limits and prefix failures.              |
+| GBM exact lognormal paths      | [`docs/GBM.md`](docs/GBM.md)                     | Model equations, unit dimensions, input precedence, robust price publication and Monte Carlo bridge.                            |
+| GJR-GARCH conditional variance | [`docs/GJRGARCH.md`](docs/GJRGARCH.md)           | Strict causality, asymmetric shock mathematics, stationary forecasts, QMLE gradient, KKT projection and release policy.         |
+| Merton jump-diffusion          | [`docs/JUMPDIFFUSION.md`](docs/JUMPDIFFUSION.md) | Compound Poisson log-jump law, compensation, bounded PTRS, RNG replay, errors and source attribution.                           |
+| Stable statistics              | [`docs/STATS.md`](docs/STATS.md)                 | Welford/Chan, exact mean sum, scaled M2, fitted scaling, sentinels, immutable inference.                                        |
+| Stable Ridge regression        | [`docs/RIDGE.md`](docs/RIDGE.md)                 | Positive-Lambda augmented QR, strict intercept policy, wide/collinear designs, nonzero tiny coefficients and frozen prediction. |
+| Dependent index bootstrap      | [`docs/BOOTSTRAP.md`](docs/BOOTSTRAP.md)         | Moving/Circular/Stationary laws, exact integer mapping, replay, budget and partial rows.                                        |
+| Sample autocorrelation         | [`docs/ACF.md`](docs/ACF.md)                     | Common/lag-adjusted ACF, full-window centering, Toeplitz PSD proof and numeric limitations.                                     |
+| Wilder RSI                     | [`docs/RSI.md`](docs/RSI.md)                     | Stable ratio math, exact seed/warmup, batch/stream equivalence, sentinels and checkpoint ABI.                                   |
+| SMA-seeded MACD                | [`docs/MACD.md`](docs/MACD.md)                   | Appel EMA seed/recurrence, signed values, aligned masks, batch/stream parity, checkpoint safety.                                |
+| Compensated MFI                | [`docs/MFI.md`](docs/MFI.md)                     | Typical-price OHLCV flow, transition windows, Neumaier rebase, warmup masks and versioned state.                                |
+| Cumulative OBV                 | [`docs/OBV.md`](docs/OBV.md)                     | First-bar zero, signed close comparisons, Neumaier compensation, atomic Push and snapshot trust model.                          |
+| Chaikin A/D                    | [`docs/AD.md`](docs/AD.md)                       | First-bar weighted contribution, stable close-location geometry, Neumaier rebase, global errors and fixed snapshot ABI.         |
+| Finite-state HMM               | [`docs/HMM.md`](docs/HMM.md)                     | Causal log-domain filtering, retrospective smoothing, Viterbi, multi-sequence MAP-EM, error and identity laws.                  |
+| Fitted covariance PCA          | [`docs/PCA.md`](docs/PCA.md)                     | Train-only orthogonal projection, checked covariance eigenpairs, numerical rank and leakage-safe reconstruction.                |
+| Stable OLS regression          | [`docs/OLS.md`](docs/OLS.md)                     | Pivoted Householder QR, explicit intercept, physical coefficients, SSE, frozen Model and holdout pitfalls.                      |
+| Grid spec                      | [`docs/GRID_GRAPH.md`](docs/GRID_GRAPH.md)       | Grid/lattice graph modeling and pathfinding-oriented construction.                                                              |
+| Matrix spec                    | [`docs/MATRICES.md`](docs/MATRICES.md)           | Canonical dense/graph/statistics/factorization reference; [`MATRIX.md`](docs/MATRIX.md) is a navigation alias.                  |
+| TSP spec                       | [`docs/TSP.md`](docs/TSP.md)                     | Tour optimization, exact vs approximate methods, metric assumptions.                                                            |
+| Engineering standard           | [`docs/lvlath_UES.md`](docs/lvlath_UES.md)       | Repository engineering standard and quality expectations.                                                                       |
+| FAQ                            | [`docs/FAQ_&_TIPS.md`](docs/FAQ_%26_TIPS.md)     | Troubleshooting, common pitfalls, usage tips.                                                                                   |
+| Contribution guide             | [`CONTRIBUTING.md`](CONTRIBUTING.md)             | Branching, tests, linting, coverage, PR rules.                                                                                  |
 
 ---
 
@@ -2568,6 +2702,7 @@ incidence matrix:       columns are edge identities, not vertex-pair weights
 | "How do I create reproducible stochastic simulation paths?"                                    | `rng.NewFactory().Stream(seed, pathID)`                            | PCG-DXSM pinned streams; logical path IDs, never worker IDs.                                          |
 | "How do I parallelize independent Monte Carlo paths with ordered, reproducible moments?"       | `montecarlo.Run` / `EstimateParallel`                              | One RNG per path, bounded 2W window, single ordered reducer, optional budgeted quantiles.             |
 | "How do I generate a positive lognormal price path on an irregular grid?"                      | `gbm.Simulate` / `SimulateSeeded`                                  | Model units are explicit, price publication is finite, runtime failures retain only completed points. |
+| "How should the next variance react to a negative return shock?"                               | `gjrgarch.FilterStationary` / `Step` / `ForecastVariance`          | Strictly lagged conditional variance with leverage and stationary expected-variance horizons.         |
 | "How do I model sudden positive or negative price jumps on that GBM grid?"                     | `jumpdiffusion.Simulate` / `SimulateSeeded`                        | Compensated Merton log-jump model, bounded discrete Poisson counts and explicit model limitations.    |
 | "How do I build repeatable graphs?"                                                            | `builder` / `gridgraph`                                            | Generated fixtures should be deterministic.                                                           |
 
@@ -2600,6 +2735,9 @@ incidence matrix:       columns are edge identities, not vertex-pair weights
 | GBM annualized drift silently applied to a seconds grid                         | `gbm` rejects unit mismatches; callers must convert drift and volatility separately.                         |
 | Representable GBM price rejected through intermediate `S*exp` overflow          | Anchored log-growth and wide diffusion arithmetic defer conversion to a safe publication boundary.           |
 | GBM underflow replaced by a fake positive epsilon or partial payoff             | Zero/Inf prices yield `ErrOverflow`; only completed prefixes survive, never successful maturity substitutes. |
+| Current GJR residual used to compute its own conditional variance               | The observation at t contributes only to h[t+1]; never update h[t] from epsilon[t].                          |
+| GJR likelihood silently clamps variance below the floor                         | Reject infeasible candidates; clipping computed h[t] changes both loss and analytic gradient.                |
+| GJR optimizer candidate treated as successfully fitted                          | Check `err==nil` AND `Diagnostics.Converged`; `IsNil` is only pointer presence.                              |
 | Merton log-jump mean `m` used as the compensator `k`                            | Compensated Merton drift uses `lambda*expm1(m+s^2/2)`, never `lambda*m`.                                     |
 | Poisson count replaced by a Gaussian at high intensity                          | Use bounded PTRS at mean>=30, not a continuous approximation.                                                |
 | An incomplete jump path silently priced as a maturity scenario                  | Reject `!Complete` in `montecarlo.Sampler`; retain diagnostic prefix only.                                   |

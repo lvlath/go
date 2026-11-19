@@ -44,6 +44,18 @@
 //   - A model ID is the lowercase SHA-256 hex digest of a policy-versioned
 //     parameter bit sequence. Negative zero is canonicalized for identity only.
 //
+// Facade and nilability law:
+//   - New constructs one immutable model; InitialState, Step, Filter and
+//     ForecastVariance expose one canonical lagged recurrence. Point and
+//     volatility wrappers delegate to these kernels without changing policy.
+//   - Fit and FitWithInitial invoke the same projected QMLE pipeline, with an
+//     explicit Initial in both cases. EvaluateGaussianQMLE evaluates a fixed
+//     candidate and does not iterate, project or continue a previous State.
+//   - FitResult and QMLEEvaluation implement IsNil as pointer presence alone.
+//     A non-nil FitResult with Converged=false remains a diagnostic artifact.
+//   - Model.ID is a policy-bound SHA-256 compatibility tag, not authentication
+//     of an externally stored mutable State or its market-data source offset.
+//
 // Forecast law:
 //   - ForecastVariance requires a valid posterior state and horizon H>=1.
 //   - Its first value uses the last known innovation exactly. Horizons k>=2
@@ -73,6 +85,17 @@
 //   - Diagnostics.Objective begins with the initial loss and adds only accepted
 //     iterates. Diagnostics.Iterations counts accepted updates, not line trials.
 //
+// Numeric-unit and scale law:
+//   - Mean and each return share one physical unit; Omega, h and VarianceFloor
+//     have its square; Alpha, Gamma, Beta and rho are dimensionless.
+//   - Rescaling returns by a>0 requires Mean -> a*Mean, Omega -> a*a*Omega,
+//     h -> a*a*h and VarianceFloor -> a*a*VarianceFloor, with weights unchanged.
+//   - Gaussian negative average loss shifts by log(a) while total log-likelihood
+//     shifts by -T*log(a); the analytic gradient uses physical parameter units.
+//   - Fit normalizes training returns once into a private fixed unit system,
+//     not separately for each line-search candidate; public results are restored
+//     to the original return units after final acceptance.
+//
 // Validation, cancellation, and error law:
 //   - Fit validates context, options, nil/empty observations, and nonfinite
 //     observations before evaluation, in that order.
@@ -88,6 +111,17 @@
 //     latest valid model with Converged=false and the corresponding error.
 //   - A non-nil FitResult is NOT evidence that the solver converged or that
 //     the statistical model is an adequate predictor.
+//
+// Error precedence and partial publication law:
+//   - Fit checks context first, then option fields and Initial, then nil and
+//     empty input, then all nonfinite observations, and only then numerical work.
+//   - State validation (identity, Steps, finite positive h) precedes Step's
+//     new return validation. Overflow from valid finite operands is ErrOverflow,
+//     not ErrNonFinite or a successful saturated variance.
+//   - ErrNotConverged is distinct from fatal candidate/domain errors: the last
+//     *validated* candidate may accompany an unfinished budget or stalled search.
+//     On late cancellation the same candidate may accompany ctx.Err(); no error
+//     can be interpreted as completed optimization without an explicit nil err.
 //
 // Ownership and concurrency law:
 //   - The model is immutable and supports simultaneous read-only operations.

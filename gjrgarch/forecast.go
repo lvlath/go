@@ -9,7 +9,34 @@ package gjrgarch
 // The first point is conditional on the observed shock; later points integrate
 // over hypothetical symmetric innovations through the fixed persistence rho.
 //
-// Complexity: Time O(H), Space O(H); a single detached result allocation.
+// Implementation:
+//   - Stage 1: Calculate exact known-shock h[T+1].
+//   - Stage 2: Allocate H results.
+//   - Stage 3: Advance expected recursion for k>=2.
+//
+// Behavior highlights:
+//   - First horizon depends on last residual sign; later horizons use rho only.
+//
+// Inputs:
+//   - state: validated posterior; horizon: positive allocation-checked future count.
+//
+// Returns:
+//   - Detached []float64 of expected conditional variances, nil on error.
+//
+// Errors:
+//   - ErrOverflow for known shock or unrepresentable expected variance.
+//
+// Determinism:
+//   - Horizon index ascends without sampling or inferring future innovations.
+//
+// Complexity:
+// Time O(H), Space O(H); a single detached result allocation.
+//
+// Notes:
+//   - Returns E[h], not an exact variance-of-volatility or Gaussian predictive-tail law.
+//
+// AI-Hints:
+//   - Do not use the last observed residual again at the second horizon.
 func (m *Model) forecastKernel(state State, horizon int) ([]float64, error) {
 	first, err := nextVariance(m.p, state.LastResidual, state.LastVariance)
 	if err != nil {
