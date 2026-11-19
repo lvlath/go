@@ -3,7 +3,7 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/FAQ_&_TIPS.md
-  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima and the wider lvlath package family
+  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima, lstm and the wider lvlath package family
   lvlath - FAQ & Tips
 
   Purpose:
@@ -39,6 +39,7 @@
     - Merton jump diffusion with compensated drift, bounded exact Poisson kernels, stable RNG order, and complete-prefix safety.
     - GJR-GARCH causal state, asymmetric shock coefficients, stationary forecast, Gaussian QMLE and explicit nonconvergence.
     - Fixed-order conditional Gaussian ARIMA, Schur roots, burn-in, anchored integration and marginal innovation variance.
+    - Frozen PyTorch IFGO LSTM weights, exact-zero batch masking, ModelID-bound streaming state and numeric overflow classification.
 
   License:
     lvlath is licensed under AGPL-3.0-only. See ../LICENSE.
@@ -88,6 +89,7 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
     13p. [Jump Diffusion FAQ](#13p-jump-diffusion-faq-merton-compensation-poisson-counts-and-replay)
     13q. [GJR-GARCH FAQ](#13q-gjr-garch-faq-causal-variance-leverage-qmle-and-model-release)
     13r. [ARIMA FAQ](#13r-arima-faq-conditional-gaussian-fit-schur-constraints-and-anchored-forecasts)
+    13s. [LSTM FAQ](#13s-lstm-faq-ifgo-inference-masking-and-streaming-replay)
 14. [Builder and gridgraph tips](#14-builder-and-gridgraph-tips)
 15. [Errors and diagnostics](#15-errors-and-diagnostics)
 16. [Determinism and concurrency](#16-determinism-and-concurrency)
@@ -136,6 +138,7 @@ Start with the question, not the algorithm name.
 | “How do I simulate compensated Poisson jump risk over GBM?”                                                   | `jumpdiffusion.Simulate`              | Discrete Poisson counts and aggregated normal log jumps; experimental scenario model.                 |
 | “How does a negative return shock change the next conditional variance?”                                      | `gjrgarch`                            | Immutable asymmetric variance, causal `Step`/`Filter`, first-shock forecast and constrained QMLE.     |
 | “How do I estimate and forecast fixed-order nonseasonal ARIMA levels?”                                        | `arima.Fit` / `Model.Forecast`        | Conditional Gaussian estimand, strict Schur roots, anchored levels and marginal innovation variance.  |
+| “How do I extract recurrent features from a frozen network over variable-length sessions?”                    | `lstm.Import` / `Model.InferSequence` | Immutable IFGO weights, length-masked `[B,T,D]`, zero padding, detached `Final`.                      |
 | “How do I build dependent-data bootstrap index ensembles?”                                                    | `bootstrap.SampleIndices`             | Moving/Circular/Stationary blocks, replay ID and only complete rows.                                  |
 | “How do I infer a hidden operating regime from time-ordered observations?”                                    | `hmm`                                 | Typed causal filtering, smoothing, Viterbi, and independent-sequence EM.                              |
 | “How do I reduce multivariate dimensions without a response variable?”                                        | `pca`                                 | Validated covariance spectrum and a frozen loadings model for holdout inference.                      |
@@ -172,6 +175,8 @@ simulate exact lognormal GBM paths     -> GBM Simulate / SimulateSeeded (explici
 simulate compensated Merton jumps      -> JUMPDIFFUSION Simulate / SimulateSeeded (no calibration)
 measure causal asymmetric variance     -> GJRGARCH Filter/Step / ForecastVariance (no price simulation)
 fit a fixed-order conditional mean     -> ARIMA Fit / Model.Forecast (not exact diffuse MLE)
+extract frozen recurrent embeddings     -> LSTM Import / Model.InferSequence (not training)
+replay a recurrent telemetry stream     -> LSTM Model.InferChunk with local lengths and Final state
 fit conditional Gaussian QMLE          -> GJRGARCH Fit with explicit Initial (check convergence)
 compute exact empirical path quantiles -> MONTECARLO RunWithQuantiles (budgeted raw storage)
 draw dependent-data index replicates   -> BOOTSTRAP SampleIndices (no statistic or CI)
@@ -4515,6 +4520,255 @@ thresholds, economic consequences and approvals remain outside ARIMA.
 
 ---
 
+## 13s. LSTM FAQ: IFGO Inference, Masking and Streaming Replay
+
+### Q13s.1. When should I use `lstm`, and what is it actually predicting?
+
+Use `lstm` to compute **deterministic hidden features** from a single frozen,
+previously trained, one-direction LSTM layer. The package does **not** train
+an LSTM, supply its parameters, decode event categories, estimate failure
+probabilities, or predict future values by itself. A supervised output head,
+loss function, calibration, feature normalization, and decision thresholds
+are separate application responsibilities.
+
+Choose the simpler contract when possible: `arima` for an explicit fixed-order
+conditional mean forecast, `gjrgarch` for asymmetric conditional variance,
+`hmm` for typed probabilistic regimes, `pca` for static orthogonal projection,
+or `dtw` to align two existing sequences. LSTM is appropriate only when a
+trained recurrent representation has established value on a chronological
+holdout under the correct feature schema.
+
+### Q13s.2. Which gate order can be passed to `Import`?
+
+**Exactly `i, f, g, o`**, the PyTorch single-layer gate order:
+
+```text
+Input [4H,D]       Recurrent [4H,H]      Bias [4H]
+rows [0,H)     -> input gate  i -> sigmoid
+rows [H,2H)    -> forget gate f -> sigmoid
+rows [2H,3H)   -> candidate   g -> tanh
+rows [3H,4H)   -> output gate o -> sigmoid
+```
+
+Some exported neural formats use another order. Do not pass them unchanged:
+a shape-compatible gate permutation can produce plausible but mathematically
+wrong hidden vectors with no validation error. The external exporter must
+translate and independently verify its exact ABI before numerical import.
+
+### Q13s.3. Why is there only one `Bias`, not PyTorch's two bias vectors?
+
+`Weights.Bias` holds an **already-combined** `4H`-vector:
+
+`Bias[k] = bias_ih_l0[k] + bias_hh_l0[k]`.
+
+`lstm` does not perform this translation, distinguish two bias sources, or
+import PyTorch checkpoint objects. Even when one source bias is zero, supply
+the full nonnil `Bias` array. A missing Bias is `ErrNilInput`; an incorrectly
+sized nonnil Bias is `ErrShape`. The combined vector is copied and checked
+for NaN/Inf during `Import`.
+
+### Q13s.4. What is the correct shape of `Tensor3` and `State`?
+
+Input `Tensor3` is **batch-first** `[B,T,D]`, and its flat address is
+`(b*T+t)*D+d`. A returned sequence has `[B,T,H]`. `Final.Hidden` and
+`Final.Cell` each have shape `[B,H]`, tagged with `Final.ModelID`.
+
+PyTorch's single-layer batched initial/final hidden-state tensors have
+`[1,B,H]` shape; a trusted external adapter must remove the leading layer
+dimension when building a Go `State`. It must not transpose batch and hidden
+axes. `B>=1`, `D>=1`, and `T>=0`; feature count `D` must equal the imported
+model's width. A zero-time tensor is valid and can have nil Data.
+
+### Q13s.5. What does `lengths=nil` mean? Can I infer lengths from zero-filled padding?
+
+`lengths=nil` means **all `T` steps in every batch row are valid**. A nonnil
+mask has exactly `B` entries, and each `lengths[b]` is an integer in
+`[0,T]`. The package never guesses a valid prefix from zero-valued samples:
+zero is a legitimate temperature deviation, vibration component, or other
+physical feature after calibration.
+
+Supply explicit lengths when rows end early. A mask with wrong length or
+out-of-range entries returns `ErrInvalidOption`, not a best-effort result.
+
+### Q13s.6. Why are padded `Result.Sequence` cells zero instead of the last hidden state?
+
+Padding is a **non-observation**, not an extra recurrent transition.
+For `t>=lengths[b]`, both `h` and `c` remain unchanged; the optional
+`Sequence.Data` entries are exactly positive zero. Repeating the last hidden
+value would falsely turn missing time slots into valid step outputs.
+
+Use `Result.Final.Hidden` and `.Cell` when you need the state after the last
+valid step. Do not read the last row of `Sequence` as the final state when a
+batch contains padding. `ReturnSequence=false` gives an entirely zero-valued
+`Tensor3`, while Final is still published.
+
+### Q13s.7. Why does a NaN in masked padding reject the entire batch?
+
+Input validation covers **every element of `input.Data`**, not just active
+steps. The mask changes the recurrence, not the validity of the supplied
+payload. An invalid masked sample must not remain silently stored in an
+otherwise successful inference record. `NaN`, `+Inf`, or `-Inf` in any
+position returns `nil, ErrNonFinite`, even when that row's length is zero.
+
+Fix data ingestion and source-quality gates upstream; do not use masking as
+an excuse to accept corrupt serialized numeric payloads.
+
+### Q13s.8. What happens when `T=0` or one row has `lengths[b]=0`?
+
+No gate step runs for that row. Both hidden and cell states remain equal to
+its supplied initial state (or all zeros when `initial==nil`). For `T=0`,
+`Sequence` has zero data length even when `ReturnSequence=true`, with tensor
+shape `[B,0,H]`. For positive `T` but a zero-length row, its entire sequence
+slice is exactly zero.
+
+The **full input** still must pass dimensional, mask, and numeric validation.
+A zero-time call does not authorize a wrong ModelID or malformed state.
+
+### Q13s.9. How do I split a session into chunks without changing its result?
+
+Pass a successfully completed result to the next call:
+
+```go
+first, err := model.InferFinal(ctx, firstChunk, firstLocalLengths, nil)
+if err != nil { return err }
+next, err := model.InferChunk(ctx, secondChunk, secondLocalLengths, first, lstm.Options{})
+if err != nil { return err }
+_ = next.Final
+```
+
+This excerpt assumes variables are in scope and the containing function
+returns `error`. `InferChunk` requires nonnil `previous` and uses **both**
+`previous.Final.Hidden` and `previous.Final.Cell`; it does not reset the cell.
+
+For global valid length `L`, chunk start `s`, and chunk width `C`, calculate
+`localLength = min(C, max(0, L-s))` for **each** batch row. Reusing global
+lengths on later chunks is incorrect. The same Go kernel with identical
+ordered valid observations, ModelID and initial state yields **bit-identical**
+full versus chunked hidden/cell values; independent PyTorch backends are a
+separate numerical comparison, not this replay contract.
+
+### Q13s.10. What makes a checkpoint compatible with a Model?
+
+`State.ModelID` must exactly equal `model.ID()`. The fingerprint hashes a
+version tag, D/H dimensions, and all normalized binary64 weight and bias
+words in canonical row-major order. Imported negative zero is normalized to
+positive zero for storage and hashing. A different ID yields
+`ErrStateVersion` **before** the initial matrices are inspected.
+
+A SHA-256 identity is not a digital signature or a provenance guarantee.
+For production restart, authenticate the complete model artifact, fixed
+feature schema, normalization policy, checkpoint content and external
+source-offset mapping. Neither `ModelID` nor `InferChunk` authenticates a
+transport stream.
+
+### Q13s.11. Does an overflowing affine combination simply saturate sigmoid to 1?
+
+**No.** `sigmoid(1000)` may legitimately round to one for finite input;
+`sigmoid(+Inf)` following an overflowed `Wx+Uh+b` is not a correct
+inference step. The kernel uses fixed-order compensated reductions and
+checks exceptional high-magnitude sums with exact rational arithmetic.
+An exact magnitude above the largest finite binary64 returns `ErrOverflow`,
+including a near-limit sum that would round back to a finite MaxFloat64.
+
+Do not catch and replace `ErrOverflow` with zeros, 1s, or a fabricated
+probability. Reassess the feature scales, imported weights and model
+conditioning, and reject the failed inference atomically.
+
+### Q13s.12. Is the package guaranteed bitwise identical to PyTorch CPU double?
+
+No universal cross-framework bitwise guarantee is made. The weight layout
+and mathematical recurrence match PyTorch's supported single-layer IFGO
+configuration; different CPU kernels, summation orders and transcendental
+implementations can legitimately differ in low bits. The included
+`pytorch_golden_test.go` anchors a **specific synthetic reference** from
+PyTorch **2.10.0+cpu**, `torch.float64`, single-layer, unidirectional,
+`batch_first=true`, `.eval()`, deterministic algorithms enabled and MKLDNN
+disabled, with **absolute tolerance `1e-12`** on a small conditioned batch.
+
+A version/hash mismatch is not fixed by silently increasing test tolerance.
+Keep the source fixture, architecture and backend recorded, and treat new
+exports as a reviewed compatibility event.
+
+### Q13s.13. Why is there no Python export script or parser in the Go package?
+
+No Python runtime, checkpoint loader or PyTorch package is needed to run
+or test `lstm`. The external reference data are **frozen Go literals**
+with recorded generation environment; a separately implemented scalar
+oracle in `package lstm_test` independently checks LSTM arithmetic.
+
+To deploy another trained model, create a trusted, explicit adapter outside
+the package that validates architecture, converts gate order/biases and
+provides finite `matrix.Matrix` and `[]float64` values. Do **not** deserialize
+arbitrary pickle data inside numerical inference or treat a file name as
+weight identity.
+
+### Q13s.14. What do `ErrNilInput`, `ErrShape`, `ErrInvalidOption`, `ErrStateVersion`, `ErrNonFinite`, and `ErrOverflow` mean?
+
+| Sentinel           | Typical failure                                                                                   |
+|:-------------------|:--------------------------------------------------------------------------------------------------|
+| `ErrNilInput`      | Nil model, absent required weights/initial matrices, or nil Data with positive expected count     |
+| `ErrShape`         | Wrong `[B,T,D]`/`[B,H]`/weights geometry, wrong Data length, or overflowing element-count product |
+| `ErrInvalidOption` | Nil context, invalid mask size or per-row valid lengths                                           |
+| `ErrStateVersion`  | Initial state has the wrong canonical ModelID                                                     |
+| `ErrNonFinite`     | A supplied weight, hidden/cell value, or input element (including padding) is NaN/Inf             |
+| `ErrOverflow`      | Finite arithmetic operands produce an unrepresentable affine/cell/hidden outcome                  |
+
+Callers must use `errors.Is`, not string comparisons. Context cancellation
+returns `ctx.Err()`; a pre-canceled context is checked before input geometry.
+Initial ModelID/shape/finiteness checks precede the full Data finite scan.
+A failure returns **nil Result**; there is no usable partial batch or stream.
+Lower-level `Matrix.At` read errors retain their own identity alongside
+`ErrShape` via `errors.Join`.
+
+### Q13s.15. What does `(*Result).IsNil()` actually guarantee?
+
+It implements the `core.Nilable` convention using only `return r==nil`.
+It is safe on a typed-nil `*Result`, and does **not** inspect whether
+`Final.Hidden`/`.Cell` exist or whether numerical output is valid. Infer
+errors return nil result, but an independently constructed `&lstm.Result{}`
+will report `IsNil()==false` and is not a successful computation artifact.
+Always inspect the returned `error` before using results.
+
+### Q13s.16. Can one imported Model serve many goroutines?
+
+Yes: `Import` deeply copies the weights, and `Infer` allocates its own
+workspace per call, without mutable global caches or locks. Concurrent
+read-only inference against stable, caller-owned inputs and initial states
+is supported. It is **not** safe for the caller to write an input slice,
+state matrix, or previous `Result.Final` while a goroutine is reading it.
+Successful results are detached; later caller-side mutations cannot change
+the Model or future calls. A model fingerprint does not implement a lock.
+
+### Q13s.17. Why is `ReturnSequence=false` not a zero-allocation call?
+
+It avoids the optional `[B,T,H]` output buffer but still creates detached
+`[B,H]` hidden and cell matrices and per-call working state. There are no
+regular **per-timestep** heap allocations in the recurrent kernel; there
+can be allocations per invocation, and exceptional exact-rational overflow
+rescue also allocates. Import copies weights once via `Matrix.At`; the hot
+loop reads private contiguous slices instead of dispatching matrix methods.
+
+Measure your own workload with `go test -run '^$' -bench BenchmarkInfer -benchmem ./lstm`;
+use realistic B/T/D/H and compare both sequence policies. Avoid concluding
+"zero allocations" from a single favorable benchmark shape.
+
+### Q13s.18. How should I connect LSTM to `series`, `stats` and other models?
+
+Validate timestamp spacing and choose complete windows using `series`
+*before* forming the row-major tensor. Fit feature scaling on the training
+split only (for example with the immutable `stats` standardizer) and reuse
+**exactly that** feature order, units and transformation on holdout/live
+observations. LSTM accepts only finite numeric vectors; it does not inspect
+`series.Valid`, auto-handle missing grid slots, or fit a Standardizer.
+
+Keep the downstream trained head and alarm policy external. Compare against
+ARIMA/HMM/linear baselines on chronological holdout, and audit false alarms
+before taking automated production action. For the complete bridge, read
+[`LSTM.md`](LSTM.md), the [Tutorial LSTM walkthrough](TUTORIAL.md#11t-lstm-foundations-frozen-ifgo-inference-and-masked-streaming)
+and [`lstm/example_test.go`](../lstm/example_test.go).
+
+---
+
 ## 14. Builder and gridgraph tips
 
 ### Q14.1. When should I use `builder`?
@@ -5057,6 +5311,25 @@ sampler, use the supplied path-owned RNG rather than this seeded wrapper.
 Use `errors.Is(err, jumpdiffusion.ErrBudget)` or another sentinel to
 classify a failure; never count an incomplete prefix as an ordinary successful
 scenario. See [`JUMPDIFFUSION.md`](JUMPDIFFUSION.md).
+
+---
+
+### Recipe R. Continue a frozen telemetry LSTM without interpreting padding as data
+
+Import verified, trusted IFGO weights once and keep the resulting immutable
+`Model`. Before the first call, validate the source timestamp grid and
+normalize every feature with frozen training-time parameters. For the first
+packet use `model.InferFinal(ctx, chunk, localLengths, nil)`; for each following
+packet use `model.InferChunk(ctx, chunk, localLengths, previous, lstm.Options{})`
+and retain its successful `Final`. Convert global valid session lengths to
+**chunk-local** masks. Do not update state on padding or infer valid lengths
+from numeric zeros. Check `err` before reading any result, persist an
+externally authenticated source cursor and artifact, and treat `ModelID` as
+parameter identity, not an authorization token. The recurrent feature is
+**not** a calibrated equipment fault probability.
+
+See [`LSTM.md`](LSTM.md#6-streaming-chunks-and-exact-replay) and the
+[canonical executable telemetry example](../lstm/example_test.go).
 
 ---
 

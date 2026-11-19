@@ -1,82 +1,165 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2025-2026 katalvlaran
 
-// Package lstm provides deterministic, single-layer unidirectional float64 LSTM
-// inference from explicitly supplied immutable weights. It evaluates the PyTorch
-// IFGO ABI and returns detached recurrent states for batched or streamed sequences.
+// Package lstm implements deterministic, single-layer, unidirectional LSTM
+// inference from already trained float64 weights in PyTorch IFGO gate order.
+// It publishes detached recurrent states and optional per-timestep features;
+// no training, parameter estimation, or application decision policy occurs here.
 //
-// # Scope and non-goals
+// # Domain and non-goals
 //
-// Import accepts matrix.Matrix input-to-hidden and recurrent coefficients and a
-// combined bias. It never reads Python checkpoints, executes deserializers, trains
-// weights, differentiates, chooses feature scaling, calibrates task-specific heads,
-// or supports GPU, projections, bidirectionality and stacked LSTM layers.
+// Model is an immutable, imported input-to-hidden/recurrent layer. Weights
+// carries the untrusted-by-default numerical import payload; Tensor3 carries
+// a batch-first observation tensor; State carries both recurrent coordinates
+// h and c plus the model identity; and Result is the sole canonical inference
+// artifact. Infer and its convenience wrappers use one recurrent kernel.
 //
-// # Shapes and recurrence
+// The package does not implement training, autodiff, optimizers, dropout,
+// projections, bidirectionality, multiple layers, GPU execution, a prediction
+// head, feature normalization, timestamp validation, a mutable streaming
+// service, Python checkpoint loading, or arbitrary code deserialization.
+// Trusted conversion of external training artifacts into finite matrices is
+// the caller's responsibility. No graph-core arithmetic enters the kernel.
 //
-// The batch-first Tensor3 has [B,T,D] geometry, B>=1, D>=1 and T>=0. Weight
-// matrices have [4H,D] and [4H,H] geometry; Bias has 4H elements. Gate groups
-// are strictly i, f, g, o, each with H rows. For each valid timestep:
+// # Shape and weight ABI
 //
-//	a = Input*x + Recurrent*hprev + Bias
-//	i = sigmoid(a_i); f = sigmoid(a_f); g = tanh(a_g); o = sigmoid(a_o)
-//	c = f*cprev + i*g; h = o*tanh(c)
+// B denotes batch size, T the supplied timesteps per batch row, D the feature
+// width, and H the hidden/cell width. The tensor is contiguous row-major
+// [B,T,D], with index (b*T+t)*D+d. B>=1, D>=1, T>=0 and every checked
+// dimension product must equal the length of Data. The input D must match
+// the imported model's input width; T=0 is legal and needs no Data storage.
 //
-// Exactly zero active timesteps preserve the complete previous state. Each
-// lengths[b] is local to its input chunk; nil lengths activates every timestep.
-// Padding positions never update hidden/cell values and are exactly positive
-// zero in returned Sequence. All input samples, including padding, are finite-checked.
+// Import requires Input[4H,D], Recurrent[4H,H], Bias[4H], H>=1. The four
+// consecutive H-row blocks are exactly input gate i, forget gate f, cell
+// candidate g, and output gate o, in that order. Bias contains the already
+// combined PyTorch input and recurrent biases, bias_ih_l0+bias_hh_l0.
+// The Go State matrices are [B,H]; PyTorch single-layer state tensors have
+// an additional leading layer dimension, which an external adapter removes.
 //
-// # Numerical and determinism laws
+// # Recurrent step and masked sequences
 //
-// Affine terms are reduced in ascending Input then Recurrent column order,
-// for ascending batch, time and IFGO row indices. Compensated binary64
-// arithmetic handles the normal path. Rare overflow/cancellation and extreme
-// boundary values are recomputed as exact rational sums to distinguish a
-// finite cancellation from an exact value outside float64 range. The latter
-// returns ErrOverflow before nonlinearities; finite underflow uses float64
-// rounding. The sigmoid has separate exponent-safe sign branches.
+// For every active timestep, let a = Input*x + Recurrent*hPrev + Bias, with
+// gate blocks ai, af, ag, ao. The kernel evaluates:
 //
-// Identical inputs and model within the same execution backend yield identical
-// outputs. Full-vs-chunked inference is bitwise identical when initial states,
-// local mask lengths, per-row chronological sample order and backend match.
-// Compatibility with external PyTorch CPU libraries is anchored by numerical
-// golden tests with a pinned fixture; universal bitwise PyTorch parity is not claimed.
+//	i = sigmoid(ai); f = sigmoid(af); g = tanh(ag); o = sigmoid(ao)
+//	c = f*cPrev + i*g
+//	h = o*tanh(c)
 //
-// # Errors and precedence
+// All four preactivation blocks use the same previous hidden vector. Gates
+// are computed before the previous hidden state is overwritten. The stable
+// sigmoid evaluates 1/(1+exp(-x)) for x>=0 and exp(x)/(1+exp(x)) for x<0.
+// It is applied only after a finite affine preactivation has been established.
 //
-// The canonical validation order is context (nil then canceled), nil model,
-// tensor dimensions, exact Data length, local lengths, initial state ModelID
-// and shape, then full numeric validation, followed by computation. Initial
-// matrix values are finite-checked during state copying before input scanning.
-// ErrInvalidOption, ErrNilInput, ErrShape, ErrStateVersion, ErrNonFinite and
-// ErrOverflow are distinct sentinel classes; use errors.Is to inspect them.
-// Cancellation and arithmetic failure always return a nil *Result.
+// The lengths mask is nil (all T steps valid) or has exactly B entries in
+// [0,T]. At t>=lengths[b], neither h nor c advances, and an enabled
+// Result.Sequence contains exactly positive zero rather than the last h.
+// All input.Data cells, including masked padding, must still be finite.
+// Zero valid steps (including T=0) preserve the previous State, or the
+// initial zero State when initial==nil.
 //
-// # Ownership and concurrency
+// # Numeric domain and deterministic ordering
 //
-// Import snapshots all numeric weights and hashes canonical little-endian
-// float64 words (with -0 normalized to +0). Model.ID is immutable; no mutable
-// global workspace, cache or lock is used. Concurrent Infer calls are safe when
-// caller-owned input/state matrices are not concurrently mutated. Each call
-// owns private cell/hidden workspace and publishes detached final matrices;
-// callers may mutate successful results without modifying the Model.
+// Caller-provided weights, observations, and initial states must contain
+// finite binary64 values; NaN and either infinity return ErrNonFinite.
+// Ordinary affine evaluation uses a fixed-order compensated float64 sum.
+// If intermediate overflow or a large boundary value could conceal a
+// different exact outcome, the kernel recomputes the same products and sum
+// as exact rationals of the binary64 operands. An exact magnitude larger
+// than math.MaxFloat64 returns ErrOverflow, even if final float64 rounding
+// could misleadingly produce a finite MaxFloat64. The cell transition uses
+// an equivalent exact boundary classification for extreme finite values.
+// Computed infinity is never reinterpreted as an activated sigmoid gate.
 //
-// # Memory and performance
+// Traversal order is ascending batch index, active timestep, IFGO row,
+// input column and recurrent column; cell/hidden features then update in
+// ascending hidden index. No map iteration, parallel reduction, RNG, or
+// mutable global workspace is used. Equal weights, inputs, and execution
+// backend therefore yield equal observable results. A sequence split into
+// ordered chunks is bitwise replay-equivalent to a full call in the same Go
+// kernel, provided the initial state, inputs, and per-chunk local masks match.
+// This is not a universal bitwise parity guarantee for arbitrary PyTorch
+// CPU backends; the pinned PyTorch double fixture uses an absolute tolerance.
 //
-// Import costs O(H*(D+H)) time and space. Each Infer uses
-// O(B*T*D+B*T*H*(D+H)) time, O(B*H+H) workspace, plus O(B*T*H) optional
-// Sequence output and O(B*H) detached Final storage. Exact rational rescue
-// is a rare input-dependent higher-cost path. The matrix.Matrix interface
-// is accessed only during Import/state ingest/publication; the recurrent
-// kernel reads locally owned contiguous row-major slices.
+// # Public invocation modes
+//
+// Import validates and copies the numerical weights. Model.ID exposes their
+// versioned canonical fingerprint. Model.Infer(ctx,input,lengths,initial,opts)
+// is the canonical public facade. InferDefault selects all steps, zero
+// initial state and final-only output. InferFinal accepts masks and initial
+// state but does not materialize a Sequence. InferSequence materializes a
+// zero-padded [B,T,H] Sequence. InferChunk continues from previous.Final
+// of a nonnil prior Result, with the same output choice as Infer.
+//
+// Option ReturnSequence=false leaves Sequence as the entire zero Tensor3
+// value; Final.Hidden and Final.Cell are still always returned as new
+// [B,H] matrices. For streaming, each lengths[b] describes the number of
+// active timesteps in the CURRENT chunk, never the cumulative stream length.
+// If global row length is L, a chunk starts at s and has width C, its local
+// length is min(C,max(0,L-s)). Keep both Hidden and Cell in every continuation.
+//
+// # Error protocol and cancellation
+//
+// Infer checks nil/canceled context first, then nil Model, tensor dimensions
+// and checked Data length, local lengths, and initial state. An initial
+// ModelID mismatch returns ErrStateVersion before inspecting its matrices.
+// Initial matrix presence, [B,H] shapes and finite values are validated
+// during detached ingestion; the complete input.Data scan follows. Only
+// then are optional output storage and the recurrent kernel evaluated.
+// Missing required storage returns ErrNilInput; malformed geometry returns
+// ErrShape; wrong masks or nil context return ErrInvalidOption. Dependency
+// matrix errors preserve both a package sentinel and the underlying cause
+// through errors.Join. Use errors.Is, never error-message matching.
+//
+// Cancellation is cooperatively checked before validation, periodically
+// during full-data scanning and long gate computations, and before final
+// publication. A failed import returns nil Model; failed/canceled inference
+// returns nil *Result and an error, never a usable partial state. This
+// differs from packages which deliberately publish completed prefixes.
+//
+// # Memory ownership and concurrency
+//
+// Import copies all finite coefficients into private row-major []float64
+// buffers, normalizing -0 to +0, and never retains source matrices or Bias.
+// Model.ID is a lowercase SHA-256 of the ASCII prefix "lstm/ifgo-f64/v1",
+// LE64(D), LE64(H), and row-major little-endian IEEE-754 words of Input,
+// Recurrent and Bias in that order. The ID fingerprints parameter bytes under
+// this encoding; it is NOT artifact authenticity, provenance, or permission.
+//
+// Each call owns its hidden/cell workspace and returns detached Final
+// matrices and optional Sequence data. A Model is safe for concurrent
+// read-only inference without locks. Caller mutation of input tensors,
+// initial states, or a previous Result while another call reads them is
+// unsupported. Published results can be mutated after return without
+// altering the model. A nil *Result supports IsNil() per core.Nilable;
+// an allocated Result with zero fields is not proof of successful inference.
+//
+// # Complexity and performance
+//
+// Import uses O(H*(D+H)) time and owned parameter space. Infer validates
+// O(B*T*D) input values and copies O(B*H) initial state values; the normal
+// recurrence costs O(V*H*(D+H)), where V is the number of valid timesteps
+// across rows. It allocates O(B*H+H) transient workspace, O(B*H) detached
+// Final storage, and optionally O(B*T*H) zero-initialized Sequence storage.
+// No heap buffer is allocated per normal recurrent step. Exceptional
+// big.Rat rescue has input-dependent, higher time and memory costs.
+// Checked integer products prevent geometry overflow before allocation;
+// operating-system out-of-memory failures are not converted into errors.
 //
 // # AI-Hints
 //
-//   - Never reinterpret PyTorch gate indices as IFOG or insert a silent transform.
-//   - Never treat an overflowed affine sum as a legitimate saturated gate.
-//   - Never propagate a hidden output into masked sequence positions.
-//   - Always continue streams with both Final.Hidden and Final.Cell and the ModelID.
-//   - Keep application-level feature scaling, model training and decision policy
-//     outside this numerical inference package.
+//   - Never change gate order to IFOG, even if another framework uses it.
+//   - Never apply sigmoid to an overflowed affine value to hide ErrOverflow.
+//   - Never treat padded input zero as a validity mask; use lengths explicitly.
+//   - Do not replace masked outputs with the last hidden value; use Final
+//     to access the last valid hidden/cell state.
+//   - Keep both previous Hidden and Cell and the exact ModelID when chunking.
+//   - Do not infer a failure probability, diagnosis, or trading signal from
+//     uncalibrated hidden features: a validated head and application-specific
+//     decision policy are separate responsibilities.
+//   - Do not expose mutable Dense backing storage; copying at Import allows
+//     the kernel to use private contiguous slices without unsafe/reflection.
+//
+// See lstm/example_test.go for runnable examples and docs/LSTM.md for
+// equations, wrapper selection, PyTorch parity, masking, error precedence,
+// resource behavior, and production troubleshooting.
 package lstm

@@ -8,7 +8,7 @@
     This README is the public face of lvlath. It presents the library as a
     deterministic, contract-driven Go toolkit for graph algorithms, flow networks,
     dense graph algebra, routing, exact timestamp grids, causal time-series primitives, Wilder RSI batch/stream filtering, SMA-seeded MACD, compensated MFI, compensated cumulative OBV, Chaikin A/D, fixed-window ACF, fractional PAA,
-    symbolic SAX encoding, dependent-data block-index resampling, path-indexed parallel Monte Carlo simulation, exact-in-distribution GBM and Merton jump-diffusion paths, causal GJR-GARCH volatility, fixed-order conditional Gaussian ARIMA with anchored forecasts, alignment, and reproducible algorithm engineering. It should give a new reader immediate confidence in
+    symbolic SAX encoding, dependent-data block-index resampling, path-indexed parallel Monte Carlo simulation, exact-in-distribution GBM and Merton jump-diffusion paths, causal GJR-GARCH volatility, fixed-order conditional Gaussian ARIMA with anchored forecasts, frozen IFGO LSTM recurrent inference, alignment, and reproducible algorithm engineering. It should give a new reader immediate confidence in
     what lvlath can solve, how packages compose, where the formal contracts live,
     and why this repository is engineered beyond ad-hoc algorithm snippets.
 
@@ -48,7 +48,7 @@
 
 # lvlath
 
-**lvlath** is a pure-Go algorithm engineering library for graphs, flows, dense graph algebra, routing, exact timestamp grids, causal series transforms, fractional PAA, symbolic SAX time-series signatures, stable statistical moments, fitted feature scaling, sample autocorrelation, Wilder RSI, SMA-seeded MACD, compensated OHLCV Money Flow Index, cumulative On-Balance Volume, Chaikin Accumulation/Distribution, covariance PCA, causal Hidden Markov Models, version-pinned PCG-DXSM stochastic streams, time-series alignment, reproducible parallel Monte Carlo drivers, exact-in-distribution geometric Brownian motion and Merton jump-diffusion paths, asymmetric stationary GJR-GARCH conditional volatility, fixed-order conditional Gaussian ARIMA level forecasts, and reproducible test fixtures.
+**lvlath** is a pure-Go algorithm engineering library for graphs, flows, dense graph algebra, routing, exact timestamp grids, causal series transforms, fractional PAA, symbolic SAX time-series signatures, stable statistical moments, fitted feature scaling, sample autocorrelation, Wilder RSI, SMA-seeded MACD, compensated OHLCV Money Flow Index, cumulative On-Balance Volume, Chaikin Accumulation/Distribution, covariance PCA, causal Hidden Markov Models, version-pinned PCG-DXSM stochastic streams, time-series alignment, reproducible parallel Monte Carlo drivers, exact-in-distribution geometric Brownian motion and Merton jump-diffusion paths, asymmetric stationary GJR-GARCH conditional volatility, fixed-order conditional Gaussian ARIMA level forecasts, deterministic single-layer IFGO LSTM inference, and reproducible test fixtures.
 
 It is built for people who need algorithmic tools they can explain in a code review, trust in CI, compose across packages, and debug from deterministic artifacts instead of guessing why an answer changed.
 
@@ -83,6 +83,7 @@ It is built for people who need algorithmic tools they can explain in a code rev
 * `jumpdiffusion` adds compensated compound-Poisson lognormal jumps over GBM without hidden Gaussian count approximations, RNG-order drift or partial-payoff publication;
 * `gjrgarch` provides immutable asymmetric return-variance models, strictly causal filtering, expected-variance forecasts and constrained Gaussian QMLE;
 * `arima` fits a fixed nonseasonal conditional Gaussian ARIMA law, validates strict Schur roots and predicts anchored levels with marginal innovation variances;
+* `lstm` evaluates one immutable PyTorch-ordered IFGO layer over checked batch-first finite tensors, with zero-padded masks, detached streaming states and exact overflow classification;
 * `flow`, `mst`, `tsp`, `dtw`, `gridgraph`, and `builder` packages extend the same discipline into optimization, alignment, fixtures, and examples.
 
 ---
@@ -117,6 +118,7 @@ The common failures are familiar:
 * Monte Carlo worker count silently changes floating-point totals, a blocked low-index path grows an unbounded queue, or a partial result is mistaken for a complete ensemble.
 * GBM silently applies annual coefficients to elapsed seconds, overflows a representable `S*exp(increment)` result, or turns a failed endpoint into a fake epsilon-clamped price.
 * Merton jump simulation treats log-jump mean as the arithmetic drift compensator, substitutes Gaussian Poisson counts, or prices an incomplete path as maturity.
+* neural model exports reorder IFGO gates, omit recurrent biases, treat padding as valid state updates, or silently saturate an overflowed affine expression.
 
 `lvlath` is built against those failure modes. It is an algorithm engineering library: each package publishes a narrow mathematical contract, validates its input domain, returns meaningful result artifacts, and keeps deterministic behavior observable.
 
@@ -207,6 +209,13 @@ The common failures are familiar:
     using historical anchors. Marginal innovation variance is not full
     predictive parameter uncertainty or a risk quantile.
 
+19. **Recurrent inference separates model identity, numerical computation, and decision policy**
+
+    `lstm` imports finite IFGO weights into an immutable model with a canonical
+    numerical fingerprint. Masked timesteps never modify hidden/cell state;
+    canceled or failed inference returns no partial result. The caller owns
+    validated preprocessing, model provenance, trained heads and alert policy.
+
 ---
 
 ## Installation
@@ -253,6 +262,7 @@ lvlath/
 ├── jumpdiffusion/         # experimental Merton Poisson jumps, compensated drift, PTRS
 ├── gjrgarch/              # causal asymmetric return variance, forecast and Gaussian QMLE
 ├── arima/                 # conditional Gaussian ARIMA, anchored level/variance forecasts
+├── lstm/                  # immutable IFGO forward inference, masked batches, stateful chunks
 ├── gridgraph/             # 2D lattice graph generation
 ├── matrix/                # dense graph algebra, stable statistics, pivoted factors and solves
 ├── tsp/                   # tour construction, local search, exact small-instance routing
@@ -286,6 +296,7 @@ lvlath/
 │   ├── JUMPDIFFUSION.md
 │   ├── GJRGARCH.md
 │   ├── ARIMA.md
+│   ├── LSTM.md
 │   ├── PAA.md
 │   ├── SAX.md
 │   ├── GRID_GRAPH.md
@@ -397,6 +408,12 @@ lvlath/docs/{PACKAGE}.md
                                    └────────────────────────────────────────────┘
 
                                    ┌────────────────────────────────────────────┐
+                                   │ lstm                                       │
+                                   │ frozen IFGO recurrent inference            │
+                                   │ masked batches / detached chunk State      │
+                                   └────────────────────────────────────────────┘
+
+                                   ┌────────────────────────────────────────────┐
                                    │ rsi                                        │
                                    │ causal Wilder changes / ready mask         │
                                    │ zero-allocation Push / versioned snapshot  │
@@ -464,6 +481,10 @@ Composition rule:
   explicitly unit-matched elapsed-time grids; stochastic draws come from rng,
   payoffs and calibration come from the caller, and ensemble reduction comes
   from montecarlo.
+ - lstm owns immutable IFGO single-layer inference, checked batch-first
+   tensors, local valid lengths, exact-zero padding and model-identified
+   Hidden/Cell continuation. It neither trains coefficients nor outputs a
+   calibrated task-specific prediction.
  - arima owns fixed-order conditional Gaussian mean estimation, strict Schur AR/MA
    admissibility, original-level anchor recovery and linear-memory marginal
    innovation variances; cadence, order choice, holdout review and release are external.
@@ -567,6 +588,7 @@ approves risk-model deployment. Details follow in the
 | `gbm`           | Exact-in-distribution GBM price paths on caller-specified irregular grids, with explicit years/days/seconds.                                   | Avoids spurious `S*exp`/`sigma²` overflows; detached prefix/errors, zero RNG draws at sigma zero.                          | European-option paths, synthetic tick stress, FX-liability scenarios and deterministic escalation.             |
 | `gjrgarch`      | Immutable GJR-GARCH(1,1) causal variance, forecast and Gaussian QMLE with explicit optimizer diagnostics.                                      | Causal lag indexing, sign-dependent shock, stationarity margin and deterministic KKT/BFGS.                                 | Next-day equity risk, collateral monitoring, model-risk audit and volatility term structure.                   |
 | `arima`         | Fixed-order conditional Gaussian ARIMA fit and anchored level forecasts.                                                                       | Schur-stable AR/MA, deterministic optimizer, historical anchors, `O(H)` horizon variance.                                  | GDP index planning, backlog staffing, liquidity spreads and industrial energy scheduling.                      |
+| `lstm`          | Frozen single-layer IFGO LSTM inference on finite batch-first tensors with optional zero-padded outputs.                                       | Private copied weights, canonical ModelID, exact overflow gating, detached Hidden/Cell and full/chunk replay.              | Fleet telemetry embeddings, order-book features and replayable sensor packets (externally validated model).    |
 | `jumpdiffusion` | Merton compound-Poisson lognormal jump-diffusion on explicit GBM grids.                                                                        | `lambda=0` GBM parity, bounded discrete PTRS, drift compensator, partial prefix with errors.                               | Scenario-driven collateral gap stress, jump-sensitive European options, credit event sensitivity.              |
 | `bootstrap`     | Reproducible Moving/Circular/Stationary index resampling for dependent series with per-replicate streams and exact bounded integers.           | Detached complete-row results, memory admission and cancellation without interrupted-row publication.                      | Portfolio risk sensitivity, paired serial regression, telemetry alarm calibration.                             |
 | `acf`           | Direct fixed-window sample autocorrelation with two explicit denominator conventions and raw/centered origins.                                 | Scaled compensated products, no lag-specific recentering or clipping; caller-owned lag counts.                             | Residual audits, compressor cycles, vibration periodicity, signal pitch.                                       |
@@ -2205,6 +2227,118 @@ See [`docs/HMM.md`](docs/HMM.md) for formal log-domain equations, EM counts and 
 
 ---
 
+### LSTM: immutable IFGO inference with masked batches and stateful continuation
+
+`github.com/lvlath/go/lstm` evaluates a **previously trained**, single-layer,
+unidirectional `float64` LSTM. It uses the PyTorch **i/f/g/o** gate layout,
+strictly finite numeric inputs, a versioned SHA-256 parameter identity and a
+single deterministic forward kernel. The package does **not** train weights,
+load Python checkpoints, fit feature scales, implement neural output heads,
+or produce a calibrated risk or fault probability on its own.
+
+| Need                                    | Public API                                                     | Important behavior                                                                            |
+|:----------------------------------------|:---------------------------------------------------------------|:----------------------------------------------------------------------------------------------|
+| Import trusted numerical weights        | `lstm.Import(lstm.Weights{...})`                               | Owns copies of Input `[4H,D]`, Recurrent `[4H,H]`, combined Bias `[4H]`; freezes `Model.ID()` |
+| Run all steps with zero initial state   | `model.InferDefault(ctx, input)`                               | Full batch, final-only result; no Sequence buffer                                             |
+| Extract final state from a masked batch | `model.InferFinal(ctx, input, lengths, initial)`               | Masked steps never update either Hidden or Cell                                               |
+| Extract every valid recurrent feature   | `model.InferSequence(ctx, input, lengths, initial)`            | `[B,T,H]` Sequence; padded positions are exactly zero                                         |
+| Continue an ordered session             | `model.InferChunk(ctx, chunk, localLengths, previous, opts)`   | Uses both `previous.Final` matrices and verifies `ModelID`                                    |
+| Select the full behavior explicitly     | `model.Infer(ctx, input, lengths, initial, lstm.Options{...})` | Canonical facade; all wrappers delegate to it                                                 |
+
+```text
+trusted, externally validated numeric weights
+             |
+          Import --------------> immutable *lstm.Model / SHA-256 ID
+                                      |
+caller-normalized Tensor3 [B,T,D] ----+--> Infer [IFGO gates, finite checks]
+          lengths [B] -------------------> |                 |
+                                           |                 +--> Final [B,H]: Hidden + Cell
+                                           +--> Sequence [B,T,H] (optional, zero padding)
+                                                                        |
+                              previous.Final --> next InferChunk -------+
+```
+
+The numerical contract separates **invalid input** (`ErrNonFinite`) from
+**unrepresentable arithmetic** (`ErrOverflow`). A computed infinite affine
+value is never passed to sigmoid as if it were a valid saturated gate.
+`lengths` describes valid steps **within the current chunk**; the full
+input buffer, including masked cells, is checked for NaN/Inf. Model weights
+and published result matrices are detached. One immutable Model supports
+concurrent calls over stable read-only inputs, with independent workspaces.
+
+A compact first-use example (illustrative, **synthetic** weights):
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/lvlath/go/lstm"
+	"github.com/lvlath/go/matrix"
+)
+
+func main() {
+	// H=1, D=1; IFGO gates have four input and four recurrent rows.
+	wi, err := matrix.NewDense(4, 1)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	wr, err := matrix.NewDense(4, 1)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	if err := wi.Fill([]float64{0.2, 0.1, 0.3, -0.1}); err != nil {
+		fmt.Println(err)
+		return
+	}
+	model, err := lstm.Import(lstm.Weights{
+		Input: wi, Recurrent: wr, Bias: []float64{0, 0, 0.05, 0}, Hidden: 1,
+	})
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	// Second row is masked after its first observation; all padding remains finite.
+	input := lstm.Tensor3{Batch: 2, Time: 3, Features: 1,
+		Data: []float64{0.2, 0.3, 0.4, 0.5, 0, 0}}
+	result, err := model.InferSequence(context.Background(), input, []int{3, 1}, nil)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Printf("sequence shape: %dx%dx%d\n", result.Sequence.Batch, result.Sequence.Time, result.Sequence.Features)
+	fmt.Println("second-row padding zero:", result.Sequence.Data[4] == 0 && result.Sequence.Data[5] == 0)
+	fmt.Println("final state shape:", result.Final.Hidden.Rows(), result.Final.Hidden.Cols())
+	// Output:
+	// sequence shape: 2x3x1
+	// second-row padding zero: true
+	// final state shape: 2 1
+}
+```
+
+For model deployment, the application retains fixed training-time feature
+order/scaling, timestamp quality, artifact authenticity, chronological
+holdout evidence, and a separately trained downstream head or decision
+policy. The numeric `ModelID` matches parameter bytes; it is **not** a
+digital signature. Chunk replay can be bitwise identical within the same
+Go kernel, while PyTorch CPU `float64` compatibility is verified against a
+**pinned numerical fixture** at `1e-12` absolute tolerance, not promised
+bit-for-bit across every PyTorch backend.
+
+See [`docs/LSTM.md`](docs/LSTM.md) for the complete ABI/overflow/masking
+contracts, [`lstm/doc.go`](lstm/doc.go) for package-level laws,
+[`lstm/example_test.go`](lstm/example_test.go) for six executable scenarios,
+the four-device telemetry example in [`lstm/example_test.go`](lstm/example_test.go),
+and [the Tutorial](docs/TUTORIAL.md#11t-lstm-foundations-frozen-ifgo-inference-and-masked-streaming)
+for masked streaming from a frozen model.
+
+---
+
 ## Current contract documentation
 
 | Layer                          | File                                             | Purpose                                                                                                                         |
@@ -2226,6 +2360,7 @@ See [`docs/HMM.md`](docs/HMM.md) for formal log-domain equations, EM counts and 
 | GBM exact lognormal paths      | [`docs/GBM.md`](docs/GBM.md)                     | Model equations, unit dimensions, input precedence, robust price publication and Monte Carlo bridge.                            |
 | GJR-GARCH conditional variance | [`docs/GJRGARCH.md`](docs/GJRGARCH.md)           | Strict causality, asymmetric shock mathematics, stationary forecasts, QMLE gradient, KKT projection and release policy.         |
 | ARIMA mean/level forecasting   | [`docs/ARIMA.md`](docs/ARIMA.md)                 | Conditional Gaussian fit, burn-in, Schur roots, anchor recovery, impulse variance and operational limits.                       |
+| Frozen IFGO LSTM inference     | [`docs/LSTM.md`](docs/LSTM.md)                   | Combined PyTorch biases, tensor/length masks, exact overflow, ModelID, streaming replay and CPU-double oracle boundaries.       |
 | Merton jump-diffusion          | [`docs/JUMPDIFFUSION.md`](docs/JUMPDIFFUSION.md) | Compound Poisson log-jump law, compensation, bounded PTRS, RNG replay, errors and source attribution.                           |
 | Stable statistics              | [`docs/STATS.md`](docs/STATS.md)                 | Welford/Chan, exact mean sum, scaled M2, fitted scaling, sentinels, immutable inference.                                        |
 | Stable Ridge regression        | [`docs/RIDGE.md`](docs/RIDGE.md)                 | Positive-Lambda augmented QR, strict intercept policy, wide/collinear designs, nonzero tiny coefficients and frozen prediction. |
@@ -2811,6 +2946,8 @@ incidence matrix:       columns are edge identities, not vertex-pair weights
 | "How do I generate a positive lognormal price path on an irregular grid?"                      | `gbm.Simulate` / `SimulateSeeded`                                  | Model units are explicit, price publication is finite, runtime failures retain only completed points. |
 | "How should the next variance react to a negative return shock?"                               | `gjrgarch.FilterStationary` / `Step` / `ForecastVariance`          | Strictly lagged conditional variance with leverage and stationary expected-variance horizons.         |
 | "How do I predict future original levels with a fixed ARIMA order?"                            | `arima.Fit` / `Model.Forecast`                                     | Conditional innovations, strict roots, original-level anchors, and marginal innovation variance.      |
+| "How do I extract frozen recurrent features from unequal-length telemetry sessions?"           | `lstm.Import` / `Model.InferSequence`                              | IFGO weights, explicit local masks, zero-padded Sequence and detached Final.                          |
+| "How do I resume one LSTM inference across ordered chunks?"                                    | `Model.InferFinal` / `Model.InferChunk`                            | Reuse both Hidden/Cell, verify ModelID and recompute per-chunk lengths.                               |
 | "How do I model sudden positive or negative price jumps on that GBM grid?"                     | `jumpdiffusion.Simulate` / `SimulateSeeded`                        | Compensated Merton log-jump model, bounded discrete Poisson counts and explicit model limitations.    |
 | "How do I build repeatable graphs?"                                                            | `builder` / `gridgraph`                                            | Generated fixtures should be deterministic.                                                           |
 
@@ -2850,6 +2987,9 @@ incidence matrix:       columns are edge identities, not vertex-pair weights
 | Integrated ARIMA forecasts accidentally start at level/slope zero               | Anchor `d=1` on last level, `d=2` on last level and last first difference.                                   |
 | Conditional SSE includes burn-in or uses raw `n` for variance                   | First `max(p,q)` differenced observations condition only; profile over `EffectiveN`.                         |
 | ARIMA root boundary silently clipped or nonconverged fit deployed               | Reject Schur unit roots; classify `ErrNotConverged` and retain only a diagnostic candidate.                  |
+| LSTM gate rows or combined biases are imported in the wrong ABI                 | Require i/f/g/o contiguous H-row blocks and precombined input+recurrent bias; verify golden parity.          |
+| LSTM padding updates state or repeats the last hidden feature                   | Masked steps must skip both states; Sequence tails are exactly zero, while Final keeps last valid state.     |
+| LSTM affine overflow is hidden behind sigmoid saturation                        | Reject exact unrepresentable affines as ErrOverflow; do not invent a finite gate.                            |
 | Horizon covariance materialized or uncertainty interpreted as complete          | Linear impulse-response marginal variance excludes parameter uncertainty and joint horizon covariance.       |
 | Merton log-jump mean `m` used as the compensator `k`                            | Compensated Merton drift uses `lambda*expm1(m+s^2/2)`, never `lambda*m`.                                     |
 | Poisson count replaced by a Gaussian at high intensity                          | Use bounded PTRS at mean>=30, not a continuous approximation.                                                |
