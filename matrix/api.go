@@ -835,3 +835,136 @@ func SolveLeastSquares(ctx context.Context, a, b Matrix, opts FactorOptions) (*S
 	}
 	return factor.Solve(ctx, b)
 }
+
+// SVD computes a detached economy singular-value decomposition using cyclic
+// one-sided Jacobi on independently exponent-scaled working columns.
+// For A[m,n], k=min(m,n), it returns U[m,k], VT[k,n], and k singular values.
+//
+// Implementation:
+//   - Stage 1: check context, input nilability/shape, then options in that order.
+//   - Stage 2: validate finite values and take a private row-major input snapshot.
+//   - Stage 3: run one-sided Jacobi, transpose-dualize wide results, and publish.
+//
+// Behavior highlights:
+//   - Never constructs A^T*A, A*A^T, or an m-by-m/n-by-n orthogonal matrix.
+//   - Rank is numerical metadata; all representable nonzero modes are retained.
+//   - Completed-sweep budget exhaustion returns a finite diagnostic result with
+//     Converged=false and ErrNotConverged, never a fabricated successful model.
+//
+// Inputs:
+//   - ctx: active, non-nil context; cancellation is checked between column pairs.
+//   - a: read-only finite Matrix of shape m-by-n with m,n>=1; no concurrent mutation.
+//   - options: sweep budget and normalized correlation threshold (zero selects defaults).
+//
+// Returns:
+//   - *SVDResult: independently owned economy matrices, singular values, rank,
+//     and convergence diagnostics; only sweep exhaustion permits result plus error.
+//
+// Errors:
+//   - ErrInvalidOption: missing context or invalid options; ErrNilMatrix: nil input.
+//   - ErrBadShape/ErrInvalidDimensions: zero/invalid dimensions or overflowed size.
+//   - ErrNaNInf: invalid input; ErrOverflow: unrepresentable required singular value.
+//   - ErrNotConverged: exhausted sweeps or irresolvable basis completion.
+//   - ctx.Err() and wrapped Matrix.At errors from the finite input scan.
+//
+// Determinism:
+//   - Validation, pair scans and canonical sign selection use increasing indices.
+//   - Singular values are stably sorted descending; exact ties preserve pair order.
+//
+// Complexity:
+//   - Time O((sweeps+1)*max(m,n)*k^2), Space O((m+n)*k), k=min(m,n).
+//   - Input snapshot, working columns, and detached output buffers are included.
+//
+// Notes:
+//   - Input remains unmodified, and the result is safe to mutate after return.
+//   - SVD is not a pseudoinverse or minimum-norm solver; no automatic fallback
+//     to QR, Gram matrices, or other algorithms is performed.
+//
+// AI-Hints:
+//   - Prefer *Dense for direct input scans; generic Matrix.At errors are preserved.
+//   - Test orthogonal projectors for repeated modes; their individual bases are
+//     not perturbation-invariant even when singular values are stable.
+func SVD(ctx context.Context, a Matrix, options SVDOptions) (*SVDResult, error) {
+	if err := factorContextErr(ctx); err != nil {
+		return nil, err
+	}
+	rows, cols, err := factorInputShape(a)
+	if err != nil {
+		return nil, err
+	}
+	finalized, err := svdOptionsChecked(options)
+	if err != nil {
+		return nil, err
+	}
+	// Only validated input values reach the independently scaled Jacobi kernel.
+	snapshot, err := factorReadMatrix(ctx, a, rows, cols)
+	if err != nil {
+		return nil, err
+	}
+	return svdCompute(ctx, snapshot, rows, cols, finalized)
+}
+
+// SVDDefault computes a rectangular economy SVD with the standard Jacobi policy.
+// It is a convenience facade for SVD(ctx, input, SVDOptions{}), not a second solver.
+//
+// Implementation:
+//   - Stage 1: select the zero-valued SVDOptions policy.
+//   - Stage 2: delegate context, shape, numeric, and value validation to SVD.
+//   - Stage 3: return exactly the canonical result and error pair.
+//
+// Behavior highlights:
+//   - Default correlation tolerance is 8*2^-52 with up to 100 full sweeps.
+//   - On budget exhaustion, the diagnostic result and ErrNotConverged are preserved.
+//
+// Inputs: ctx is active and non-nil; input is read-only finite m-by-n, m,n>=1.
+// Returns: Detached economy SVD result with k=min(m,n), or a canonical error.
+// Errors: Identical error classification and precedence to SVD with zero options.
+// Determinism: Same input traversal, stable sorting, and canonical signs as SVD.
+// Complexity: Time O(sweeps*max(m,n)*k*k), Space O((m+n)*k).
+// Notes: No source input is mutated; returned matrices belong to the caller.
+// AI-Hints: Use SVD with an explicit options struct to control convergence.
+func SVDDefault(ctx context.Context, input Matrix) (*SVDResult, error) {
+	return SVD(ctx, input, SVDOptions{})
+}
+
+// SVDWithTolerance computes economy SVD with an explicit correlation threshold.
+// The maximum sweep count retains its standard default of 100 full sweeps.
+//
+// Implementation:
+//   - Stage 1: build an SVDOptions value containing the requested Tolerance.
+//   - Stage 2: let SVD validate the threshold and snapshot the input.
+//   - Stage 3: forward the result and all error classifications unchanged.
+//
+// Behavior highlights: Tolerance changes sweep convergence, never numeric rank.
+// Inputs: ctx and input follow SVD; tolerance is finite with 0<=value<1;
+// zero selects the documented default 8*2^-52.
+// Returns: Same detached result or diagnostic partial result as SVD.
+// Errors: ErrInvalidOption for invalid tolerance, plus canonical SVD errors.
+// Determinism: Same lexicographic pairs and stable singular ordering as SVD.
+// Complexity: Time O(sweeps*max(m,n)*k*k), Space O((m+n)*k).
+// Notes: Use explicit SVDOptions to configure both budget and tolerance together.
+// AI-Hints: A loose threshold can increase reconstruction/orthogonality error;
+// it is not a request to zero singular values below a numeric threshold.
+func SVDWithTolerance(ctx context.Context, input Matrix, tolerance float64) (*SVDResult, error) {
+	return SVD(ctx, input, SVDOptions{Tolerance: tolerance})
+}
+
+// SVDWithMaxIterations bounds the Jacobi work by a specified full-sweep count.
+// The normalized correlation threshold stays at the standard default 8*2^-52.
+//
+// Implementation:
+//   - Stage 1: fill MaxIterations in a fresh SVDOptions value.
+//   - Stage 2: delegate validation and factorization to SVD.
+//   - Stage 3: forward convergence diagnostics without modifying the result.
+//
+// Behavior highlights: Already orthogonal matrices may finish with zero sweeps.
+// Inputs: ctx and input follow SVD; maxIterations>=0, zero selects 100 sweeps.
+// Returns: Detached economy decomposition or diagnostic nonconverged result.
+// Errors: ErrInvalidOption for negative count, plus canonical SVD errors.
+// Determinism: Exactly the same pair ordering and stopping rules as SVD.
+// Complexity: Time O(maxIterations*max(m,n)*k*k), Space O((m+n)*k).
+// Notes: A small budget can intentionally yield ErrNotConverged with partial data.
+// AI-Hints: Check both err and Converged; never interpret a budget limit as rank.
+func SVDWithMaxIterations(ctx context.Context, input Matrix, maxIterations int) (*SVDResult, error) {
+	return SVD(ctx, input, SVDOptions{MaxIterations: maxIterations})
+}

@@ -1008,3 +1008,65 @@ func finalizeOptions(o *Options) {
 		o.binaryWeights = false
 	}
 }
+
+// SVDOptions controls cyclic one-sided Jacobi convergence for economy SVD.
+// A zero-valued options instance selects 100 full sweeps and correlation
+// tolerance 8*2^-52; both parameters affect iteration, never numeric rank.
+//
+// Implementation:
+//   - Stage 1: validate explicit values before copying the input matrix.
+//   - Stage 2: resolve zero values to their documented numeric defaults.
+//   - Stage 3: pass a frozen value-copy policy to the single Jacobi kernel.
+//
+// Behavior highlights:
+//   - MaxIterations limits *completed full sweeps*, not rotations.
+//   - Tolerance is a relative normalized column correlation, not a spectral cutoff.
+//
+// Inputs: Both fields are caller-owned value types, never retained by reference.
+// Returns: Canonical SVD copies and finalizes the policy for each invocation.
+// Errors: ErrInvalidOption on negative budget or tolerance outside [0,1).
+// Determinism: Default normalization and pair order depend only on field values.
+// Complexity: Time O(1), Space O(1).
+// Notes: Zero budget input means the default 100, not an explicit no-work mode.
+// AI-Hints: Do not use Tolerance to truncate singular values or alter Rank;
+// callers wanting a different rank policy should inspect SingularValues separately.
+type SVDOptions struct {
+	// MaxIterations is the maximum full sweep count. Zero selects 100 sweeps;
+	// a negative value is invalid. One sweep checks every unordered pair once.
+	MaxIterations int
+
+	// Tolerance bounds absolute normalized cross-column correlations after a
+	// sweep. Zero selects 8*2^-52; positive values must be finite and <1.
+	Tolerance float64
+}
+
+// FactorOptions configures numerical rank selection and condition rejection.
+// Its zero value uses a dimension-scaled machine-epsilon rank tolerance without
+// imposing a hard condition-number limit on otherwise full-rank inputs.
+// Implementation:
+//   - RankTolerance is validated before any matrix input is inspected.
+//   - ConditionLimit is validated and applied to a measured 1-norm condition estimate.
+//
+// Behavior highlights:
+//   - RankTolerance=0 selects 2^-52*max(rows,cols); positive values are relative.
+//   - ConditionLimit=0 disables rejection; values >=1 reject estimates strictly above the limit.
+//
+// Inputs:
+//   - RankTolerance: finite, nonnegative, dimensionless relative diagonal cutoff.
+//   - ConditionLimit: finite 0 or >=1, dimensionless diagnostic threshold.
+//
+// Returns: A value-only immutable policy snapshot stored by each factor.
+// Errors: ErrInvalidOption for NaN, infinity, negative tolerance, or a limit in (0,1).
+// Determinism: No implicit state, randomness, or environment-dependent options.
+// Complexity: O(1) validation time and storage.
+// Notes: Numerical rank is a scale-relative heuristic, not algebraic rank certification.
+// AI-Hints: Never interpret ConditionLimit as an independently certified bound on kappa_2.
+type FactorOptions struct {
+	// RankTolerance is a relative cutoff for the largest absolute diagonal
+	// of the pivoted U or R. Equality to the cutoff counts as rank loss.
+	RankTolerance float64
+
+	// ConditionLimit optionally rejects the measured 1-norm condition number.
+	// The comparison is strictly greater, so equality remains admissible.
+	ConditionLimit float64
+}

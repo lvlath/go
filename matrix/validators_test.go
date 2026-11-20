@@ -22,6 +22,7 @@
 package matrix_test
 
 import (
+	"context"
 	"errors"
 	"math"
 	"testing"
@@ -329,5 +330,88 @@ func TestValidateGraphAdjacency_Structural(t *testing.T) {
 	g := &matrix.AdjacencyMatrix{Mat: IdentityDense(t, 2)}
 	if err := matrix.ValidateGraphAdjacency(g); err != nil {
 		t.Fatalf("ValidateGraphAdjacency (square): %v", err)
+	}
+}
+
+// svdExceptionalMatrix supplies an external Matrix whose read operations can
+// fail independently of the built-in Dense numeric storage policy.
+type svdExceptionalMatrix struct {
+	rows, cols int
+	fail       error
+	value      float64
+}
+
+func (s *svdExceptionalMatrix) Rows() int { return s.rows }
+func (s *svdExceptionalMatrix) Cols() int { return s.cols }
+func (s *svdExceptionalMatrix) At(int, int) (float64, error) {
+	return s.value, s.fail
+}
+func (s *svdExceptionalMatrix) Set(int, int, float64) error { return nil }
+func (s *svdExceptionalMatrix) Clone() matrix.Matrix {
+	copyEM := *s
+	return &copyEM
+}
+
+// TestSVD_ExternalValidation preserves the matrix error family when a generic
+// backend returns a sentinel, an input is nonfinite, or shape product overflows.
+func TestSVD_ExternalValidation(t *testing.T) {
+	original := errors.New("external matrix driver failure")
+	cases := []struct {
+		name  string
+		input matrix.Matrix
+		want  error
+	}{
+		{"driver-error", &svdExceptionalMatrix{rows: 2, cols: 2, fail: original}, original},
+		{"nan", &svdExceptionalMatrix{rows: 2, cols: 2, value: math.NaN()}, matrix.ErrNaNInf},
+		{"positive-infinity", &svdExceptionalMatrix{rows: 1, cols: 1, value: math.Inf(1)}, matrix.ErrNaNInf},
+		{"negative-infinity", &svdExceptionalMatrix{rows: 1, cols: 1, value: math.Inf(-1)}, matrix.ErrNaNInf},
+		{"empty-row-domain", &svdExceptionalMatrix{rows: 0, cols: 5}, matrix.ErrBadShape},
+		{"empty-column-domain", &svdExceptionalMatrix{rows: 5, cols: 0}, matrix.ErrBadShape},
+		{"allocation-product-overflow", &svdExceptionalMatrix{rows: int(^uint(0) >> 1), cols: 2}, matrix.ErrInvalidDimensions},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := matrix.SVDDefault(context.Background(), tc.input)
+			if result != nil || !errors.Is(err, tc.want) {
+				t.Fatalf("result=%v, err=%v; want %v", result, err, tc.want)
+			}
+		})
+	}
+	var typedNil *matrix.Dense
+	if result, err := matrix.SVDDefault(context.Background(), typedNil); result != nil || !errors.Is(err, matrix.ErrNilMatrix) {
+		t.Fatalf("typed nil: result=%v err=%v", result, err)
+	}
+}
+
+// TestSVD_FacadeParity ensures all three ergonomic facades share one kernel,
+// preserving singular values, ownership and error classification.
+func TestSVD_FacadeParity(t *testing.T) {
+	data := []float64{3, 2, 1, 0, 1, 2, 2, 0, 1}
+	input := svdFixture(t, 3, 3, data)
+	canonical, err := matrix.SVD(context.Background(), input, matrix.SVDOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrappers := []func() (*matrix.SVDResult, error){
+		func() (*matrix.SVDResult, error) { return matrix.SVDDefault(context.Background(), input) },
+		func() (*matrix.SVDResult, error) { return matrix.SVDWithTolerance(context.Background(), input, 0) },
+		func() (*matrix.SVDResult, error) { return matrix.SVDWithMaxIterations(context.Background(), input, 0) },
+	}
+	for index, run := range wrappers {
+		got, runErr := run()
+		if runErr != nil {
+			t.Fatalf("wrapper %d failed: %v", index, runErr)
+		}
+		if got.Rank != canonical.Rank || got.Iterations != canonical.Iterations || len(got.SingularValues) != len(canonical.SingularValues) {
+			t.Fatalf("wrapper %d changed diagnostics", index)
+		}
+		for i := range got.SingularValues {
+			if got.SingularValues[i] != canonical.SingularValues[i] {
+				t.Fatalf("wrapper %d mode %d: %g vs %g", index, i, got.SingularValues[i], canonical.SingularValues[i])
+			}
+		}
+	}
+	if _, err = matrix.SVDWithMaxIterations(context.Background(), input, -1); !errors.Is(err, matrix.ErrInvalidOption) {
+		t.Fatalf("max-sweeps wrapper lost invalid-options classification: %v", err)
 	}
 }

@@ -938,3 +938,33 @@ func ValidateDistanceMatrix(m Matrix, opts ...Option) error {
 
 	return nil
 }
+
+// svdOptionsChecked validates and freezes caller-specified SVD options.
+// It uses ordinary finite binary64 comparisons so invalid tolerance policies
+// are rejected before input values are copied or the SVD workspace is allocated.
+//
+// Implementation:
+//   - Stage 1: reject a negative sweep budget and nonfinite tolerance values.
+//   - Stage 2: reject negative tolerance or any value >=1.
+//   - Stage 3: replace zero fields with their published defaults in the value copy.
+//
+// Behavior highlights: Zero fields preserve backward-compatible default choices.
+// Inputs: Value-copy policy; zero means default, not unbounded.
+// Returns: Finalized independent policy for one SVD call.
+// Errors: ErrInvalidOption for an invalid iteration count or tolerance.
+// Determinism: Fixed budget-then-tolerance checks; no environment state.
+// Complexity: Time O(1), Space O(1).
+// AI-Hints: NaN does not satisfy ordinary inequalities; check it explicitly.
+func svdOptionsChecked(options SVDOptions) (SVDOptions, error) {
+	if options.MaxIterations < 0 || math.IsNaN(options.Tolerance) ||
+		math.IsInf(options.Tolerance, 0) || options.Tolerance < 0 || options.Tolerance >= 1 {
+		return SVDOptions{}, ErrInvalidOption
+	}
+	if options.MaxIterations == 0 {
+		options.MaxIterations = svdDefaultSweeps
+	}
+	if options.Tolerance == 0 {
+		options.Tolerance = svdDefaultToleranceMultiplier * svdMachineEpsilon
+	}
+	return options, nil
+}

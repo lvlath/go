@@ -145,6 +145,15 @@ var (
 	// ErrIllConditioned reports a measured 1-norm condition estimate above the limit.
 	// Equality is allowed and a zero limit never disables measurement.
 	ErrIllConditioned = errors.New("matrix: condition estimate exceeds limit")
+
+	// ErrNotConverged identifies an exhausted cyclic Jacobi budget or an
+	// unresolved orthogonal-basis completion. Callers classify it using errors.Is.
+	// A non-nil diagnostic SVDResult accompanies sweep exhaustion; no partial
+	// factorization is guaranteed for failure during basis completion.
+	//
+	// AI-Hints: Do not convert this sentinel into ErrOverflow or discard its
+	// diagnostic result when a complete finite final sweep is available.
+	ErrNotConverged = errors.New("matrix: Jacobi iteration failed to converge")
 )
 
 // BACKWARD-COMPATIBILITY ALIASES (kept to avoid breaking current callers).

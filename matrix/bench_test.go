@@ -619,3 +619,101 @@ func BenchmarkStatisticsConstantColumns(b *testing.B) {
 		}
 	}
 }
+
+// --- SVD bench tests ---
+
+// svdBenchmarkDense constructs a deterministic full-rank coupled observation matrix.
+// A diagonal backbone is added in the smaller dimension; sinusoidal cross
+// coupling prevents the benchmark from measuring the zero-sweep diagonal path.
+//
+// Implementation:
+//   - Stage 1: allocate and validate the exact input matrix shape.
+//   - Stage 2: populate every cell with reproducible finite coefficients.
+//   - Stage 3: return one immutable benchmark input before ResetTimer.
+//
+// Inputs: b is the benchmark owner, rows/cols>0, conditioning>0 finite.
+// Returns: Fully initialized read-only matrix for repeated independent calls.
+// Errors: Benchmark setup fails immediately on any matrix constructor/Set error.
+// Determinism: Ascending row-major population, without RNG or clock dependence.
+// Complexity: O(rows*cols) setup time and storage, excluded from timed loops.
+// AI-Hints: Never put matrix construction, Fill or a cache-priming SVD in b.N.
+func svdBenchmarkDense(b *testing.B, rows, cols int, conditioning float64) matrix.Matrix {
+	b.Helper()
+	input, err := matrix.NewDense(rows, cols)
+	if err != nil {
+		b.Fatal(err)
+	}
+	for i := 0; i < rows; i++ {
+		for j := 0; j < cols; j++ {
+			coupling := 0.015*math.Sin(float64((i+1)*(j+1))*0.017) +
+				0.008*math.Cos(float64((i+3)*(j+2))*0.031)
+			value := coupling
+			if i == j {
+				value += 2
+			}
+			// Feature-specific attenuation changes the singular spectrum
+			// without changing shape or hiding an erroneous benchmark branch.
+			value *= math.Pow(conditioning, float64(j)/float64(max(cols-1, 1)))
+			if err := input.Set(i, j, value); err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+	return input
+}
+
+// BenchmarkSVD_Tall1000x16 measures a tall observation matrix with sixteen
+// correlated physical channels and a full-rank, nontrivial spectrum.
+func BenchmarkSVD_Tall1000x16(b *testing.B) {
+	input := svdBenchmarkDense(b, 1000, 16, 1)
+	ctx := context.Background()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for iteration := 0; iteration < b.N; iteration++ {
+		if _, err := matrix.SVDDefault(ctx, input); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkSVD_Wide16x1000 measures transpose duality with only sixteen
+// observation pulses across one thousand channels and no 1000x1000 right basis.
+func BenchmarkSVD_Wide16x1000(b *testing.B) {
+	input := svdBenchmarkDense(b, 16, 1000, 1)
+	ctx := context.Background()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for iteration := 0; iteration < b.N; iteration++ {
+		if _, err := matrix.SVDDefault(ctx, input); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkSVD_Square128x128 measures a dense square coupled system whose
+// decomposition cannot be reduced to independent diagonal column norms.
+func BenchmarkSVD_Square128x128(b *testing.B) {
+	input := svdBenchmarkDense(b, 128, 128, 1)
+	ctx := context.Background()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for iteration := 0; iteration < b.N; iteration++ {
+		if _, err := matrix.SVDDefault(ctx, input); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkSVD_TallConditioned1000x16 measures the same tall physical shape
+// with a six-decade spread across channel sensitivities.
+func BenchmarkSVD_TallConditioned1000x16(b *testing.B) {
+	input := svdBenchmarkDense(b, 1000, 16, 1e-6)
+	ctx := context.Background()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for iteration := 0; iteration < b.N; iteration++ {
+		if _, err := matrix.SVDDefault(ctx, input); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
