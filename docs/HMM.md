@@ -9,14 +9,14 @@
   Source of truth: ../hmm/doc.go, ../hmm/api.go, ../hmm/types.go.
 -->
 
-# HMM — causal filtering, retrospective smoothing, Viterbi and Baum–Welch
+# HMM - causal filtering, retrospective smoothing, Viterbi and Baum–Welch
 
 > **Discrete hidden states, two typed observation families, one explicit probability contract.**
 > Import: `github.com/lvlath/go/hmm` · minimum declared module Go version: **1.23.4**.
 
 `hmm` answers four distinct questions. Given observations from a process whose internal operating regime cannot be measured directly, it (1) estimates the regime using only evidence currently available, (2) retrospectively attributes regimes using the complete recorded sequence, (3) finds one most likely *joint* regime path, and (4) learns a transition/emission model from **independent** recorded sequences. These operations share model parameters but deliberately do **not** share the same conditioning information or output semantics.
 
-All examples in this chapter are deterministic engineering fixtures—not calibrated investment advice, fault certification, a claim of verified real-world datasets, or a substitute for domain validation. The Go examples use the current public API; the nine executable scenarios live in [`hmm/example_test.go`](../hmm/example_test.go).
+All examples in this chapter are deterministic engineering fixtures-not calibrated investment advice, fault certification, a claim of verified real-world datasets, or a substitute for domain validation. The Go examples use the current public API; the nine executable scenarios live in [`hmm/example_test.go`](../hmm/example_test.go).
 
 ## Contents
 

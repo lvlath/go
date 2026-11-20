@@ -13,7 +13,7 @@
   License: AGPL-3.0-only; see ../LICENSE.
 -->
 
-# OLS — stable full-rank linear regression through rectangular QR
+# OLS - stable full-rank linear regression through rectangular QR
 
 > Learn a linear model **once**, retain parameters in their physical units, and evaluate later observations without fitting on the future. `ols` is a statistical modeling boundary over the existing `matrix` and `stats` numerical kernels, not a second linear-algebra implementation.
 
@@ -508,14 +508,14 @@ The quality gate is at least 80% coverage measured against the **real** package 
 
 ## 17. Related contracts and non-goals
 
-- [`ols/doc.go`](/ols/doc.go) — normative domain, nil, concurrency, numeric, and error charter.
-- [`ols/api.go`](/ols/api.go) — canonical Fit and four option-transparent wrappers.
-- [`ols/types.go`](/ols/types.go) — options, immutable Model, FitResult and `core.Nilable`.
-- [`ols/example_test.go`](/ols/example_test.go) — five runnable engineering scenarios with stable `// Output:`.
-- [`MATRICES.md`](MATRICES.md) — pivoted QR internals, condition estimate, row-major matrix ownership.
-- [`STATS.md`](STATS.md) — DDOF=0, population scales, `UnitScaleConstant`, and train-only fitted transforms.
-- [`SERIES.md`](SERIES.md) — exact timestamp grids, validity masks, and explicit preparation before regression.
-- [`TUTORIAL.md`](TUTORIAL.md) and [`FAQ_&_TIPS.md`](FAQ_%26_TIPS.md) — package selection, practical usage and common failures.
-- [`lvlath_UES.md`](lvlath_UES.md) — engineering, result, documentation, test and error governance.
+- [`ols/doc.go`](/ols/doc.go) - normative domain, nil, concurrency, numeric, and error charter.
+- [`ols/api.go`](/ols/api.go) - canonical Fit and four option-transparent wrappers.
+- [`ols/types.go`](/ols/types.go) - options, immutable Model, FitResult and `core.Nilable`.
+- [`ols/example_test.go`](/ols/example_test.go) - five runnable engineering scenarios with stable `// Output:`.
+- [`MATRICES.md`](MATRICES.md) - pivoted QR internals, condition estimate, row-major matrix ownership.
+- [`STATS.md`](STATS.md) - DDOF=0, population scales, `UnitScaleConstant`, and train-only fitted transforms.
+- [`SERIES.md`](SERIES.md) - exact timestamp grids, validity masks, and explicit preparation before regression.
+- [`TUTORIAL.md`](TUTORIAL.md) and [`FAQ_&_TIPS.md`](FAQ_%26_TIPS.md) - package selection, practical usage and common failures.
+- [`lvlath_UES.md`](lvlath_UES.md) - engineering, result, documentation, test and error governance.
 
 **Outside OLS:** Ridge/Lasso/weighted and generalized least squares, SVD-based rank-deficient minimum-norm estimates, robust regression, missing-value repair, cross-validation, automatic model selection, and any automatic IID-based t/F/p-value or confidence interval. Such capabilities must be explicit separate contracts, never invented hidden fallbacks inside Fit.

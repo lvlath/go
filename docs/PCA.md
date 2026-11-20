@@ -11,7 +11,7 @@
   License: AGPL-3.0-only.
 -->
 
-# PCA — Fitted Principal Component Analysis
+# PCA - Fitted Principal Component Analysis
 
 > Package: [`pca`](../pca/) | Contract: immutable fitted transform, covariance-based reference solver | Go 1.23.4+
 

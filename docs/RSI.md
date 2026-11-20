@@ -11,7 +11,7 @@
   License: AGPL-3.0-only. See ../LICENSE.
 -->
 
-# RSI — Wilder Relative Strength Index
+# RSI - Wilder Relative Strength Index
 
 > A causal, period-configured numerical oscillator for ordered, strictly positive prices; not a trading-signal or market-data framework.
 

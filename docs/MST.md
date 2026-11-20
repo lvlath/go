@@ -2070,6 +2070,6 @@ git diff --check
 
 ---
 
-**lvlath/mst**: exact Prim/Kruskal MST/MSF, original-edge graph Steiner approximation, and independently validated closed/fixed-end covering walks—with distinct result and numeric contracts.
+**lvlath/mst**: exact Prim/Kruskal MST/MSF, original-edge graph Steiner approximation, and independently validated closed/fixed-end covering walks - with distinct result and numeric contracts.
 
 > Next: [7. Max-Flow: Ford-Fulkerson / Edmonds-Karp / Dinic →](FLOW.md)

@@ -13,7 +13,7 @@
            ../jumpdiffusion/THIRD_PARTY_NOTICES.txt.
 -->
 
-# JUMPDIFFUSION — Merton Compound-Poisson Lognormal Jump-Diffusion
+# JUMPDIFFUSION - Merton Compound-Poisson Lognormal Jump-Diffusion
 
 > **An exact-in-distribution model of fixed-grid endpoints, not a calibrated predictor.**
 > The package adds discrete Poisson jump counts and Gaussian log-jump marks to

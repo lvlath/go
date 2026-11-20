@@ -11,7 +11,7 @@
   License: AGPL-3.0-only. See ../LICENSE.
 -->
 
-# ACF — direct sample autocorrelation and pair-adjusted estimators
+# ACF - direct sample autocorrelation and pair-adjusted estimators
 
 > **One observation window, one global center, two deliberately different denominators.**
 >
@@ -402,7 +402,7 @@ ACF to claim that the earlier coefficients were available at earlier times.
 
 ## 8. Executable Go workflows
 
-### 8.1. Minimal estimator counterexample — two different valid answers
+### 8.1. Minimal estimator counterexample - two different valid answers
 
 ```go
 package main
@@ -686,17 +686,17 @@ application decisions.
 
 ## 12. Source and further reading
 
-- [`acf/doc.go`](../../../../Downloads/acf_docs_phase13_synchronized/acf/doc.go) — canonical package charter and API laws.
+- [`acf/doc.go`](../../../../Downloads/acf_docs_phase13_synchronized/acf/doc.go) - canonical package charter and API laws.
 - [`acf/api.go`](../acf/api.go), [`acf/types.go`](../acf/types.go),
-  [`acf/errors.go`](../acf/errors.go) — public interfaces, metadata and sentinels.
+  [`acf/errors.go`](../acf/errors.go) - public interfaces, metadata and sentinels.
 - [`acf/impl_direct.go`](../acf/impl_direct.go),
-  [`acf/numeric.go`](../acf/numeric.go) — direct kernel and stable reductions.
+  [`acf/numeric.go`](../acf/numeric.go) - direct kernel and stable reductions.
 - [`acf/oracle_test.go`](../acf/oracle_test.go),
-  [`acf/numeric_precision_test.go`](../acf/numeric_precision_test.go) — exact
+  [`acf/numeric_precision_test.go`](../acf/numeric_precision_test.go) - exact
   independent oracle and numerical regression anchors.
-- [`acf/example_test.go`](../acf/example_test.go) — six executable use cases.
-- [`examples/acf/main.go`](../examples/acf/main.go) — complete incident
+- [`acf/example_test.go`](../acf/example_test.go) - six executable use cases.
+- [`examples/acf/main.go`](../examples/acf/main.go) - complete incident
   monitoring scenario (`go run ./examples/acf`).
-- [`TUTORIAL.md`](TUTORIAL.md) — how ACF fits into the time-series stack.
-- [`FAQ_&_TIPS.md`](FAQ_%26_TIPS.md) — estimator and numerical troubleshooting.
-- [`lvlath_UES.md`](lvlath_UES.md) — library-wide engineering contracts.
+- [`TUTORIAL.md`](TUTORIAL.md) - how ACF fits into the time-series stack.
+- [`FAQ_&_TIPS.md`](FAQ_%26_TIPS.md) - estimator and numerical troubleshooting.
+- [`lvlath_UES.md`](lvlath_UES.md) - library-wide engineering contracts.

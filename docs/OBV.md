@@ -11,7 +11,7 @@
   License: AGPL-3.0-only
 -->
 
-# OBV — compensated cumulative On-Balance Volume
+# OBV - compensated cumulative On-Balance Volume
 
 `github.com/lvlath/go/obv` computes a **causal cumulative signed-volume series**.
 The direction is determined by whether the *current closing price* is higher,

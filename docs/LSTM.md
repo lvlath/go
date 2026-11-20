@@ -13,7 +13,7 @@
   License: AGPL-3.0-only. See ../LICENSE.
 -->
 
-# LSTM — deterministic, single-layer recurrent inference
+# LSTM - deterministic, single-layer recurrent inference
 
 `github.com/lvlath/go/lstm` evaluates a **previously trained** LSTM layer using
 finite `float64` weights and the PyTorch **input / forget / cell candidate /
@@ -693,10 +693,10 @@ percentage still applies after edits.
 
 Related material:
 
-- [`lstm/doc.go`](../lstm/doc.go) — authoritative implemented package charter.
-- [`lstm/api.go`](../lstm/api.go) — canonical entry point and convenient wrappers.
-- [`lstm/example_test.go`](../lstm/example_test.go) — executable practical examples.
-- [`TUTORIAL.md`](TUTORIAL.md#11t-lstm-foundations-frozen-ifgo-inference-and-masked-streaming) — first-use walkthrough.
-- [`FAQ_&_TIPS.md`](FAQ_%26_TIPS.md#13s-lstm-faq-ifgo-inference-masking-and-streaming-replay) — troubleshooting and integration advice.
-- [`lvlath_UES.md`](lvlath_UES.md) — shared contract and engineering requirements.
-- [Official PyTorch LSTM reference](https://docs.pytorch.org/docs/stable/generated/torch.nn.LSTM.html) — external weight layout and mathematical recurrence.
+- [`lstm/doc.go`](../lstm/doc.go) - authoritative implemented package charter.
+- [`lstm/api.go`](../lstm/api.go) - canonical entry point and convenient wrappers.
+- [`lstm/example_test.go`](../lstm/example_test.go) - executable practical examples.
+- [`TUTORIAL.md`](TUTORIAL.md#11t-lstm-foundations-frozen-ifgo-inference-and-masked-streaming) - first-use walkthrough.
+- [`FAQ_&_TIPS.md`](FAQ_%26_TIPS.md#13s-lstm-faq-ifgo-inference-masking-and-streaming-replay) - troubleshooting and integration advice.
+- [`lvlath_UES.md`](lvlath_UES.md) - shared contract and engineering requirements.
+- [Official PyTorch LSTM reference](https://docs.pytorch.org/docs/stable/generated/torch.nn.LSTM.html) - external weight layout and mathematical recurrence.

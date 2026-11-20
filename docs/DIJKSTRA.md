@@ -858,8 +858,8 @@ Prepared vertex and edge IDs are lexically sorted. One original undirected edge 
 | Source equals target | true | `0` | `[source]` | `nil` | nil |
 | Certified reachable | true | finite original cost | owned source-to-target route | owned original IDs | nil |
 | Known but inadmissible/unreachable | false | `+Inf` | nil | nil | nil |
-| Unknown target | no result | — | — | — | `ErrTargetNotFound` |
-| Invalid graph, options, arithmetic or callback | no result | — | — | — | matching error |
+| Unknown target | no result | - | - | - | `ErrTargetNotFound` |
+| Invalid graph, options, arithmetic or callback | no result | - | - | - | matching error |
 
 `PathResult.Path()` returns *copies* of both witness slices. `PathResult.Clone()` deep-copies both slices. The original graph, frozen heuristic caches, frontier labels and context do not escape into the returned result.
 

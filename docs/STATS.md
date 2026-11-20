@@ -34,7 +34,7 @@
 
 > **Package:** `github.com/lvlath/go/stats` · **Core:** Welford / Chan–Golub–LeVeque · **Numerics:** extended-range compensated central moments + exact binary mean sum · **Inference:** immutable, detached, train-only fitted scaling
 
-`stats` is the numerical calibration boundary between **observations**, **partitioned reductions**, and **inference-time feature transformations**. It solves three related—but deliberately separate—problems: calculating stable moments from finite scalar values, merging independently accumulated partitions without replaying their data, and fitting per-column standardization parameters **only on training data**.
+`stats` is the numerical calibration boundary between **observations**, **partitioned reductions**, and **inference-time feature transformations**. It solves three related - but deliberately separate - problems: calculating stable moments from finite scalar values, merging independently accumulated partitions without replaying their data, and fitting per-column standardization parameters **only on training data**.
 
 The package's distinguishing feature is not a shortcut formula. It preserves the semantics of the results when direct `float64` intermediates are more fragile than the final values. For example, a sample variance may be representable even though the unnormalized sum of squared deviations exceeds `math.MaxFloat64`.
 
@@ -68,7 +68,7 @@ For exact public signatures and receiver laws, begin with [`stats/doc.go`](../st
 
 A statistical primitive may appear correct on a small dataset while returning zero variance for a genuinely variable high-offset signal, overflowing in a reduction that should succeed, or quietly incorporating a holdout batch into its normalization parameters. `stats` is engineered around explicit laws that rule out these failure modes.
 
-### Law 1 — Centered moments, never cancellation-prone raw moments
+### Law 1 - Centered moments, never cancellation-prone raw moments
 
 The variance calculation accumulates centered second moments. It does **not** use the difference between two large, nearly equal raw terms:
 
@@ -76,27 +76,27 @@ $$\operatorname{Var}(X)=\mathbb E[X^2]-\bigl(\mathbb E[X]\bigr)^2\quad\text{(an 
 
 The mathematical identity is correct in real arithmetic; the naive evaluation is unsafe in finite precision. `Moments.Update` uses Welford's recurrence and `Moments.Merge` uses Chan's parallel formula.
 
-### Law 2 — Intermediate magnitude is not the published result domain
+### Law 2 - Intermediate magnitude is not the published result domain
 
 The accumulator stores a scaled, compensated approximation to the unnormalized second central moment \(M_2\). Its exponent is not limited by the binary64 range. `Summary(ddof)` divides by \(n-\text{ddof}\) **before** converting the variance to `float64`; fitting takes the square root before converting a standard deviation.
 
-### Law 3 — Precise mean accumulation has an independent numerical route
+### Law 3 - Precise mean accumulation has an independent numerical route
 
 A fixed-width signed binary superaccumulator holds the **exact sum of the input `float64` values**. This protects the final mean against cancellation that can defeat even a well-centered recurrent estimate. The mean is rounded once at the public materialization boundary. It does not imply that the internal \(M_2\) is computed with exact rational arithmetic.
 
-### Law 4 — Mutation is transactional on failure
+### Law 4 - Mutation is transactional on failure
 
 `Update` and `Merge` validate first, build candidate states, and publish only after a successful transition. A rejected `NaN`, counter overflow, invalid self-merge, or nil input cannot change a committed count, extremum, compensated value, or exact sum.
 
-### Law 5 — Model fitting and inference never share an adaptation loop
+### Law 5 - Model fitting and inference never share an adaptation loop
 
 `FitStandardizer` reads a training matrix, computes one immutable parameter vector per column, and publishes a model. `Transform` and `InverseTransform` only **read that model**. No heldout statistics are computed or persisted as a replacement for fitted parameters.
 
-### Law 6 — Zero spread is defined by the numerical kernel, not an epsilon
+### Law 6 - Zero spread is defined by the numerical kernel, not an epsilon
 
 The fitting code checks the internal second moment for zero. It does not compare a rounded public variance with a made-up threshold. With `UnitScaleConstant`, the fitted mean remains intact and the scale is exactly one: a new value outside the training constant maps to its **difference** from the training mean.
 
-### Law 7 — Stable contracts have explicit ownership and error classes
+### Law 7 - Stable contracts have explicit ownership and error classes
 
 Every rejected operation returns an `errors.Is`-compatible sentinel or a wrapped matrix-origin error. Successful result snapshots are detached. Mutable accumulators are **not** concurrent safe; a fitted model supports simultaneous read-only inference on stable input matrices.
 
@@ -185,7 +185,7 @@ func (m *Standardizer) InverseTransform(z matrix.Matrix) (matrix.Matrix, error)
 
 These are real implemented signatures. `SummarizePopulation` delegates to `Summarize(values, 0)`, `SummarizeSample` to `Summarize(values, 1)`, and the two fit wrappers construct explicit `ScaleOptions` and delegate to `FitStandardizer`. They do **not** introduce alternative mathematics.
 
-### 3.2. `Summary` — a finite materialized observation record
+### 3.2. `Summary` - a finite materialized observation record
 
 ```go
 type Summary struct {
@@ -207,7 +207,7 @@ type Summary struct {
 
 `Summary` has no retained accumulator pointer or slices. `Summary.IsNil()` reports pointer absence; it is not a test that `Count` or `Variance` is meaningful. The public `Variance` can equal zero either because the internal spread was zero **or** because a positive variance underflowed when converted to `float64`.
 
-### 3.3. `Moments` — a bounded, mutable streaming state
+### 3.3. `Moments` - a bounded, mutable streaming state
 
 The zero value is usable:
 
@@ -830,7 +830,7 @@ The latter deviations are information, not values to be forced to zero.
 
 All examples below use the public API and check errors. `stats/example_test.go` contains five deterministic `// Output:` examples covering population/sample summaries, long-offset updates, extreme merging, holdout scaling, and fused inverse arithmetic. The standalone examples here explain adjacent integration decisions more fully.
 
-### 12.1. Scenario A — sensor calibration on a large baseline
+### 12.1. Scenario A - sensor calibration on a large baseline
 
 Use a streaming accumulator for ordered measurements. Materialize the *sample* result only after three observations exist:
 
@@ -869,7 +869,7 @@ func main() {
 
 **Interpretation:** the small spread remains observable despite the \(10^{12}\) offset. Input observations remain unchanged. For finite small batches that do not require streaming, `stats.SummarizeSample(readings)` is the corresponding convenience facade.
 
-### 12.2. Scenario B — merge independent telemetry partitions
+### 12.2. Scenario B - merge independent telemetry partitions
 
 A parallel reduction should never share a concurrently mutable `Moments`. Here each partition is completed independently, then merged deterministically:
 
@@ -915,7 +915,7 @@ func main() {
 
 **Interpretation:** the first accumulator owns the merged state; `second` is unchanged. Reversing the grouping of many partitions need not reproduce the exact same compensated variance bits, so keep the partition order fixed in reproducibility-sensitive systems.
 
-### 12.3. Scenario C — fit once, transform heldout values, invert
+### 12.3. Scenario C - fit once, transform heldout values, invert
 
 This scenario deliberately includes a training-constant feature. The fit uses the population denominator and accepts constant columns only because the caller explicitly selects `UnitScaleConstant`.
 
@@ -994,7 +994,7 @@ func main() {
 
 **Interpretation:** training and inference are different operations. `Transform` does not refit on the `holdout` matrix. The nonconstant column is scaled using the same previously learned parameters as the constant column's unit-scale transformation.
 
-### 12.4. Scenario D — respecting causal validity masks before statistics
+### 12.4. Scenario D - respecting causal validity masks before statistics
 
 A `series.TransformResult` stores `Values` and `Valid` in corresponding positions. A synthetic warmup zero must **not** be included in a statistical batch. The selection step belongs to the caller, because `stats.Summarize` accepts a plain slice and does not know series validity semantics:
 
@@ -1112,7 +1112,7 @@ All package tests use `package stats_test`. `test_helper_test.go` centralizes `e
 
 ### 14.2. Independent rational oracles
 
-To verify the **mathematics**, reference calculations must be independent of Welford/Chan production helpers. Each *actual* binary64 input is converted to an exact rational, the mean and central sum are calculated separately at high precision, and the final expected value is rounded to binary64. The test compares observed results against an explicitly justified magnitude-sensitive error budget for approximate `M2`—not against a second call to `stats.Summarize`.
+To verify the **mathematics**, reference calculations must be independent of Welford/Chan production helpers. Each *actual* binary64 input is converted to an exact rational, the mean and central sum are calculated separately at high precision, and the final expected value is rounded to binary64. The test compares observed results against an explicitly justified magnitude-sensitive error budget for approximate `M2`-not against a second call to `stats.Summarize`.
 
 ```text
 Production path:  float64 -> scaled Welford/Chan + exactSum -> Summary

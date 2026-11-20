@@ -10,7 +10,7 @@
   License: AGPL-3.0-only.
 -->
 
-# MACD — SMA-seeded convergence/divergence, batch and streaming
+# MACD - SMA-seeded convergence/divergence, batch and streaming
 
 > **Primary rule:** Price EMAs and the MACD signal EMA are all seeded with a **simple average of their first corresponding samples**. The signal starts after the first *valid* MACD line, never at the first input price. A valid numeric zero and an invalid warmup placeholder are different states.
 

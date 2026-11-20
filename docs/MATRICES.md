@@ -1058,7 +1058,7 @@ The residual uses the original (or, for Cholesky, accepted symmetrized) coeffici
 
 Unlike a naive `float64` dot product, the current residual implementation converts each source coefficient and solution value to exact integers on the binary64 lattice, accumulates products and differences with `math/big.Int`, sums exact residual squares, then performs one high-precision square root and finite conversion. Thus an intermediate `A*x` can exceed the float64 range without silently corrupting a representable final residual. The cost is substantially higher than a float64/FMA dot product; there is no automatically selected FMA shortcut promising identical error behavior.
 
-### 10.12.2. What ConditionEstimate does — and does not — certify
+### 10.12.2. What ConditionEstimate does - and does not - certify
 
 ![One norm condition](https://latex.codecogs.com/svg.image?%5Ckappa_1%28M%29%3D%5ClVert%20M%5CrVert_1%5ClVert%20M%5E%7B-1%7D%5CrVert_1)
 

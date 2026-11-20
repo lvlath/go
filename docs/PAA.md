@@ -9,7 +9,7 @@ Scope: scalar uniformly spaced time series, not irregular timestamps.
 License: AGPL-3.0-only
 -->
 
-# PAA — fractional Piecewise Aggregate Approximation
+# PAA - fractional Piecewise Aggregate Approximation
 
 ## What / Why
 

@@ -13,7 +13,7 @@
     carries the Go authors' BSD attribution in ../rng/UPSTREAM_LICENSE.txt.
 -->
 
-# RNG — Version-pinned PCG-DXSM streams for reproducible experiments
+# RNG - Version-pinned PCG-DXSM streams for reproducible experiments
 
 > One logical simulation, one stream. The random path belongs to the **experiment**, never to the worker that happens to execute it.
 

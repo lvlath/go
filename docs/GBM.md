@@ -13,7 +13,7 @@
   License: AGPL-3.0-only. See ../LICENSE.
 -->
 
-# GBM — exact-in-distribution geometric Brownian motion
+# GBM - exact-in-distribution geometric Brownian motion
 
 > Generate auditable, positive-price stochastic trajectories on nonuniform time grids, with explicit physical units and error-safe partial publication.
 
