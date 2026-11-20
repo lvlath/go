@@ -13,16 +13,24 @@
 //
 //	gamma[k] = (1/n) * sum(t=k..n-1, c[t]*c[t-k]).
 //
-// Every lag shares the same divisor n. In exact arithmetic, this finite-sample
-// autocovariance is a Gram sequence, hence its symmetric Toeplitz matrix is
-// positive semidefinite. A divisor n-k generally lacks that guarantee. The
+// Every lag shares the same divisor n. Extend centered/raw observations by
+// zero outside the finite input window. A quadratic form over the resulting
+// symmetric Toeplitz covariances equals a sum of squares of shifted samples,
+// divided by n: it is therefore positive semidefinite in exact arithmetic.
+// A nonzero finite sequence gives linearly independent finite shifts and a
+// positive-definite Toeplitz system in exact arithmetic, but this is not a
+// guarantee of numerical conditioning in rounded float64 arithmetic.
+// Changing the divisor to n-k destroys the general Gram property. The
 // solver computes order-m reflection coefficients and variances by
 //
 //	kappa[m] = (gamma[m] - sum(j=1..m-1, a[m-1,j]*gamma[m-j])) / V[m-1],
 //	a[m,j]  = a[m-1,j] - kappa[m]*a[m-1,m-j],
 //	V[m]    = V[m-1]*(1-abs(kappa[m]))*(1+abs(kappa[m])).
 //
-// The previous coefficient row is never modified while it is being read.
+// The previous coefficient row is never modified while it is being read:
+// two disjoint coefficient buffers exchange their roles only after a full
+// order update. Values[1] is mathematically gamma[1]/gamma[0] when that
+// order is requested, whereas subsequent orders remove shorter-lag effects.
 // A single shared scale avoids premature overflow in squared observations;
 // physical variances are recovered using separate binary exponents. Centered
 // means are fitted once on the entire supplied training window using bounded
@@ -32,15 +40,20 @@
 //
 // Compute is the canonical facade. ComputeCentered and ComputeUncentered
 // explicitly select one of the two center policies; ComputeAtLag projects a
-// single coefficient from a complete canonical calculation. They never change
-// denominator convention or use a different numerical kernel.
+// single coefficient after evaluating the complete canonical prefix through
+// its requested lag, with no direct single-lag solver or O(n) shortcut. The
+// wrappers preserve Compute's validation precedence, sentinel identity,
+// and failure atomicity. No wrapper changes the denominator or numeric kernel.
 //
 // Options{MaxLag:0, Center:false} is the zero-value policy: only uncentered lag
 // zero is requested. MaxLag is inclusive and must lie in [0,n-1]. A successful
 // Result has Count=n, Values[0]=1, two separately owned slices of length L+1,
 // and positive finite PredictionVariance[m] in squared input units. A failed
 // operation returns nil Result, including on context cancellation; no usable
-// prefix is published. A Result supports nil-safe IsNil and detached Clone.
+// prefix is published. The two output slices never alias each other, inputs,
+// or future computations. A Result supports nil-safe IsNil (the core.Nilable
+// pointer-presence protocol) and detached Clone; an allocated zero-value
+// Result is non-nil but not a valid completed computation.
 //
 // # Error and numeric policy
 //
@@ -48,11 +61,12 @@
 // (ctx.Err), nil input (ErrNilInput), empty input (ErrEmptyInput), invalid lag
 // (ErrInvalidOption), nonfinite observations (ErrNonFinite), then computation.
 // Zero centered energy or raw second moment returns ErrZeroVariance. An
-// invalid Levinson step returns ErrSingular; nonrepresentable arithmetic and
-// prediction variances return ErrOverflow. Errors are classified with
-// errors.Is. A positive variance that underflows to zero is not silently
-// clamped. OOM is not converted into a normal error; integer allocation
-// products are validated before the workspace is created.
+// invalid Levinson step (abs(kappa)>=1 or nonpositive next variance) returns
+// ErrSingular; nonfinite arithmetic and unrepresentable public prediction
+// variances return ErrOverflow. Errors are classified with errors.Is, never
+// error-string inspection. A positive variance that underflows to zero is not
+// silently clamped. Workspace integer byte products are checked before make;
+// runtime out-of-memory failures are not converted into ordinary errors.
 //
 // # Ownership, concurrency and determinism
 //
@@ -71,14 +85,21 @@
 // deviation vector is constructed. The package does not estimate Burg or
 // regression-based PACF, confidence intervals, statistical significance,
 // automatic AR order, nonstationarity, or out-of-sample forecast quality.
-// The theoretical PACF of an AR(p) process cuts off above p; finite-sample
-// estimates are noisy and do not have an exact sample cutoff. A near-singular
-// but theoretically positive Toeplitz system can conservatively fail in
-// binary64 rather than publish numerically unreliable coefficients.
+// The theoretical PACF of a stationary AR(p) process cuts off above p;
+// finite-sample estimates fluctuate and have no exact sample cutoff. This
+// package does not fit AR coefficients, set confidence thresholds, or select
+// arima.Order. Input lags are positions, not elapsed durations; timestamp
+// cadence, complete-window selection, training/holdout separation, and any
+// model deployment policy belong to callers. A near-singular but theoretically
+// positive Toeplitz system can conservatively fail in binary64 instead of
+// publishing numerically unreliable coefficients.
 //
 // AI-Hints:
 //   - Never change the n denominator to n-k or infer Center from observations.
 //   - Never update both mirrored AR coefficients in one buffer in place.
-//   - Treat variance as a squared-unit predictive moment, not a confidence bound.
+//   - Treat V[m] as in-sample one-step linear residual variance, not a
+//     confidence bound, forecast error estimate, or fitted AR coefficient.
+//   - Compare acf.CommonDenominator and PACF only with matching centering;
+//     do not pass lag-adjusted ACF ratios into a Toeplitz solver.
 //   - Keep centering within the training window and distinguish train/holdout data.
 package pacf

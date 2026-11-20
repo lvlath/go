@@ -3,7 +3,7 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/FAQ_&_TIPS.md
-  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima, lstm and the wider lvlath package family
+  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima, lstm, pacf and the wider lvlath package family
   lvlath - FAQ & Tips
 
   Purpose:
@@ -40,6 +40,7 @@
     - GJR-GARCH causal state, asymmetric shock coefficients, stationary forecast, Gaussian QMLE and explicit nonconvergence.
     - Fixed-order conditional Gaussian ARIMA, Schur roots, burn-in, anchored integration and marginal innovation variance.
     - Frozen PyTorch IFGO LSTM weights, exact-zero batch masking, ModelID-bound streaming state and numeric overflow classification.
+    - Common-n Durbin-Levinson PACF, prediction-error variance, stable centering, nilable results and AR-order diagnostic boundaries.
 
   License:
     lvlath is licensed under AGPL-3.0-only. See ../LICENSE.
@@ -90,6 +91,7 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
     13q. [GJR-GARCH FAQ](#13q-gjr-garch-faq-causal-variance-leverage-qmle-and-model-release)
     13r. [ARIMA FAQ](#13r-arima-faq-conditional-gaussian-fit-schur-constraints-and-anchored-forecasts)
     13s. [LSTM FAQ](#13s-lstm-faq-ifgo-inference-masking-and-streaming-replay)
+    13t. [PACF FAQ](#13t-pacf-faq---covariance-recurrence-and-safe-interpretation)
 14. [Builder and gridgraph tips](#14-builder-and-gridgraph-tips)
 15. [Errors and diagnostics](#15-errors-and-diagnostics)
 16. [Determinism and concurrency](#16-determinism-and-concurrency)
@@ -127,6 +129,7 @@ Start with the question, not the algorithm name.
 | “How do I estimate linear factor coefficients and reuse them?”                                                | `ols`                                 | Full-rank QR, original-unit beta/intercept, immutable prediction.                                     |
 | “How do I fit correlated or wide linear factors with explicit L2 shrinkage?”                                  | `ridge`                               | Augmented QR, positive Lambda, unpenalized intercept and frozen physical predictions.                 |
 | “What serial dependence or cycle repeats at a fixed sample-index lag?”                                        | `acf`                                 | One full-window mean, explicit denominator, exact pair counts.                                        |
+| “Which autoregressive lag adds linear dependence after shorter lags are removed?”                             | `pacf.ComputeCentered`                | Durbin-Levinson common-n PACF with order-wise prediction variances.                                   |
 | “How strong are smoothed up/down changes in an ordered positive price feed?”                                  | `rsi.ComputePeriod` / `Stream.Push`   | Wilder oscillator with a validity mask or zero-allocation, single-owner recurrence.                   |
 | “How do fast and slow price trends diverge and how does that separation change?”                              | `macd.ComputeDefault` / `NewDefault`  | SMA-seeded EMA, three signed aligned series, independent readiness masks and replayable Stream.       |
 | “How much rising versus falling typical-price flow occurred over the most recent candles?”                    | `mfi.ComputeDefault` / `NewDefault`   | Volume-weighted last-P-transition MFI, warmup mask, compensated rolling ring and detached checkpoint. |
@@ -165,6 +168,7 @@ fit correlated/wide factors            -> Ridge (positive Lambda, unpenalized in
 compress latent features               -> PCA (train-only covariance basis; no target)
 infer hidden temporal regime           -> HMM FilterStep (causal; no future observations)
 detect fixed-window serial dependence  -> ACF ComputeDefault (not causal)
+screen partial AR lag dependence       -> PACF ComputeCentered (common-n, not causal)
 compute causal Wilder price strength   -> RSI ComputePeriod / Stream.Push
 compute signed trend-separation factor -> MACD ComputeDefault / Stream.Push
 compute volume-weighted OHLCV flow     -> MFI ComputeDefault / Stream.Push
@@ -175,8 +179,8 @@ simulate exact lognormal GBM paths     -> GBM Simulate / SimulateSeeded (explici
 simulate compensated Merton jumps      -> JUMPDIFFUSION Simulate / SimulateSeeded (no calibration)
 measure causal asymmetric variance     -> GJRGARCH Filter/Step / ForecastVariance (no price simulation)
 fit a fixed-order conditional mean     -> ARIMA Fit / Model.Forecast (not exact diffuse MLE)
-extract frozen recurrent embeddings     -> LSTM Import / Model.InferSequence (not training)
-replay a recurrent telemetry stream     -> LSTM Model.InferChunk with local lengths and Final state
+extract frozen recurrent embeddings    -> LSTM Import / Model.InferSequence (not training)
+replay a recurrent telemetry stream    -> LSTM Model.InferChunk with local lengths and Final state
 fit conditional Gaussian QMLE          -> GJRGARCH Fit with explicit Initial (check convergence)
 compute exact empirical path quantiles -> MONTECARLO RunWithQuantiles (budgeted raw storage)
 draw dependent-data index replicates   -> BOOTSTRAP SampleIndices (no statistic or CI)
@@ -2284,10 +2288,11 @@ No. `stats` computes moments and reusable training scalers; `series` checks
 grids and produces causal masks; `dtw` aligns *two* sequences under time
 warping; `acf` examines one fixed sequence at integer lags. HMM
 `FilterStep` produces a genuinely causal posterior using observations
-through the current time only. PACF, Ljung–Box tests, confidence bands,
-FFT/spectral density and inference about stationarity are **not present**
-in `acf`; they require distinct assumptions, algorithms, validation and
-error contracts. No unseen PACF method should be advertised in docs.
+through the current time only. PACF is implemented in the separate
+`pacf` package, with biased common-`n` covariance and Durbin-Levinson;
+`acf` does **not** provide it. Ljung–Box tests, confidence bands,
+FFT/spectral density and stationarity inference are **not** provided by
+either package. See [`PACF.md`](PACF.md).
 
 #### Q13f.15. How expensive are late lags, and how do I benchmark the real operation?
 
@@ -4769,6 +4774,152 @@ and [`lstm/example_test.go`](../lstm/example_test.go).
 
 ---
 
+## 13t. PACF FAQ - covariance, recurrence and safe interpretation
+
+### Q13t.1. How is PACF different from ordinary ACF?
+
+`acf` reports ordinary normalized lagged cross-products; `pacf` reports
+reflection coefficients from the Durbin–Levinson solution of the
+Yule–Walker equations. At lag one the two estimands agree **mathematically**
+when both use the same full-window centering and common denominator. At
+lag `m>1`, PACF accounts for the shorter intermediate lags rather than
+reporting the ordinary correlation with `x[t-m]`.
+
+### Q13t.2. Why is `n` mandatory, rather than `n-k`?
+
+For `c[t]=x[t]-mean` (or `x[t]` in raw mode), every covariance uses
+`gamma[k]=sum(c[t]*c[t-k],t=k..n-1)/n`. The resulting Toeplitz sequence
+has an exact-arithmetic Gram/sum-of-squares representation and is PSD;
+using `n-k` loses that general guarantee. `acf.CommonDenominator` is the
+compatible convention; **never** feed `acf.LagAdjusted` results into a
+PACF computation. `pacf.Compute` directly consumes the original samples;
+it does not accept a precomputed ACF vector or a denominator policy.
+
+### Q13t.3. Does `Options{}` automatically center or choose a lag horizon?
+
+Neither. `pacf.Options{}` means `MaxLag=0` and `Center=false`, so it
+computes only **uncentered lag zero**. Explicitly call
+`ComputeCentered(ctx, samples, L)` to fit one whole-window mean, or
+`ComputeUncentered(ctx, samples, L)` to use raw second moments about the
+physical zero. Both require `0<=L<len(samples)`; `L` is inclusive.
+
+The zero-value policy differs deliberately from `acf.Options{}`, where
+`NoCenter=false` means centered ACF. Do not mirror the neighboring
+package's Go options by positional intuition.
+
+### Q13t.4. Why can an uncentered constant succeed when the centered constant fails?
+
+The series `[1,1]` has centered deviations `[0,0]` and thus no positive
+lag-zero covariance: `ErrZeroVariance`. Under **raw** moments, however,
+`gamma=[1,1/2]`, `Values=[1,1/2]`, and
+`PredictionVariance=[1,3/4]` for `MaxLag=1`. Likewise,
+`[2]`, `Center=false`, `MaxLag=0` returns variance `4`.
+An all-zero raw window is still invalid. Neither case calls for an
+implicit epsilon or an automatic centering-mode change.
+
+### Q13t.5. Why did `ErrSingular` occur if biased covariance is Toeplitz PSD?
+
+PSD is an **exact-real-arithmetic** statement; the actual recurrence
+works on rounded binary64 covariances and may lose usable positive
+prediction variance in an ill-conditioned or very high-order system.
+The kernel rejects `abs(kappa)>=1` or nonpositive next variance; it does
+not repair the output by clamping to an artificial epsilon. A different
+`MaxLag`, sound preprocessing, or a separately designed estimator may
+answer a different scientific question; none is a silent fallback.
+
+### Q13t.6. When is a failure `ErrZeroVariance`, `ErrSingular`, or `ErrOverflow`?
+
+| Error             | Meaning                                                                                        | Typical stage                          |
+|:------------------|:-----------------------------------------------------------------------------------------------|:---------------------------------------|
+| `ErrZeroVariance` | Selected centered energy or raw second moment is zero                                          | Whole-window preparation / lag zero    |
+| `ErrSingular`     | Recursion cannot keep `abs(kappa)<1` and positive next variance                                | Durbin–Levinson order step             |
+| `ErrOverflow`     | Required arithmetic, workspace byte product, or public physical variance cannot be represented | Admission, products, scale restoration |
+| `ErrNonFinite`    | Caller provided NaN or infinity                                                                | Input validation                       |
+
+All are stable sentinels: classify with `errors.Is`, not message text.
+A nil context returns `ErrInvalidOption`; a previously canceled context
+returns `ctx.Err()` **before** nil/empty input or shape checks. Context,
+input presence, shape, finiteness, and computation have a documented
+priority. On any error the result is **nil**, even if many lower lags had
+already been computed privately.
+
+### Q13t.7. Does `PredictionVariance` measure forecast uncertainty or a p-value?
+
+No. `V[m]` is the *in-window* one-step linear prediction-error variance
+from the order-`m` Yule–Walker projection in **squared input units**;
+`V[0]=gamma[0]`. The order increment satisfies
+`V[m]/V[m-1] = 1 - kappa[m]^2` in exact arithmetic. This is not a
+confidence band, a calibrated risk interval, a held-out MSE, or a
+stationarity test. PACF does not estimate AR/ARIMA parameters.
+
+### Q13t.8. Does a theoretical AR(2) guarantee zero sample PACF above lag two?
+
+The *population* PACF of a stationary AR(2) process cuts off above lag
+two. A **finite random training sample** has sampling fluctuations at
+higher lags; therefore a printed nonzero `Values[3]` is not necessarily a
+bug. Candidate AR order selection requires an explicitly chosen screening
+policy, separate fitted-model evaluation, and chronological holdout.
+A heuristic such as `3/sqrt(n)` is not a package-provided significance
+test or a universal guarantee.
+
+### Q13t.9. Can I calculate just one high lag in O(n) time?
+
+`ComputeAtLag(ctx,values,lag,center)` is a **projection wrapper**.
+It computes all covariances and all Durbin–Levinson orders through `lag`,
+then returns the one coefficient. Its cost is
+`O(n*(lag+1)+lag^2)` time and `O(lag+1)` memory, not O(n) generally.
+For multiple lag queries, call `ComputeCentered` or `Compute` once and
+index `result.Values`; repeatedly invoking the point query repeats work.
+The complete implementation costs `O(n*(L+1)+L^2)` time and `O(L+1)`
+additional memory, including both output slices.
+
+### Q13t.10. Are `Result` slices independent, and is `IsNil()` interface-safe?
+
+Yes. On success `Values` and `PredictionVariance` are independently
+allocated, do not alias the input or one another, and belong to the
+caller. `Clone()` deep-copies both while preserving `Count`; a nil
+receiver returns nil. A typed-nil `*pacf.Result` satisfies `core.Nilable`
+structurally and has `IsNil()==true`; an allocated zero-value `Result`
+is **not nil** but is not a valid completed computation.
+Independent `Compute` calls may share an immutable sample slice, not a
+slice being concurrently mutated; exported Result fields need caller
+synchronization under concurrent mutation.
+
+### Q13t.11. Can an extreme scale or a large offset change the calculation?
+
+The kernel uses one bounded centering origin, normalized deviations,
+Neumaier-compensated reductions, FMA coefficient updates and a
+`Frexp`/`Ldexp` physical-variance restoration to reduce premature
+cancellation/overflow. It does **not** promise arbitrary precision.
+Centered PACF is mathematically translation invariant if representable
+shifts preserve the distinctions between samples. Under nonzero scaling,
+PACF is mathematically unchanged and physical `V[m]` scales by the square
+of the scale, **when the output remains representable**. Uncentered PACF
+is generally *not* invariant under adding a constant.
+
+### Q13t.12. What is a useful PACF production workflow?
+
+For residual telemetry or candidate AR modeling, use this sequence:
+
+```text
+validate chronological sampling / missing intervals upstream (series)
+    -> freeze one complete training window and its centering policy
+    -> pacf.ComputeCentered(ctx, training, L)
+    -> inspect Values and in-window PredictionVariance
+    -> select *candidate* model orders under an application policy
+    -> fit models independently and assess future holdout residuals
+    -> diagnose the holdout residual PACF without feeding future data into training
+```
+
+`pacf` is not a causal streaming state or a replacement for `arima.Fit`.
+Its outputs have no automatic statistical significance classification.
+For runnable realistic synthetic workflows see
+[`pacf/example_test.go`](../pacf/example_test.go) and
+[`examples/pacf/main.go`](../examples/pacf/main.go); for the proof and
+numerical contract see [`PACF.md`](PACF.md).
+
+---
+
 ## 14. Builder and gridgraph tips
 
 ### Q14.1. When should I use `builder`?
@@ -5330,6 +5481,31 @@ parameter identity, not an authorization token. The recurrent feature is
 
 See [`LSTM.md`](LSTM.md#6-streaming-chunks-and-exact-replay) and the
 [canonical executable telemetry example](../lstm/example_test.go).
+
+---
+
+### Recipe S. Screen residual AR memory without mistaking PACF for a trained model
+
+Validate sampling continuity upstream and freeze a chronologically complete
+training window. Call `pacf.ComputeCentered(ctx, trainingResiduals, maxLag)`
+with an explicit nonnegative `maxLag<len(trainingResiduals)`. Record the
+sample-window boundaries, centering choice, and computed `Count`, `Values`
+and `PredictionVariance` together. Inspect the partial-correlation pattern
+and the successive variance reductions to **propose** plausible AR orders;
+never treat a finite-sample cutoff or a heuristic screening threshold as an
+automatic order selection or a statistically calibrated decision.
+
+Fit candidate models separately on training observations, then inspect
+out-of-sample prediction errors and residual serial dependence on a
+later untouched holdout. For a zero-referenced signed sensor or event-time
+imbalance, choose `ComputeUncentered` instead and document the physical
+origin. Handle `ErrZeroVariance`, `ErrSingular`, `ErrOverflow` and context
+cancellation without using any partial lag prefix. The kernel never
+epsilon-clamps prediction variance or switches to lag-adjusted covariance.
+
+See [`PACF.md`](PACF.md),
+[`pacf/example_test.go`](../pacf/example_test.go) and the runnable
+`go run ./examples/pacf` example for a fully reproducible diagnostic.
 
 ---
 

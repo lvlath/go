@@ -7,7 +7,7 @@
   Purpose:
     This README is the public face of lvlath. It presents the library as a
     deterministic, contract-driven Go toolkit for graph algorithms, flow networks,
-    dense graph algebra, routing, exact timestamp grids, causal time-series primitives, Wilder RSI batch/stream filtering, SMA-seeded MACD, compensated MFI, compensated cumulative OBV, Chaikin A/D, fixed-window ACF, fractional PAA,
+    dense graph algebra, routing, exact timestamp grids, causal time-series primitives, Wilder RSI batch/stream filtering, SMA-seeded MACD, compensated MFI, compensated cumulative OBV, Chaikin A/D, fixed-window ACF and Durbin-Levinson PACF, fractional PAA,
     symbolic SAX encoding, dependent-data block-index resampling, path-indexed parallel Monte Carlo simulation, exact-in-distribution GBM and Merton jump-diffusion paths, causal GJR-GARCH volatility, fixed-order conditional Gaussian ARIMA with anchored forecasts, frozen IFGO LSTM recurrent inference, alignment, and reproducible algorithm engineering. It should give a new reader immediate confidence in
     what lvlath can solve, how packages compose, where the formal contracts live,
     and why this repository is engineered beyond ad-hoc algorithm snippets.
@@ -48,7 +48,7 @@
 
 # lvlath
 
-**lvlath** is a pure-Go algorithm engineering library for graphs, flows, dense graph algebra, routing, exact timestamp grids, causal series transforms, fractional PAA, symbolic SAX time-series signatures, stable statistical moments, fitted feature scaling, sample autocorrelation, Wilder RSI, SMA-seeded MACD, compensated OHLCV Money Flow Index, cumulative On-Balance Volume, Chaikin Accumulation/Distribution, covariance PCA, causal Hidden Markov Models, version-pinned PCG-DXSM stochastic streams, time-series alignment, reproducible parallel Monte Carlo drivers, exact-in-distribution geometric Brownian motion and Merton jump-diffusion paths, asymmetric stationary GJR-GARCH conditional volatility, fixed-order conditional Gaussian ARIMA level forecasts, deterministic single-layer IFGO LSTM inference, and reproducible test fixtures.
+**lvlath** is a pure-Go algorithm engineering library for graphs, flows, dense graph algebra, routing, exact timestamp grids, causal series transforms, fractional PAA, symbolic SAX time-series signatures, stable statistical moments, fitted feature scaling, sample autocorrelation and partial autocorrelation, Wilder RSI, SMA-seeded MACD, compensated OHLCV Money Flow Index, cumulative On-Balance Volume, Chaikin Accumulation/Distribution, covariance PCA, causal Hidden Markov Models, version-pinned PCG-DXSM stochastic streams, time-series alignment, reproducible parallel Monte Carlo drivers, exact-in-distribution geometric Brownian motion and Merton jump-diffusion paths, asymmetric stationary GJR-GARCH conditional volatility, fixed-order conditional Gaussian ARIMA level forecasts, deterministic single-layer IFGO LSTM inference, and reproducible test fixtures.
 
 It is built for people who need algorithmic tools they can explain in a code review, trust in CI, compose across packages, and debug from deterministic artifacts instead of guessing why an answer changed.
 
@@ -71,6 +71,7 @@ It is built for people who need algorithmic tools they can explain in a code rev
 * `pca` fits validated covariance principal components and retains immutable training means/scales for leakage-free latent projection and reconstruction;
 * `hmm` provides typed categorical and diagonal-Gaussian hidden states with strictly causal filtering, retrospective smoothing, global Viterbi paths, and multi-sequence MAP-EM;
 * `acf` computes scaled direct sample autocorrelation with an explicit common versus lag-adjusted estimator convention and exact available-pair counts;
+* `pacf` computes common-denominator Durbin-Levinson partial autocorrelation and order-wise linear prediction-error variances, with explicit whole-window centering;
 * `rsi` computes causal Wilder price-strength factors with batch/stream bit parity in one environment and detached restart checkpoints;
 * `macd` computes signed EMA convergence/divergence, signal and histogram series with independent readiness masks, atomic zero-allocation Push and detached checkpoint replay;
 * `mfi` computes compensated rolling OHLCV flow with zero-volume slot preservation, bounded MFI ratios, transactional streaming and detached restart state;
@@ -110,6 +111,7 @@ The common failures are familiar:
 * high-offset variance disappears through raw-moment cancellation, or inference refits on holdout data;
 * hidden-state filters are accidentally replaced with future-conditioned smoothing, or independent EM training sequences are concatenated;
 * lag-adjusted autocorrelations are clamped to [-1,1], or fed to a PSD-dependent PACF solver without checking their estimator convention;
+* centered and uncentered PACF windows are mixed, their previous-order coefficients are updated in place, or a singular prediction variance is silently epsilon-clamped;
 * RSI warmup placeholders are read as genuine oscillator zeros, invalid quotes advance stream state, or a config hash is mistaken for checkpoint authentication;
 * MACD is seeded from the first price instead of initial SMA, Signal is seeded with invalid Line zeros, or a checkpoint is replayed from the wrong source offset.
 * a zero-volume MFI bar is dropped, shifting the rolling window, or a configuration hash is mistaken for authenticating mutable checkpoint content.
@@ -216,6 +218,15 @@ The common failures are familiar:
     canceled or failed inference returns no partial result. The caller owns
     validated preprocessing, model provenance, trained heads and alert policy.
 
+20. **Partial autocorrelation has one explicit estimator, not a hidden AR model**
+
+    `pacf` uses biased/common-`n` autocovariance and a single Durbin-Levinson
+    recursion. Centering is caller-controlled and uses the full supplied window.
+    Two coefficient rows protect mirrored recurrence operands; nonpositive
+    prediction variance and nonrepresentable arithmetic fail without a partial
+    result. PACF supports diagnostic order screening, not automatic AR fitting
+    or statistical significance claims.
+
 ---
 
 ## Installation
@@ -250,6 +261,7 @@ lvlath/
 ├── pca/                   # certified covariance PCA, frozen projection and reconstruction
 ├── hmm/                   # categorical/Gaussian HMM, causal filter, smoother, Viterbi, MAP EM
 ├── acf/                   # direct sample ACF, common/lag-adjusted modes, pair counts
+├── pacf/                  # biased autocovariance, Durbin-Levinson PACF, prediction variance
 ├── rsi/                   # Wilder RSI batch and single-owner streaming with versioned snapshots
 ├── macd/                  # SMA-seeded EMA MACD, aligned masks, transactional stream and snapshots
 ├── mfi/                   # compensated rolling OHLCV Money Flow Index, stream and snapshots
@@ -285,6 +297,7 @@ lvlath/
 │   ├── PCA.md
 │   ├── HMM.md
 │   ├── ACF.md
+│   ├── PACF.md
 │   ├── MACD.md
 │   ├── MFI.md
 │   ├── OBV.md
@@ -402,6 +415,12 @@ lvlath/docs/{PACKAGE}.md
                                    └────────────────────────────────────────────┘
 
                                    ┌────────────────────────────────────────────┐
+                                   │ pacf                                       │
+                                   │ biased common-n / Durbin-Levinson          │
+                                   │ partial lag correlation / V_m by order     │
+                                   └────────────────────────────────────────────┘
+
+                                   ┌────────────────────────────────────────────┐
                                    │ arima                                      │
                                    │ conditional ARMA on d-th differences       │
                                    │ Schur roots / anchored level forecasts     │
@@ -500,6 +519,9 @@ Composition rule:
   optional exact quantiles and prefix-only interruption semantics; it does not model a process.
  - acf owns fixed-window sample autocorrelation, explicit estimator conventions,
   and detached coefficients with exact pair counts; it is not a causal transform.
+ - pacf owns fixed-window partial autocorrelation from common-n covariances
+  and Durbin-Levinson prediction variances; it neither fits AR models nor
+  publishes significance bands, and it is not a causal stream.
  - rsi owns causal Wilder gain/loss smoothing, validity masks and single-owner
   checkpointed streams; timestamps and market decisions remain with callers.
  - mfi owns volume-weighted typical-price transitions, compensated rolling
@@ -592,6 +614,7 @@ approves risk-model deployment. Details follow in the
 | `jumpdiffusion` | Merton compound-Poisson lognormal jump-diffusion on explicit GBM grids.                                                                        | `lambda=0` GBM parity, bounded discrete PTRS, drift compensator, partial prefix with errors.                               | Scenario-driven collateral gap stress, jump-sensitive European options, credit event sensitivity.              |
 | `bootstrap`     | Reproducible Moving/Circular/Stationary index resampling for dependent series with per-replicate streams and exact bounded integers.           | Detached complete-row results, memory admission and cancellation without interrupted-row publication.                      | Portfolio risk sensitivity, paired serial regression, telemetry alarm calibration.                             |
 | `acf`           | Direct fixed-window sample autocorrelation with two explicit denominator conventions and raw/centered origins.                                 | Scaled compensated products, no lag-specific recentering or clipping; caller-owned lag counts.                             | Residual audits, compressor cycles, vibration periodicity, signal pitch.                                       |
+| `pacf`          | Finite-window partial autocorrelation and order-by-order prediction variance from biased common-n covariance.                                  | Stable centering, two coefficient rows, detached curves and conservative numeric refusal.                                  | Candidate AR-order screening, compressor residuals, sensor memory, order-flow diagnostics.                     |
 | `rsi`           | Deterministic Wilder RSI over finite-positive prices: batch mask, streaming Push and snapshot continuation.                                    | One shared scalar recurrence, explicit warmup, atomic failed Push, detached checkpoints, no signal thresholds.             | Portfolio momentum-factor extraction, feed monitoring, authenticated hot-failover analytics.                   |
 | `macd`          | SMA-seeded fast/slow EMAs, signed Line/Signal/Histogram, batch and single-owner streaming.                                                     | Shared kernel, separate warmup masks, bitwise batch/stream parity and detached state snapshots.                            | Trend-feature pipelines, bar-feed monitoring, replayable analytics failover.                                   |
 | `mfi`           | Volume-weighted typical-price Money Flow Index over a fixed transition window.                                                                 | Neumaier ring, deterministic rebase, zero-volume retention, atomic Push and detached snapshots.                            | OHLCV research features, market-feed reconciliation and checkpointed streaming analytics.                      |
@@ -1174,7 +1197,8 @@ and `math.FMA` mean reconstruction to avoid avoidable intermediate overflow.
 Its current cost is **O(n*(maxLag+1))** time and **O(n+maxLag)** space: choose a
 scientifically meaningful lag horizon. Exact-arithmetic PSD for the common
 estimator is **not** a binary64 PSD certificate, and the package does not
-supply PACF, FFT, confidence intervals, stationarity tests or p-values.
+supply PACF, FFT, confidence intervals, stationarity tests or p-values; use the
+separate `pacf` package for common-denominator partial lag dependence.
 
 For six executable operational examples (industrial cycles, finance, pitch,
 bearing impacts, calibration and standby power), see
@@ -1182,6 +1206,85 @@ bearing impacts, calibration and standby power), see
 run `go run ./examples/acf`. The [ACF reference](docs/ACF.md) contains the
 Gram proof, strict error precedence, numeric implementation details and a
 mask-aware `series` integration example.
+
+---
+
+### PACF: partial lag dependence and Durbin–Levinson prediction variance
+
+`github.com/lvlath/go/pacf` measures how much **additional linear lag
+structure** remains at order `m` after accounting for lags `1..m-1`. It
+computes a fixed-window, biased sample autocovariance with **one common
+`n` denominator** for every lag, then solves the Yule–Walker prediction
+system by Durbin–Levinson recursion. This is not the `acf.LagAdjusted`
+estimator, Burg, or an OLS-based PACF.
+
+| Need                    | Public API                                               | Meaning                                           |
+|:------------------------|:---------------------------------------------------------|:--------------------------------------------------|
+| Explicit lag and origin | `pacf.Compute(ctx,x,pacf.Options{MaxLag:L,Center:true})` | Canonical calculation, inclusive `L<n`            |
+| Mean-adjusted PACF      | `pacf.ComputeCentered(ctx,x,L)`                          | Fits one full-window mean                         |
+| Physical-zero PACF      | `pacf.ComputeUncentered(ctx,x,L)`                        | Raw second moments, **no centering**              |
+| One coefficient         | `pacf.ComputeAtLag(ctx,x,m,true)`                        | Projects full recursion through order `m`         |
+| Independent result      | `result.Clone()` / `result.IsNil()`                      | Detached curves, nil-safe `core.Nilable` behavior |
+
+The exact small fixture below exposes the difference between ordinary and
+partial autocorrelation at lag two. A practical AR-order investigation
+should instead use a sufficiently long, complete training window and
+independent chronological holdout evaluation.
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+
+    "github.com/lvlath/go/pacf"
+)
+
+func main() {
+    // Three centered readings give gamma=[2/3,0,-1/3].
+    profile, err := pacf.ComputeCentered(context.Background(), []float64{1, 2, 3}, 2)
+    if err != nil {
+        fmt.Println("PACF:", err)
+        return
+    }
+    fmt.Printf("samples=%d PACF(1)=%.1f PACF(2)=%.1f V(2)=%.1f\n",
+        profile.Count, profile.Values[1], profile.Values[2],
+        profile.PredictionVariance[2])
+    // Output: samples=3 PACF(1)=0.0 PACF(2)=-0.5 V(2)=0.5
+}
+```
+
+The zero `pacf.Options{}` deliberately means **uncentered lag zero**, unlike
+the centered default of `acf.Options{}`. On success, `Values[0]` is exactly
+`1`, both output slices are independently owned and have `L+1` elements,
+`Count=n`, and every `PredictionVariance[m]` is finite and positive in
+squared input units. `Result.Clone()` deep-copies both slices;
+`IsNil()` safely detects typed nil pointers. The package never retains
+or modifies inputs and does not publish a partially valid Result on error.
+
+Numerical safeguards include globally scaled compensated covariance scans,
+two disjoint coefficient rows (preventing in-place mirror corruption),
+the factored update `V_m=V_(m-1)*(1-|kappa|)*(1+|kappa|)` and binary-exponent
+physical-variance reconstruction. A zero selected energy gives
+`ErrZeroVariance`; a failed recursion gives `ErrSingular`; nonrepresentable
+arithmetic/output gives `ErrOverflow`. Classify through `errors.Is`.
+A near-singular finite sample can fail conservatively in binary64; the
+kernel does **not** epsilon-clamp or secretly change estimator. Nil or
+pre-canceled context and invalid input follow the documented precedence.
+
+PACF is a **whole-window descriptive** statistic. The population PACF of
+stationary AR(p) cuts off beyond p, but a finite-sample profile is noisy:
+no exact sample cutoff, p-value, automatic `arima.Order` or confidence
+interval is promised. `PredictionVariance` is *in-sample linear prediction
+error variance*, not held-out forecast risk. Computation costs
+**`O(n*(L+1)+L²)`** time and **`O(L+1)`** extra space.
+
+For numerical proofs, edge-case contracts, and production usage see
+[`docs/PACF.md`](docs/PACF.md); for the tutorial see
+[the PACF foundations](docs/TUTORIAL.md#11u-pacf-foundations-partial-dependence-and-prediction-variance);
+for executable real-domain synthetic workflows see
+[`pacf/example_test.go`](pacf/example_test.go) and `go run ./examples/pacf`.
 
 ---
 
@@ -2366,6 +2469,7 @@ for masked streaming from a frozen model.
 | Stable Ridge regression        | [`docs/RIDGE.md`](docs/RIDGE.md)                 | Positive-Lambda augmented QR, strict intercept policy, wide/collinear designs, nonzero tiny coefficients and frozen prediction. |
 | Dependent index bootstrap      | [`docs/BOOTSTRAP.md`](docs/BOOTSTRAP.md)         | Moving/Circular/Stationary laws, exact integer mapping, replay, budget and partial rows.                                        |
 | Sample autocorrelation         | [`docs/ACF.md`](docs/ACF.md)                     | Common/lag-adjusted ACF, full-window centering, Toeplitz PSD proof and numeric limitations.                                     |
+| Partial autocorrelation        | [`docs/PACF.md`](docs/PACF.md)                   | Common-n covariance, Durbin-Levinson recursion, V_m, stable arithmetic and error precedence.                                    |
 | Wilder RSI                     | [`docs/RSI.md`](docs/RSI.md)                     | Stable ratio math, exact seed/warmup, batch/stream equivalence, sentinels and checkpoint ABI.                                   |
 | SMA-seeded MACD                | [`docs/MACD.md`](docs/MACD.md)                   | Appel EMA seed/recurrence, signed values, aligned masks, batch/stream parity, checkpoint safety.                                |
 | Compensated MFI                | [`docs/MFI.md`](docs/MFI.md)                     | Typical-price OHLCV flow, transition windows, Neumaier rebase, warmup masks and versioned state.                                |
@@ -2918,6 +3022,7 @@ incidence matrix:       columns are edge identities, not vertex-pair weights
 | "How do I create comparable symbolic time-series signatures?"                                  | `sax.NewEncoder` / `sax.Encode`                                    | Fixed-alphabet symbols, compatible policy hash, detached results.                                     |
 | "Can SAX MINDIST prune arbitrary DTW candidates?"                                              | No                                                                 | Euclidean-only lower bound; shortlist retrieval must report Recall@K.                                 |
 | "How do I measure repeat cycles or fixed-window serial dependence?"                            | `acf.ComputeDefault` / `acf.Compute`                               | Integer-lag ACF with explicit denominator and pair counts; not causal streaming.                      |
+| "Which lag adds linear dependence after controlling for all shorter lags?"                     | `pacf.ComputeCentered` / `pacf.ComputeAtLag`                       | Biased common-n PACF and order-wise prediction variance, not a p-value or fitted AR order.            |
 | "How do I enumerate only complete index windows?"                                              | `series.WindowRanges`                                              | Ordered half-open ranges without partial tails.                                                       |
 | "How do I compare two jittery sensor signatures?"                                              | `dtw.Align`                                                        | Scalar DTW aligns timing drift.                                                                       |
 | "How do I align model-provided frame costs?"                                                   | `dtw.AlignCostMatrix`                                              | Caller owns the local-cost surface.                                                                   |
@@ -2995,6 +3100,7 @@ incidence matrix:       columns are edge identities, not vertex-pair weights
 | Poisson count replaced by a Gaussian at high intensity                          | Use bounded PTRS at mean>=30, not a continuous approximation.                                                |
 | An incomplete jump path silently priced as a maturity scenario                  | Reject `!Complete` in `montecarlo.Sampler`; retain diagnostic prefix only.                                   |
 | Full-window ACF mistaken for a causal streaming feature                         | Fit only a fixed permitted window; appending observations can revise every lag.                              |
+| PACF lag-adjusted covariance, in-place coefficients or epsilon variance clamp   | Use common-n covariance, disjoint coefficient rows, and `ErrSingular` instead of fabricated V_m.             |
 | Warmup zero mistaken for a computed zero                                        | `series.TransformResult.Valid` marks computed cells; retain it with `Values`.                                |
 | MFI zero-volume or unchanged-price bars silently dropped                        | Retain every observed transition slot; a missing candle is a separate feed-integrity error.                  |
 | MFI checkpoint Config mistaken for integrity proof                              | Authenticate the entire Snapshot and persist source offset; Config is only an algorithm/period identity.     |

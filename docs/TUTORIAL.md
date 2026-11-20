@@ -3,9 +3,9 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/TUTORIAL.md
-  Package reference: matrix, stats, ols, ridge, series, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima, lstm and the wider lvlath package family
+  Package reference: matrix, stats, ols, ridge, series, pacf, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima, lstm and the wider lvlath package family
   Contract status: learning guide; package doc.go and source define the public API.
-  Scope: graph, matrix, factorization, statistical and temporal workflows, including causal MACD, rolling MFI, cumulative OBV, Chaikin A/D, reproducible parallel Monte Carlo, exact-in-distribution GBM, experimental Merton jump diffusion, GJR-GARCH causal volatility with constrained Gaussian QMLE, and fixed-order conditional Gaussian ARIMA with anchored forecasts, and frozen IFGO LSTM recurrent inference.
+  Scope: graph, matrix, factorization, statistical and temporal workflows, including causal MACD, rolling MFI, cumulative OBV, Chaikin A/D, reproducible parallel Monte Carlo, exact-in-distribution GBM, experimental Merton jump diffusion, GJR-GARCH causal volatility with constrained Gaussian QMLE, and fixed-order conditional Gaussian ARIMA with anchored forecasts, and frozen IFGO LSTM recurrent inference, and finite-window Durbin-Levinson PACF estimation.
   lvlath - Repository Tutorial
 
   Purpose:
@@ -65,6 +65,7 @@ This tutorial is the beginning of the learning path. It introduces the objects a
     11r. [GJR-GARCH Foundations: Causal Leverage, Variance Forecasts and Auditable QMLE](#11r-gjr-garch-foundations-causal-leverage-variance-forecasts-and-auditable-qmle)
     11s. [ARIMA Foundations: Conditional Likelihood, Differencing and Anchored Forecasts](#11s-arima-foundations-conditional-likelihood-differencing-and-anchored-forecasts)
     11t. [LSTM Foundations: Frozen IFGO Inference and Masked Streaming](#11t-lstm-foundations-frozen-ifgo-inference-and-masked-streaming)
+    11u. [PACF Foundations: Partial Dependence and Prediction Variance](#11u-pacf-foundations-partial-dependence-and-prediction-variance)
 12. [Algorithm Selection Guide](#12-algorithm-selection-guide)
 13. [Professional Best Practices](#13-professional-best-practices)
 14. [Where To Go Next](#14-where-to-go-next)
@@ -98,6 +99,7 @@ The library covers:
 * `pca` immutable train-only principal component projection, certified covariance eigenspectrum, and original-unit reconstruction;
 * `hmm` typed categorical/diagonal-Gaussian hidden-state models, causal filtering, noncausal smoothing, Viterbi, and independent-sequence MAP-EM;
 * `acf` scaled direct sample autocorrelation, explicit common versus pair-adjusted denominators, and detached per-lag pair counts;
+* `pacf` finite-window Durbin-Levinson partial autocorrelation with common-denominator covariances and one-step prediction variances;
 * `rsi` causal Wilder gain/loss smoothing, index-aligned readiness masks, zero-allocation streaming and versioned scalar checkpoints;
 * `macd` SMA-seeded Appel EMAs with signed Line/Signal/Histogram, separate readiness masks, transactional streaming and detached restart state;
 * `mfi` compensated rolling typical-price money flow over OHLCV, transition-counted zero volumes, batch/stream parity and detached replay state;
@@ -142,6 +144,7 @@ GJR-GARCH fit candidate    *gjrgarch.FitResult         immutable Model / accepte
 ARIMA forecast levels      *arima.ForecastResult       anchored mean / marginal innovation variance / horizon
 frozen LSTM features       *lstm.Result                optional zero-padded Sequence / detached Hidden+Cell / ModelID
 sample autocorrelation     *acf.Result                 fixed-window lag coefficients / pair counts
+sample partial ACF         *pacf.Result                lag reflection coefficients / order-wise V_m
 Wilder RSI factor          *rsi.Result                 aligned oscillator / Valid mask
 MACD trend difference      *macd.Result                aligned Line / Signal / Histogram masks
 MFI volume-weighted flow   *mfi.Result                 aligned Values / Valid with compensated rolling window
@@ -252,6 +255,7 @@ Read these files as a learning path. `doc.go` files define implemented package c
 | 8s   | [`GJRGARCH.md`](GJRGARCH.md)               | Causal asymmetric variance, stationary forecast, deterministic constrained Gaussian QMLE and risk release gates.              |
 | 8t   | [`ARIMA.md`](ARIMA.md)                     | Conditional Gaussian ARIMA, Schur root validation, differenced drift, anchors and innovation-only forecast variance.          |
 | 8u   | [`LSTM.md`](LSTM.md)                       | Frozen PyTorch IFGO weights, tensor masks, streaming equivalence, model identity, arithmetic safety and pinned golden oracle. |
+| 8v   | [`PACF.md`](PACF.md)                       | Durbin-Levinson PACF, common-n covariance, stable variances, error law and practical applications.                            |
 | 9    | [`DTW.md`](DTW.md)                         | `Align`, `AlignCostMatrix`, `AlignMatrix`, `AlignBounded`, exact `Search`, numeric and path artifacts.                        |
 | 9a   | [`DTW_SEARCH.md`](DTW_SEARCH.md)           | Fixed-length exact top-K, certified LB_Keogh, workers, budgets, and partial-result law.                                       |
 | 10   | [`TSP.md`](TSP.md)                         | Matrix-backed tours, exact regimes, Christofides, Blossom matching, local search, timeouts.                                   |
@@ -278,6 +282,7 @@ Working on numeric/time-series workflows:
   MATRICES -> STATS -> PCA -> independent holdout reconstruction and residual review
   SERIES -> STATS -> HMM.FilterStep -> online regime monitoring (no future data)
   SERIES -> ACF.ComputeDefault -> fixed-window lag diagnostics (NOT causal)
+  SERIES -> PACF.ComputeCentered -> partial lag memory / V_m (fixed-window, NOT causal)
   SERIES -> RSI.ComputePeriod / Stream.Push -> causal price-strength factors
   SERIES -> MACD.Compute / Stream.Push -> signed trend-separation features and masks
   SERIES -> MFI.Compute / Stream.Push -> OHLCV volume-weighted transition factor and validity mask
@@ -292,7 +297,7 @@ Working on numeric/time-series workflows:
   SERIES.Validate -> frozen training levels -> ARIMA.Fit -> anchored Forecast -> chronological holdout review
   SERIES.Validate -> caller-fitted training scales -> frozen LSTM.Import -> InferSequence / InferChunk -> caller-owned head and holdout review
   MONTECARLO.Run -> mean/variance/SE / optional exact quantiles -> application decision policy
-  OLS/RIDGE residual window -> ACF -> investigate serial dependence (NOT a p-value)
+  OLS/RIDGE residual window -> ACF/PACF -> investigate serial dependence (NOT a p-value)
   MATRICES -> HMM.Smooth / Decode -> offline incident reconstruction
   SAX (Euclidean screening) != DTW (nonlinear alignment)
   MATRICES -> TSP
@@ -361,6 +366,12 @@ Think of `lvlath` as a contract stack.
                          │ acf                                           │
                          │ fixed-window, scaled direct autocorrelation   │
                          │ common / lag-adjusted; not causal streaming   │
+                         └───────────────────────────────────────────────┘
+
+                         ┌───────────────────────────────────────────────┐
+                         │ pacf                                          │
+                         │ common-n covariance / Durbin-Levinson         │
+                         │ partial lag dependence / prediction variance  │
                          └───────────────────────────────────────────────┘
 
                          ┌───────────────────────────────────────────────┐
@@ -2476,19 +2487,23 @@ Need an online causal feature at time t?
   -> series, or a separately fitted/updated causal model
   -> NOT the ACF of a window extending into the future
 
-Need PACF, confidence intervals or a spectrum?
-  -> separate methods with their own assumptions and error contracts
-  -> acf does not claim these outputs
+Need partial lag dependence and prediction variance?
+  -> pacf.ComputeCentered (uses biased common-n autocovariance)
+  -> NOT a confidence band, a p-value, or a spectral estimate
+
+Need confidence intervals or a spectrum?
+  -> separate inference/spectral methods with their own assumptions
+  -> neither acf nor pacf claims these outputs
 ```
 
 `stats` may independently summarize a fitted mean; `ols`/`ridge` residuals
 may be examined for fixed-window dependence; `pca` scores may be inspected
 without refitting heldout coordinates; `hmm.FilterStep` keeps a different,
 causal inference contract. `dtw` aligns **two** time series, while ACF
-compares a series against its own shifted values at *fixed* lags. A future
-`pacf` solver must require `CommonDenominator` and separately validate
-numerical conditioning; common-normalized float64 output is not a machine
-PSD certificate.
+compares a series against its own shifted values at *fixed* lags. The existing `pacf.ComputeCentered` uses its own biased/common-`n`
+autocovariance and Durbin-Levinson recursion; it does not accept an ACF
+result as input. The exact-arithmetic Gram property is not a machine
+PSD certificate. See [`PACF.md`](PACF.md) for its independent contract.
 
 For the mathematical Gram proof, explicit adjusted-estimator counterexample,
 full error table, three executable workflows, independent-oracle strategy and
@@ -4751,6 +4766,186 @@ performance/benchmark bounds, continue to [`LSTM.md`](LSTM.md),
 
 ---
 
+## 11u. PACF Foundations: Partial Dependence and Prediction Variance
+
+`pacf` estimates **partial** rather than ordinary autocorrelation over one
+fully supplied scalar window. At lag `m`, it estimates the remaining linear
+relationship between endpoints after accounting for shorter lags `1..m-1`.
+It also reports the in-sample one-step linear prediction-error variance at
+each order. This supports AR-order **screening**, not automatic ARIMA fitting,
+forecast calibration, confidence intervals, or evidence of IID innovations.
+
+### 11u.1. Why lag conventions matter
+
+A single sample origin and the **same divisor `n`** are used for all lags:
+
+$$
+\gamma_k=\frac{1}{n}\sum_{t=k}^{n-1}c_tc_{t-k}, \qquad
+c_t=\begin{cases}x_t-\bar x,&\text{Center=true}\\ x_t,&\text{Center=false}.\end{cases}
+$$
+
+![Common-n PACF autocovariance](https://latex.codecogs.com/svg.image?%5Cgamma_k%3D%5Cfrac%7B1%7D%7Bn%7D%5Csum_%7Bt%3Dk%7D%5E%7Bn-1%7Dc_tc_%7Bt-k%7D)
+
+This is compatible **mathematically** with `acf.CommonDenominator` and not
+with `acf.LagAdjusted` (`n-k`). Unlike `acf.Options{}`, the zero
+`pacf.Options{}` selects **uncentered lag zero only**. There is no hidden
+automatic maximum lag; select `MaxLag` explicitly in `[0,n-1]`.
+
+The common denominator gives an exact-arithmetic Toeplitz Gram matrix.
+For a nonzero finite centered/raw window, the necessary finite systems are
+positive definite in exact arithmetic; binary64 rounding can still cause a
+conservative numerical `ErrSingular`. Never clamp a failed prediction
+variance to a made-up epsilon.
+
+### 11u.2. Durbin–Levinson is not an ordinary ACF ratio at high lags
+
+For order `m`, the new reflection coefficient is
+
+$$
+\kappa_m=\frac{\gamma_m-\sum_{j=1}^{m-1}a_{m-1,j}\gamma_{m-j}}
+                  {V_{m-1}},\qquad
+V_m=V_{m-1}(1-|\kappa_m|)(1+|\kappa_m|).
+$$
+
+The coefficients update as `a[m,j]=a[m-1,j]-kappa[m]*a[m-1,m-j]`.
+Both reads must use the completed **previous** order: two disjoint
+ping-pong arrays prevent the mirrored operand from being overwritten.
+At lag one, `Values[1]=gamma[1]/gamma[0]` mathematically; at later lags
+PACF differs from ordinary ACF. `PredictionVariance[m]` is an in-window
+linear projection diagnostic in squared input units, not forecast
+uncertainty or the probability of a future event.
+
+```text
+fixed chronological window
+        |
+choose Center and inclusive MaxLag
+        |
+common-n scaled autocovariance
+        |
+Durbin-Levinson, previous/next rows
+        |
+complete detached PACF and variance profile
+        |
+application chooses candidate order and holdout validation
+```
+
+### 11u.3. Runnable vibration-memory screening
+
+This example generates **synthetic**, reproducible vibration residuals
+whose stable data-generating law is AR(2). The code knows those coefficients
+only to construct a deterministic demonstration; `pacf` does not receive
+them. The `3/sqrt(n)` cutoff is an **illustrative screening heuristic**, not
+a p-value, confidence limit, or validated model-selection procedure.
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "math"
+    "math/rand"
+
+    "github.com/lvlath/go/pacf"
+)
+
+func main() {
+    const samples = 8192
+    const maxLag = 12
+
+    source := rand.New(rand.NewSource(27))
+    vibration := make([]float64, samples)
+    for t := 2; t < len(vibration); t++ {
+        vibration[t] = 0.6*vibration[t-1] - 0.2*vibration[t-2] + source.NormFloat64()
+    }
+
+    profile, err := pacf.ComputeCentered(context.Background(), vibration, maxLag)
+    if err != nil {
+        fmt.Println("PACF error:", err)
+        return
+    }
+
+    screeningCutoff := 3 / math.Sqrt(float64(profile.Count))
+    candidate := 0
+    for lag := 1; lag <= maxLag; lag++ {
+        if math.Abs(profile.Values[lag]) > screeningCutoff {
+            candidate = lag
+        }
+    }
+    gain := 100 * (1 - profile.PredictionVariance[2]/profile.PredictionVariance[1])
+    fmt.Printf("samples=%d candidate=%d PACF(1)=%.3f PACF(2)=%.3f\n",
+        profile.Count, candidate, profile.Values[1], profile.Values[2])
+    fmt.Printf("order-2 in-window incremental variance reduction=%.1f%%\n", gain)
+}
+```
+
+Output (Go 1.23.2 reference run on this deterministic fixture):
+
+```text
+samples=8192 candidate=2 PACF(1)=0.502 PACF(2)=-0.192
+order-2 in-window incremental variance reduction=3.7%
+```
+
+The result is a **candidate**, not an automatically fitted AR(2) model.
+To qualify a forecast model, fit candidate models only on training
+observations, compare them on a later chronological holdout, and inspect
+held-out residuals. See the complete
+[`examples/pacf/main.go`](../examples/pacf/main.go) demonstration for a
+training/holdout workflow using synthetic known-coefficient filtering.
+
+### 11u.4. API, failure and ownership laws
+
+| Need                         | API                                                      | Contract point                      |
+|:-----------------------------|:---------------------------------------------------------|:------------------------------------|
+| Explicit mode and lag        | `pacf.Compute(ctx,x,pacf.Options{MaxLag:L,Center:true})` | Canonical kernel, full result       |
+| Mean-adjusted dependence     | `pacf.ComputeCentered(ctx,x,L)`                          | One full-window fitted mean         |
+| Physical-zero second moments | `pacf.ComputeUncentered(ctx,x,L)`                        | No fitted mean                      |
+| One coefficient              | `pacf.ComputeAtLag(ctx,x,m,true)`                        | Calculates full prefix through `m`  |
+| Independent result copy      | `result.Clone()`                                         | Both slices detached                |
+| Nil-safe result presence     | `result.IsNil()`                                         | `core.Nilable`-compatible typed nil |
+
+A successful `Result` contains equally sized `Values` and
+`PredictionVariance` slices indexed from zero through `L`, and `Count=n`.
+`Values[0]` is exactly one; every published variance is strictly positive
+and finite. Each slice is privately allocated and caller-owned.
+
+Validation precedence is **context → nil input → empty input → lag range →
+nonfinite observations → computation**. Nil context produces
+`ErrInvalidOption`; a pre-canceled context returns `ctx.Err()`; zero
+selected energy returns `ErrZeroVariance`, failed recursion returns
+`ErrSingular`, and nonrepresentable numeric output returns `ErrOverflow`.
+Use `errors.Is` for classification. Every failed canonical call returns
+`nil` result, never a partial lag prefix. Independent calls can read the
+same unchanged inputs concurrently; no caller mutation during Compute is
+supported.
+
+### 11u.5. Cost and safe composition
+
+For a window of `n` values and inclusive `L`, the direct pair scans and
+recurrence cost **`O(n*(L+1)+L²)`** time and **`O(L+1)`** additional
+memory, including both output slices. There is no FFT/Burg fallback and
+no allocated `n`-sized normalized buffer. An O(n) lag-zero request is not
+an O(1) shortcut; late lags are expensive.
+
+The safe pipeline is:
+
+```text
+series.Validate (optional upstream fixed-cadence gate)
+    -> stable historical train window
+    -> acf.ComputeDefault (ordinary dependence, if needed)
+    -> pacf.ComputeCentered (partial dependence / V_m)
+    -> application-owned ARIMA order review and holdout test
+    -> optional held-out residual PACF diagnostic
+```
+
+`acf` and `pacf` are independent numerical packages; the diagram does
+not imply that `pacf` imports `acf` or that `arima.Fit` automatically
+selects an order. See [`PACF.md`](PACF.md), [`../pacf/doc.go`](../pacf/doc.go),
+and [the PACF FAQ](FAQ_%26_TIPS.md#13t-pacf-faq---covariance-recurrence-and-safe-interpretation)
+for the full mathematical and operational boundaries.
+
+---
+
 ## 12. Algorithm Selection Guide
 
 ### If the input is a graph
@@ -4800,6 +4995,7 @@ performance/benchmark bounds, continue to [`LSTM.md`](LSTM.md),
 | Fixed-alphabet symbolic window encoding                       | `sax.Encode` / `sax.Encoder.Encode`                        | Detached symbol word, policy identity and optional transformed PAA.                                           |
 | Compatible Euclidean symbolic lower bound                     | `sax.Encoder.Mindist` / `sax.MindistValues`                | Lower-bound dissimilarity in the selected transformed space, never a general DTW bound.                       |
 | Direct sample ACF by integer lag                              | `acf.ComputeDefault` / `acf.Compute`                       | One fitted window, explicit denominator convention and pair counts; not causal streaming.                     |
+| Partial autocorrelation and AR-order screening                | `pacf.ComputeCentered` / `pacf.ComputeAtLag`               | Common-n Durbin-Levinson and in-window prediction variances; no automatic model selection.                    |
 | Causal Wilder price-strength oscillator                       | `rsi.ComputePeriod` / `rsi.NewPeriod`                      | Aligned Values+Valid or single-owner zero-allocation stream with explicit Reset.                              |
 | SMA-seeded MACD and trend separation                          | `macd.ComputeDefault` / `macd.NewDefault`                  | Three aligned signed outputs; independently gated Line and Signal/Histogram; zero-allocation Push.            |
 | Volume-weighted OHLCV price direction and rolling MFI         | `mfi.ComputeDefault` / `mfi.NewDefault`                    | Finite `[0,100]` feature, one Valid mask, compensated ring and versioned snapshots.                           |
