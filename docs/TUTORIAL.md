@@ -90,7 +90,7 @@ The library covers:
 * `dijkstra` weighted full-SSSP and four target-search methods (Dijkstra, bidirectional Dijkstra, consistent A*, balanced A*), original EdgeIDs, and exact target-cutoff policy;
 * `mst` exact Prim/Kruskal MST/MSF, KMB original-edge graph Steiner approximation, and closed/fixed-end edge-covering walks;
 * `flow` max-flow / residual-network analysis;
-* `matrix` dense graph algebra: adjacency, incidence, metric closure, statistics, factorization, sanitation;
+* `matrix` dense graph algebra: adjacency, incidence, metric closure, stable statistics, reusable factors, direct economy SVD and sanitation;
 * `dtw` deterministic Dynamic Time Warping, bounded outcomes, and globally exact fixed-length squared-DTW top-K window search;
 * `series` exact integer-nanosecond grid validation, causal lag/difference/returns, and complete index windows;
 * `stats` stable Welford/Chan moments, mergeable partitions, and immutable fitted feature standardization;
@@ -232,7 +232,7 @@ Read these files as a learning path. `doc.go` files define implemented package c
 | 4    | [`DIJKSTRA.md`](DIJKSTRA.md)               | Full SSSP vs target Dijkstra/A*, consistent/balanced potentials, original EdgeIDs, exact cutoff, walls and error contracts.   |
 | 5    | [`MST.md`](MST.md)                         | Exact Prim/Kruskal MST/MSF, KMB Steiner networks, closed/fixed-end tree walks, original IDs and separate numeric contracts.   |
 | 6    | [`FLOW.md`](FLOW.md)                       | Capacity networks, residual graph state, Ford-Fulkerson, Edmonds-Karp, Dinic.                                                 |
-| 7    | [`MATRICES.md`](MATRICES.md)               | Dense storage, graph adapters, zero-weight policy, metric closure, statistics, numeric sanitation.                            |
+| 7    | [`MATRICES.md`](MATRICES.md)               | Dense storage, graph adapters, zero-weight policy, statistics, factor solves and one-sided Jacobi economy SVD.                            |
 | 8    | [`SERIES.md`](SERIES.md)                   | Exact signed-nanosecond grids, causal arrays, masks, overflow, and index windows.                                             |
 | 8a   | [`STATS.md`](STATS.md)                     | Welford/Chan moments, exact binary-input mean, scaled variance, immutable fitted scaling and error laws.                      |
 | 8b   | [`PAA.md`](PAA.md)                         | Exact fractional segment geometry, nearest-even floating arithmetic, wrappers, and SAX-oriented ownership.                    |
@@ -280,6 +280,7 @@ Working on numeric/time-series workflows:
   MATRICES -> STATS -> OLS -> chronological holdout prediction
   MATRICES -> STATS -> RIDGE -> wide/collinear factor predictions with shrinkage
   MATRICES -> STATS -> PCA -> independent holdout reconstruction and residual review
+  MATRICES.SVD -> rectangular telemetry / finance / RF mode inspection (not automatic PCA)
   SERIES -> STATS -> HMM.FilterStep -> online regime monitoring (no future data)
   SERIES -> ACF.ComputeDefault -> fixed-window lag diagnostics (NOT causal)
   SERIES -> PACF.ComputeCentered -> partial lag memory / V_m (fixed-window, NOT causal)
@@ -872,7 +873,7 @@ Graphs describe relationships. Matrices make those relationships computable.
 * metric closure / all-pairs shortest paths;
 * degree vectors and reductions;
 * row-major dense algebra;
-* legacy unpivoted LU/QR, reusable pivoted LU/Householder QR, Cholesky, least-squares, inverse, and symmetric eigen decomposition;
+* legacy unpivoted LU/QR, reusable pivoted LU/Householder QR, Cholesky, least-squares, inverse, symmetric eigen decomposition, and direct rectangular economy SVD;
 * stable sample covariance, direct Pearson correlation, and scale-aware L2 row normalization;
 * numeric sanitation and tolerant comparison.
 
@@ -888,6 +889,7 @@ Graphs describe relationships. Matrices make those relationships computable.
 | Graph adapters             | Adjacency, incidence, metric closure.   | Topology becomes numeric data without losing policy.              |
 | Sanitizers                 | `ReplaceInfNaN`, `Clip`.                | Raw telemetry becomes safe for statistics/algebra.                |
 | Comparators                | `AllClose`.                             | Tests compare numeric results by tolerance, not fragile equality. |
+| Rectangular SVD            | `SVD` / `SVDDefault` / option wrappers. | Direct singular modes, economy shapes, no Gram-based solver.      |
 
 ### Storage intuition
 
@@ -1029,6 +1031,107 @@ For repeated response batches with the same design, call `FactorQR` once and reu
 
 The full derivation, dimension rules, numerical limits, and the separate LU/QR/Cholesky conventions are in [`MATRICES.md`](MATRICES.md#1011-reusable-factorizations-different-problems-different-contracts).
 
+### Economy SVD: rectangular measurements without normal equations
+
+A calibration design and an observation table are different mathematical
+objects. QR solves a **full-column-rank** system against a response; economy SVD
+finds singular directions of an **arbitrary finite nonempty rectangular**
+matrix without requiring a response or forming `A^T*A`.
+
+```text
+  measurements A[m x n]
+           |
+    matrix.SVDDefault
+           |
+    +------+------+---------------+
+    |             |               |
+    U[m x k]   s[0:k]          VT[k x n]
+    |             |               |
+    +-------------+---------------+
+           |
+   k = min(m,n); A ~= U diag(s) VT
+           |
+   rank / truncation / diagnostics belong to caller policy
+```
+
+For wide observations with `m<n`, the kernel decomposes `A^T`, then maps the
+small factors back. A `5 x 18` instrument experiment therefore returns
+`U[5 x 5]` and `VT[5 x 18]`, **not** a needless `18 x 18` right basis.
+Each working column retains an independent binary exponent, protecting
+representable orthogonal modes with vastly different amplitudes.
+
+**Executable RF calibration example (synthetic fixture).** Five controlled
+excitation pulses are sampled at eighteen frequencies. We use singular values
+and economy shapes to inspect the observable response subspace; SVD does not
+claim to identify eighteen unique physical calibration parameters from only
+five independent pulse experiments.
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+
+    "github.com/lvlath/go/matrix"
+)
+
+func main() {
+    const pulses, frequencyBands = 5, 18
+    readings, err := matrix.NewDense(pulses, frequencyBands)
+    if err != nil {
+        fmt.Println("allocation:", err)
+        return
+    }
+
+    // The fixed deterministic fixture models different pulse/frequency envelopes.
+    for pulse := 0; pulse < pulses; pulse++ {
+        for frequency := 0; frequency < frequencyBands; frequency++ {
+            response := float64((pulse+1)*(1+frequency%7) +
+                (pulse*pulse+frequency*frequency)%11)
+            if err := readings.Set(pulse, frequency, response); err != nil {
+                fmt.Println("observation:", err)
+                return
+            }
+        }
+    }
+    result, err := matrix.SVDDefault(context.Background(), readings)
+    if err != nil {
+        // A non-nil diagnostic on ErrNotConverged is not a usable basis.
+        fmt.Println("decomposition:", err)
+        return
+    }
+    fmt.Printf("pulses=%d bands=%d U=%dx%d VT=%dx%d rank=%d\n",
+        pulses, frequencyBands,
+        result.U.Rows(), result.U.Cols(),
+        result.VT.Rows(), result.VT.Cols(), result.Rank)
+
+    // Output: pulses=5 bands=18 U=5x5 VT=5x18 rank=5
+}
+```
+
+`SVDOptions{}` selects 100 full cyclic sweeps and a normalized column
+correlation tolerance of `8*2^-52`. A zero-rotation diagonal matrix can still
+report `Iterations=0`. `Rank` is a numerical, relative singular-value cutoff;
+it **does not** erase modes below that cutoff. Cancellation, nonfinite input,
+true output overflow and invalid options return nil results. Exhausted sweeps
+instead return `ErrNotConverged` plus a diagnostic `SVDResult{Converged:false}`;
+do not feed its factors into a numerical decision.
+
+For already-centered observations, the first `r` singular values can quantify
+retained **matrix energy**; for uncentered data, this is not PCA explained
+variance. Do not use `means []float64` as a substitute for the actual output
+of `CenterColumns` when extreme-offset precision matters. The currently
+implemented `pca.Fit` remains a covariance-eigensolver; its reserved `ThinSVD`
+mode still rejects the request. Using `matrix.SVD` explicitly does not change
+that cross-package contract.
+
+Read the complete [rectangular SVD reference](MATRICES.md#1016-rectangular-economy-svd-direct-singular-mode-analysis)
+and the [matrix SVD FAQ](FAQ_%26_TIPS.md#6-matrix-faq). The five runnable
+engineering scenarios are in `matrix/example_test.go`, and
+the three required tall/wide/square SVD benchmarks are in
+`matrix/bench_test.go`. Source, test, and documentation contracts remain separate.
+
 ### Matrix as bridge to other packages
 
 `matrix` is not isolated from graph algorithms:
@@ -1043,7 +1146,7 @@ The full derivation, dimension rules, numerical limits, and the separate LU/QR/C
 * `stats` streams finite scalar data and fits immutable per-feature transforms over `matrix.Matrix`; it never changes the matrix or infers a validity mask.
 * `ols` uses the same QR and stats kernels for full-rank linear-factor modeling, preserves physical coefficients and never refits on heldout data.
 * `ridge` builds a positive-Lambda augmented system, equilibrates its QR coordinates and accepts collinear/wide designs without hidden OLS fallback; it also predicts from frozen physical parameters.
-* `pca` delegates sample covariance and symmetric Jacobi to `matrix`, freezes train-only means/scales and eigenvectors, and reconstructs new observations without recalibrating their coordinate origin.
+* `pca` delegates sample covariance and symmetric Jacobi to `matrix`, freezes train-only means/scales and eigenvectors, and reconstructs new observations without recalibrating their coordinate origin. The existence of `matrix.SVD` does not activate the reserved `pca.ThinSVD` enum.
 * `hmm` consumes typed categorical symbols or finite feature matrices, keeps online filtering causal, and trains without crossing independent sequence boundaries.
 
 ---

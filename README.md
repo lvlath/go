@@ -61,7 +61,7 @@ It is built for people who need algorithmic tools they can explain in a code rev
 * `core.Graph` gives deterministic, thread-safe topology with explicit capabilities;
 * traversal packages publish meaningful result artifacts, not incidental internal state;
 * weighted routing keeps `+Inf`, unknown targets, disabled path tracking, and unreachable targets separate;
-* `matrix` turns topology into dense numeric objects without erasing zero-weight or metric-closure semantics, and provides stable covariance plus reusable pivoted linear-system solvers;
+* `matrix` turns topology into dense numeric objects without erasing zero-weight or metric-closure semantics, and provides stable covariance, reusable pivoted linear-system solvers, and a separate rectangular economy SVD via one-sided Jacobi;
 * `series` checks exact timestamp grids and exposes mask-aware causal transformations without interpolation;
 * `paa` compresses every sample of a finite series into exact fractional equal-duration averages, without dropped tails or padding;
 * `sax` quantizes fractional PAA to compatible symbolic words with Euclidean MINDIST; it never promotes that bound to a DTW pruning certificate;
@@ -276,7 +276,7 @@ lvlath/
 ├── arima/                 # conditional Gaussian ARIMA, anchored level/variance forecasts
 ├── lstm/                  # immutable IFGO forward inference, masked batches, stateful chunks
 ├── gridgraph/             # 2D lattice graph generation
-├── matrix/                # dense graph algebra, stable statistics, pivoted factors and solves
+├── matrix/                # dense graph algebra, stable statistics, pivoted factors, solves and economy SVD
 ├── tsp/                   # tour construction, local search, exact small-instance routing
 ├── builder/               # deterministic fixtures and graph generators
 │
@@ -624,7 +624,7 @@ approves risk-model deployment. Details follow in the
 | `pca`           | Immutable covariance-based principal components, train-only projection and original-unit reconstruction.                                       | Bounded Jacobi, independent PSD/eigenpair checks, detached loadings and no holdout recentering.                            | Yield-curve factors, turbine residual screening, multichannel telemetry compression.                           |
 | `stats`         | Stable scalar mean/variance, mergeable Welford/Chan states, train-only fitted feature standardization.                                         | Exact binary-input mean and scaled second moments, detached fitted metadata, immutable inference without refit.            | Telemetry aggregation, distributed metrics, ML feature preparation, anomaly-score calibration.                 |
 | `gridgraph`     | 2D lattice graph generation with neighborhood and obstacle-style workflows.                                                                    | Avoids manual wiring for pathfinding maps and teaching graphs.                                                             | Grid routing, maps, demos, benchmark fixtures.                                                                 |
-| `matrix`        | Dense algebra, graph adapters, scaled covariance/Pearson/L2, pivoted LU/QR, Cholesky, and multi-RHS solves.                                    | Deterministic pivots, detached factors, real condition diagnostics and true residual norms.                                | Graph features, calibration, linear systems and numerical preprocessing.                                       |
+| `matrix`        | Dense graph algebra, scaled covariance/Pearson/L2, reusable pivoted LU/QR/Cholesky solves, and rectangular economy SVD.                        | True residuals, immutable factors, independent SVD column scales, honest nonconvergence and detached result modes.         | Graph features, calibration, RF measurements, sensor and return-matrix compression.                            |
 | `tsp`           | Tour optimization toolkit: practical approximation/local search/exact small-instance strategies.                                               | Bridges exactness and practicality for route planning.                                                                     | Delivery tours, inspection routes, metric routing experiments.                                                 |
 | `builder`       | Deterministic graph and data generators.                                                                                                       | Produces reproducible examples, tests, and benchmarks.                                                                     | Golden tests, performance fixtures, tutorials.                                                                 |
 
@@ -884,19 +884,20 @@ For the full derivations, overflow cases, error precedence, ownership, ASCII dia
 
 `github.com/lvlath/go/matrix` is both the graph-to-dense representation layer and the numerical layer for full-rank linear systems. Its finite-only statistical kernels are distinct from graph distance matrices that use `+Inf` as an absence marker. For **sample** statistics, rows are observations and columns are features; `Covariance`/`Correlation` require at least two rows, even when the matrix has no feature columns.
 
-| Need                                              | Public API                              | Essential contract                                                              |
-|:--------------------------------------------------|:----------------------------------------|:--------------------------------------------------------------------------------|
-| Demean many feature columns                       | `matrix.CenterColumns`                  | Scale-aware mean; detached nonempty result; zero-element no-op aliases input    |
-| Compute sample cross-feature variability          | `matrix.Covariance`                     | Divides by `n-1` before restoring large scales; bit-identical symmetric cells   |
-| Compare correlated features across extreme scales | `matrix.Correlation`                    | Direct Pearson; constant columns have zero row and diagonal                     |
-| Unit-length finite feature rows                   | `matrix.NormalizeRowsL2`                | Scaled sum of squares; reports original row norms; true overflow returns error  |
-| Solve a square full-rank system                   | `matrix.FactorLU`                       | Deterministic row-pivoted `PA=LU`; reusable and detached                        |
-| Fit a tall full-column-rank model                 | `matrix.FactorQR` / `SolveLeastSquares` | Column-pivoted Householder; no normal-equation or minimum-norm fallback         |
-| Solve a symmetric SPD system                      | `matrix.FactorCholesky`                 | Explicit symmetry tolerance; positive definiteness checked during factorization |
+| Need                                              | Public API                              | Essential contract                                                                  |
+|:--------------------------------------------------|:----------------------------------------|:------------------------------------------------------------------------------------|
+| Demean many feature columns                       | `matrix.CenterColumns`                  | Scale-aware mean; detached nonempty result; zero-element no-op aliases input        |
+| Compute sample cross-feature variability          | `matrix.Covariance`                     | Divides by `n-1` before restoring large scales; bit-identical symmetric cells       |
+| Compare correlated features across extreme scales | `matrix.Correlation`                    | Direct Pearson; constant columns have zero row and diagonal                         |
+| Unit-length finite feature rows                   | `matrix.NormalizeRowsL2`                | Scaled sum of squares; reports original row norms; true overflow returns error      |
+| Solve a square full-rank system                   | `matrix.FactorLU`                       | Deterministic row-pivoted `PA=LU`; reusable and detached                            |
+| Fit a tall full-column-rank model                 | `matrix.FactorQR` / `SolveLeastSquares` | Column-pivoted Householder; no normal-equation or minimum-norm fallback             |
+| Solve a symmetric SPD system                      | `matrix.FactorCholesky`                 | Explicit symmetry tolerance; positive definiteness checked during factorization     |
+| Decompose a rectangular measurement matrix        | `matrix.SVDDefault` / `SVD`             | One-sided Jacobi economy modes; no Gram normal equations; diagnostic nonconvergence |
 
 For every successful new factor solve, `SolveResult` includes a detached solution, numerical rank, one original-coordinate L2 residual per right-hand side, and a **measured** 1-norm condition diagnostic. LU and Cholesky report `kappa_1(A)` of their accepted matrices; QR reports `kappa_1(R)`. Building this diagnostic uses basis-vector solves and is not free. Reusing a factor for successive RHS batches avoids repeatedly paying the factorization cost.
 
-The three current solver domains are intentionally strict. QR rejects wide and rank-deficient inputs; Cholesky rejects matrices outside the accepted symmetry/SPD domain; LU reports numerical rank loss. No silent SVD, ridge, diagonal jitter or alternate objective is introduced. Existing `LUDecompose`/`QRDecompose` are **legacy unpivoted and square-only** interfaces with distinct output conventions.
+The three current **solve** domains are intentionally strict. QR rejects wide and rank-deficient inputs; Cholesky rejects matrices outside the accepted symmetry/SPD domain; LU reports numerical rank loss. None silently switches to SVD, ridge, diagonal jitter or another objective. Separately, `matrix.SVD` is implemented for rectangular decomposition; it does not return a least-squares solution or activate `pca.ThinSVD`. Existing `LUDecompose`/`QRDecompose` are **legacy unpivoted and square-only** interfaces with distinct output conventions.
 
 ```go
 package main
@@ -939,6 +940,46 @@ func main() {
 ```
 
 For larger runnable scenarios with checked errors, see [`docs/MATRICES.md`](docs/MATRICES.md#108-go-usage-examples) and [`matrix/example_test.go`](matrix/example_test.go). For why exact binary-input residuals can be expensive, and where `ErrNaNInf`, `ErrOverflow`, `ErrRankDeficient`, `ErrAsymmetry`, and `ErrNotPositiveDefinite` differ, see the [solver reference](docs/MATRICES.md#1013-error-classification-and-decision-table).
+
+#### Economy SVD: compression and singular-direction diagnostics
+
+`matrix.SVD(ctx, observations, matrix.SVDOptions{})` directly decomposes a
+finite `m x n` input into a detached **economy** `U[m,k]`, `SingularValues[k]`
+and `VT[k,n]`, `k=min(m,n)`. The zero-valued options policy selects 100 full
+Jacobi sweeps and normalized correlation tolerance `8*2^-52`. Every nonzero
+working column retains its own binary exponent, protecting widely separated
+independent singular directions from global-scale underflow. The kernel
+does not construct `A^T*A` or a full large orthogonal basis.
+
+| Need                               | API                                           | Interpretation                              |
+|:-----------------------------------|:----------------------------------------------|:--------------------------------------------|
+| First direct economy decomposition | `matrix.SVDDefault(ctx, A)`                   | Canonical default; all k modes are returned |
+| Tune normalized correlation        | `matrix.SVDWithTolerance(ctx, A, t)`          | `t` is convergence, not rank truncation     |
+| Bound full Jacobi sweeps           | `matrix.SVDWithMaxIterations(ctx, A, sweeps)` | Budget, not rotation count                  |
+| Set both policies                  | `matrix.SVD(ctx, A, matrix.SVDOptions{...})`  | Exact canonical result/error contract       |
+
+The `Rank` field counts relative numerical modes; it never truncates the
+singular-value slice. A returned `ErrNotConverged` may carry a **diagnostic-only** result with `Converged=false`; never consume those factors as an
+approved orthogonal model. Actual physical output overflow returns
+`ErrOverflow` with nil. `IsNil()` is pointer presence, not convergence.
+
+**Practical applications:** a twelve-window, six-channel turbine telemetry
+experiment quantifies whether two latent directions retain its observed
+energy; a five-pulse, eighteen-frequency RF calibration shows the `5 x 18`
+economy dual; a 24-day, eight-asset synthetic return fixture demonstrates
+three-mode energy retention without constructing normal equations. None of
+these demonstrations establishes production alarm thresholds, trading
+returns, or identifiability.
+
+```sh
+go test ./matrix -run 'ExampleSVD_' -count=1
+```
+
+The five executable Go examples are in [`matrix/example_test.go`](matrix/example_test.go).
+For the transpose proof, numeric rank, scaled column correlations,
+orthogonal completion, errors and honest limitations, read the canonical
+[SVD reference](docs/MATRICES.md#1016-rectangular-economy-svd-direct-singular-mode-analysis)
+and the [matrix FAQ](docs/FAQ_%26_TIPS.md#6-matrix-faq).
 
 ### OLS: stable factor regression with an immutable prediction model
 
@@ -1097,7 +1138,7 @@ For the Householder cancellation counterexample `Lambda=1e100`, complete arithme
 
 **What makes this PCA implementation deliberately conservative:**
 
-* `pca.Fit(ctx, x, pca.Options{})` uses `matrix.Covariance` plus `matrix.EigenSym`, with a bounded Jacobi rotation budget and an independent eigenpair-accuracy gate. `ThinSVD` is a reserved unsupported enum, not an alternate working kernel or an implicit fallback.
+* `pca.Fit(ctx, x, pca.Options{})` uses `matrix.Covariance` plus `matrix.EigenSym`, with a bounded Jacobi rotation budget and an independent eigenpair-accuracy gate. `pca.ThinSVD` is a reserved unsupported PCA enum **even though `matrix.SVD` exists separately**; there is no automatic fallback or center-model bridge.
 * `FitResult` contains a privately owned immutable `Model`, retained sorted `Eigenvalues`, non-renormalized `ExplainedVarianceRatio`, full detected `Rank`, and the direct training `ReconstructionResidual` in centered/scaled coordinates. `FitResult.IsNil()` implements `core.Nilable`.
 * `Model.Transform`, `InverseTransform`, and `Reconstruct` use frozen training parameters and independent per-call buffers; they never recenter a holdout batch or allow a getter to mutate fitted loadings.
 * The solver refuses materially negative eigenvalues, invalid symmetry, inaccurate eigenpairs, nonfinite values, overflow and nonconvergence with distinct package sentinels. A covariance-basis numerical rank is **not** an SVD-rank certificate for poorly conditioned data.
@@ -2479,7 +2520,7 @@ for masked streaming from a frozen model.
 | Fitted covariance PCA          | [`docs/PCA.md`](docs/PCA.md)                     | Train-only orthogonal projection, checked covariance eigenpairs, numerical rank and leakage-safe reconstruction.                |
 | Stable OLS regression          | [`docs/OLS.md`](docs/OLS.md)                     | Pivoted Householder QR, explicit intercept, physical coefficients, SSE, frozen Model and holdout pitfalls.                      |
 | Grid spec                      | [`docs/GRID_GRAPH.md`](docs/GRID_GRAPH.md)       | Grid/lattice graph modeling and pathfinding-oriented construction.                                                              |
-| Matrix spec                    | [`docs/MATRICES.md`](docs/MATRICES.md)           | Canonical dense/graph/statistics/factorization reference; [`MATRIX.md`](docs/MATRIX.md) is a navigation alias.                  |
+| Matrix spec                    | [`docs/MATRICES.md`](docs/MATRICES.md)           | Canonical dense/graph/statistics/factorization/economy-SVD reference; this is the authoritative matrix guide.                   |
 | TSP spec                       | [`docs/TSP.md`](docs/TSP.md)                     | Tour optimization, exact vs approximate methods, metric assumptions.                                                            |
 | Engineering standard           | [`docs/lvlath_UES.md`](docs/lvlath_UES.md)       | Repository engineering standard and quality expectations.                                                                       |
 | FAQ                            | [`docs/FAQ_&_TIPS.md`](docs/FAQ_%26_TIPS.md)     | Troubleshooting, common pitfalls, usage tips.                                                                                   |
@@ -3039,6 +3080,7 @@ incidence matrix:       columns are edge identities, not vertex-pair weights
 | "How do I fit reusable linear-factor coefficients with an intercept?"                          | `ols.FitDefault` / `ols.FitStandardized`                           | Original-unit beta and b, training SSE, no heldout refit.                                             |
 | "How do I force a physical zero intercept?"                                                    | `ols.FitThroughOrigin` / `FitThroughOriginStandardized`            | No feature centering; b exactly +0 even when scaling.                                                 |
 | "How do I fit a full-rank tall calibration model?"                                             | `matrix.SolveLeastSquares` / `FactorQR`                            | Pivoted Householder QR, rank refusal and residual diagnostics.                                        |
+| "How do I inspect singular modes in a tall or wide measurement panel?"                         | `matrix.SVDDefault` / `matrix.SVD`                                 | Economy one-sided Jacobi; full singular spectrum; no Gram-based rank shortcut.                        |
 | "How do I solve a reusable SPD coupling system?"                                               | `matrix.FactorCholesky`                                            | Symmetry/SPD validation, measured condition and detached solutions.                                   |
 | "How do I compute topology features?"                                                          | `matrix.NewAdjacencyMatrix`, `NewIncidenceMatrix`, `DegreeVector`  | Matrix artifacts preserve topology policy.                                                            |
 | "How do I compute all-pairs route distances?"                                                  | `matrix.BuildMetricClosure`                                        | Floyd-Warshall distance artifact with `+Inf` semantics.                                               |
@@ -3123,6 +3165,8 @@ incidence matrix:       columns are edge identities, not vertex-pair weights
 | Local-search TSP treated as proof                                               | 2-opt/3-opt improve tours; they do not certify global optimum.                                               |
 | Randomized tests/benchmarks drift                                               | Use fixed seeds or deterministic `builder` fixtures.                                                         |
 | Docs describe fictional APIs                                                    | `{package}/doc.go`, `docs/{PACKAGE}.md`, examples, and tests must stay synchronized.                         |
+| QR rank failure silently treated as direct SVD                                  | QR stays full-column-rank only; use standalone `matrix.SVD` for decomposition, not an implicit solve.        |
+| SVD nonconvergence used as a successful factorization                           | Reject `ErrNotConverged` for downstream computation; optional returned factors are diagnostic only.          |
 
 ---
 

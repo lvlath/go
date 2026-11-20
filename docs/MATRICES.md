@@ -30,6 +30,7 @@
     - Graph-to-matrix and matrix-to-graph transformations.
     - Dense algebra facades, APSP/metric closure, sanitization, comparison, and statistics.
     - Reusable pivoted LU/Householder QR/Cholesky factors and strict solves.
+    - Rectangular economy SVD with cyclic one-sided Jacobi and independent column exponents.
     - Zero-shape behavior for structural matrix pipelines and sample-statistics constraints.
     - Allocation-aware patterns for reproducible computation.
 
@@ -161,35 +162,36 @@ func (m *Dense) Do(f func(i, j int, v float64) bool)
 
 ### 10.3.3. Public Facades
 
-| Group                  | Facades                                                                                          |
-|:-----------------------|:-------------------------------------------------------------------------------------------------|
-| Construction           | `NewZeros`, `NewIdentity`, `ZerosLike`, `IdentityLike`, `CloneMatrix`                            |
-| Algebra                | `Sum`, `Diff`, `Product`, `HadamardProd`, `T`, `ScaleBy`, `MatVecMul`                            |
-| Factorization          | `LUDecompose`, `QRDecompose`, `FactorLU`, `FactorQR`, `FactorCholesky`, `SolveLeastSquares`, `InverseOf`, `EigenSym` |
-| Graph adapters         | `BuildAdjacency`, `GraphFromAdjacency`, `AdjacencyToGraph`, `BuildMetricClosure`, `DegreeVector` |
-| APSP                   | `APSPInPlace`, `MetricClosure`                                                                   |
-| Sanitization / compare | `Clip`, `ReplaceInfNaN`, `AllClose`                                                              |
-| Statistics             | `CenterColumns`, `CenterRows`, `NormalizeRowsL1`, `NormalizeRowsL2`, `Covariance`, `Correlation` |
+| Group                  | Facades                                                                                                                                      |
+|:-----------------------|:---------------------------------------------------------------------------------------------------------------------------------------------|
+| Construction           | `NewZeros`, `NewIdentity`, `ZerosLike`, `IdentityLike`, `CloneMatrix`                                                                        |
+| Algebra                | `Sum`, `Diff`, `Product`, `HadamardProd`, `T`, `ScaleBy`, `MatVecMul`                                                                        |
+| Factorization          | `LUDecompose`, `QRDecompose`, `FactorLU`, `FactorQR`, `FactorCholesky`, `SolveLeastSquares`, `InverseOf`, `EigenSym`, `SVD` and SVD wrappers |
+| Graph adapters         | `BuildAdjacency`, `GraphFromAdjacency`, `AdjacencyToGraph`, `BuildMetricClosure`, `DegreeVector`                                             |
+| APSP                   | `APSPInPlace`, `MetricClosure`                                                                                                               |
+| Sanitization / compare | `Clip`, `ReplaceInfNaN`, `AllClose`                                                                                                          |
+| Statistics             | `CenterColumns`, `CenterRows`, `NormalizeRowsL1`, `NormalizeRowsL2`, `Covariance`, `Correlation`                                             |
 
 ### 10.3.4. Math Formulation Summary
 
 The public API is intentionally thin: facades delegate to canonical kernels and preserve their validation, loop order, and allocation model. The Jacobi eigensolver scans O(n²) entries to select each maximal off-diagonal pivot and updates O(n) entries, so its O(k*n²) bound is per k requested rotations; this is not a guarantee of convergence within k rotations.
 
-| Facade API           | Operation             | Complexity             | Formulation & Notes                                                            |
-|:---------------------|:----------------------|:-----------------------|:-------------------------------------------------------------------------------|
-| `Sum(A, B)`          | Matrix sum            | $O(R \cdot C)$         | $$ C_{ij} = A_{ij} + B_{ij} $$                                                 |
-| `Diff(A, B)`         | Matrix difference     | $O(R \cdot C)$         | $$ C_{ij} = A_{ij} - B_{ij} $$                                                 |
-| `HadamardProd(A, B)` | Element-wise product  | $O(R \cdot C)$         | $$ C_{ij} = A_{ij}B_{ij} $$                                                    |
-| `T(A)`               | Transposition         | $O(R \cdot C)$         | $$ C_{ij} = A_{ji} $$                                                          |
-| `Product(A, B)`      | Matrix multiplication | $O(R \cdot N \cdot C)$ | $$ C_{ij} = \sum_k A_{ik}B_{kj} $$                                             |
-| `ScaleBy(A, α)`      | Scalar scale          | $O(R \cdot C)$         | $$ C_{ij} = \alpha A_{ij} $$                                                   |
-| `MatVecMul(A, x)`    | Matrix-vector product | $O(R \cdot C)$         | $$ y_i = \sum_j A_{ij}x_j $$                                                   |
-| `LUDecompose(A)`     | Legacy unpivoted LU   | $O(N^3)$               | `A=L*U`; use `FactorLU` for row-pivoted solves.                                |
-| `InverseOf(A)`       | Matrix inverse        | $O(N^3)$               | Delegates to the inverse kernel; singular matrices return sentinel errors.     |
-| `EigenSym(A,tol,k)`  | Symmetric eigensolver | $O(k \cdot N^2)$       | Maximum-off-diagonal pivot scan per Jacobi rotation, with checked convergence. |
-| `APSPInPlace(D)`     | Floyd-Warshall        | $O(N^3)$               | $$ D_{ij} \leftarrow \min(D_{ij}, D_{ik}+D_{kj}) $$                            |
-| `Covariance(X)`      | Sample covariance     | $O(R \cdot C^2)$       | Scaled triangular moments; exact cancellation rescue when needed.              |
-| `Correlation(X)`     | Pearson correlation   | $O(R \cdot C^2)$       | Direct normalized moments; zero row for constant features.                     |
+| Facade API           | Operation               | Complexity             | Formulation & Notes                                                            |
+|:---------------------|:------------------------|:-----------------------|:-------------------------------------------------------------------------------|
+| `Sum(A, B)`          | Matrix sum              | $O(R \cdot C)$         | $$ C_{ij} = A_{ij} + B_{ij} $$                                                 |
+| `Diff(A, B)`         | Matrix difference       | $O(R \cdot C)$         | $$ C_{ij} = A_{ij} - B_{ij} $$                                                 |
+| `HadamardProd(A, B)` | Element-wise product    | $O(R \cdot C)$         | $$ C_{ij} = A_{ij}B_{ij} $$                                                    |
+| `T(A)`               | Transposition           | $O(R \cdot C)$         | $$ C_{ij} = A_{ji} $$                                                          |
+| `Product(A, B)`      | Matrix multiplication   | $O(R \cdot N \cdot C)$ | $$ C_{ij} = \sum_k A_{ik}B_{kj} $$                                             |
+| `ScaleBy(A, α)`      | Scalar scale            | $O(R \cdot C)$         | $$ C_{ij} = \alpha A_{ij} $$                                                   |
+| `MatVecMul(A, x)`    | Matrix-vector product   | $O(R \cdot C)$         | $$ y_i = \sum_j A_{ij}x_j $$                                                   |
+| `LUDecompose(A)`     | Legacy unpivoted LU     | $O(N^3)$               | `A=L*U`; use `FactorLU` for row-pivoted solves.                                |
+| `InverseOf(A)`       | Matrix inverse          | $O(N^3)$               | Delegates to the inverse kernel; singular matrices return sentinel errors.     |
+| `EigenSym(A,tol,k)`  | Symmetric eigensolver   | $O(k \cdot N^2)$       | Maximum-off-diagonal pivot scan per Jacobi rotation, with checked convergence. |
+| `SVD(ctx,A,opts)`    | Economy rectangular SVD | $O((q+1)\max(m,n)k^2)$ | Cyclic one-sided Jacobi, k=min(m,n), q completed sweeps; no normal equations.  |
+| `APSPInPlace(D)`     | Floyd-Warshall          | $O(N^3)$               | $$ D_{ij} \leftarrow \min(D_{ij}, D_{ik}+D_{kj}) $$                            |
+| `Covariance(X)`      | Sample covariance       | $O(R \cdot C^2)$       | Scaled triangular moments; exact cancellation rescue when needed.              |
+| `Correlation(X)`     | Pearson correlation     | $O(R \cdot C^2)$       | Direct normalized moments; zero row for constant features.                     |
 
 > [!NOTE]
 > **On determinants:** `lvlath/matrix` does not expose a determinant facade in the provided API. Use factorization-level workflows when you need structural information about singularity or invertibility.
@@ -1091,16 +1093,17 @@ The original input `A`, a RHS `B`, and any `View` backed by these must remain un
 
 Let `m` be observations, `n` unknowns/features, `r` RHS columns, and `d` statistical feature count.
 
-| Operation                      | Ordinary floating arithmetic  | Persistent / extra storage         | Caveat                                                 |
-|:-------------------------------|:------------------------------|:-----------------------------------|:-------------------------------------------------------|
-| `CenterColumns`                | `O(md)`                       | `O(md+d)` output and metadata      | Exceptional exact-mean recovery                        |
-| `NormalizeRowsL2`              | `O(md)`                       | `O(md+m)`                          | Exact zero-row policy                                  |
-| `Covariance` / `Correlation`   | `O(md²)`                      | `O(d²+d)` workspace + `d²` result  | Exact cross-moment rescue is more expensive            |
-| `FactorLU`                     | `O(n³)`                       | `O(n²)`                            | Includes inverse-basis condition diagnostic            |
-| `FactorQR`                     | `O(mn²+n³)`                   | `O(mn)`                            | Recomputed norms; no full Q                            |
-| `FactorCholesky`               | `O(n³)`                       | `O(n²)`                            | Includes accepted-matrix copy and condition diagnostic |
-| LU / Cholesky `Solve`, `r` RHS | `O(n²r)` before residuals     | `O(nr+n)` result and per-call work | Exact residual `O(n²r)` big-integer arithmetic         |
-| QR `Solve`, `r` RHS            | `O(mnr+n²r)` before residuals | `O(mr+nr+n)` work/result           | Exact residual `O(mnr)` big-integer arithmetic         |
+| Operation                      | Ordinary floating arithmetic  | Persistent / extra storage         | Caveat                                                        |
+|:-------------------------------|:------------------------------|:-----------------------------------|:--------------------------------------------------------------|
+| `CenterColumns`                | `O(md)`                       | `O(md+d)` output and metadata      | Exceptional exact-mean recovery                               |
+| `NormalizeRowsL2`              | `O(md)`                       | `O(md+m)`                          | Exact zero-row policy                                         |
+| `Covariance` / `Correlation`   | `O(md²)`                      | `O(d²+d)` workspace + `d²` result  | Exact cross-moment rescue is more expensive                   |
+| `FactorLU`                     | `O(n³)`                       | `O(n²)`                            | Includes inverse-basis condition diagnostic                   |
+| `FactorQR`                     | `O(mn²+n³)`                   | `O(mn)`                            | Recomputed norms; no full Q                                   |
+| `FactorCholesky`               | `O(n³)`                       | `O(n²)`                            | Includes accepted-matrix copy and condition diagnostic        |
+| LU / Cholesky `Solve`, `r` RHS | `O(n²r)` before residuals     | `O(nr+n)` result and per-call work | Exact residual `O(n²r)` big-integer arithmetic                |
+| QR `Solve`, `r` RHS            | `O(mnr+n²r)` before residuals | `O(mr+nr+n)` work/result           | Exact residual `O(mnr)` big-integer arithmetic                |
+| `SVD` with `q` sweeps          | `O((q+1)*max(m,n)*k²)`        | `O((m+n)*k)` including results     | k=min(m,n); per-column exponent state; convergence is checked |
 
 Theoretical element counts are checked before `make`, but the package does not promise that arbitrary memory demands fit the machine's available RAM. Benchmarks must separate factor construction from repeated `Solve`, compare `*Dense` and a generic `Matrix.At` fallback on identical fixtures, and report `allocs/op` as well as execution time.
 
@@ -1113,7 +1116,7 @@ Use `errors.Is(err, matrix.ErrXxx)`. Do not parse error strings or turn an error
 | Nil input or factor receiver                        | `ErrNilMatrix`                                             | Fix caller wiring                                               |
 | Integer shape product overflows / invalid dimension | `ErrInvalidDimensions`                                     | Reject the requested size before allocation                     |
 | Non-square LU or Cholesky                           | `ErrNonSquare`                                             | Choose an admissible solver/model                               |
-| Wide or zero-size QR design                         | `ErrBadShape`                                              | Revisit the model; SVD is not implemented here                  |
+| Wide or zero-size QR design                         | `ErrBadShape`                                              | QR does not fall back to SVD; call `SVD` separately if needed   |
 | Right-hand-side row mismatch                        | `ErrDimensionMismatch`                                     | Align the observation count                                     |
 | NaN / infinity in finite-only input                 | `ErrNaNInf`                                                | Validate or explicitly clean upstream data                      |
 | Final arithmetic/diagnostic not finite              | `ErrOverflow`                                              | Rescale or reformulate the physical model; do not clip silently |
@@ -1124,6 +1127,8 @@ Use `errors.Is(err, matrix.ErrXxx)`. Do not parse error strings or turn an error
 | Measured condition greater than `ConditionLimit`    | `ErrIllConditioned`                                        | Assess model scale/identifiability                              |
 | Canceled context                                    | `context.Canceled` / `context.DeadlineExceeded`            | Retry with a new context if still relevant                      |
 | Generic Matrix.At failed                            | Root error wrapped                                         | Use `errors.Is` on the original cause                           |
+| SVD sweep budget exhausted                          | `ErrNotConverged` + non-nil diagnostic result              | Do not use incomplete SVD factors as an orthogonal model        |
+| SVD zero-basis completion failed                    | `ErrNotConverged` + nil result                             | Treat as a failed decomposition                                 |
 
 **No hidden fallback:** `SolveLeastSquares` never substitutes normal equations, ridge regularization, pseudo-inversion or SVD when QR rejects rank. A failed `FactorCholesky` is not silently retried with LU. Changing the optimization objective is a separate caller decision.
 
@@ -1138,8 +1143,9 @@ Independent tests should target the mathematical identity, not merely successful
 5. **Ownership and concurrency:** verify detached permutations, means, deviations, solutions and residuals; run `go test -race ./matrix` with multiple concurrent `Solve` calls and read-only inputs.
 6. **Boundary classifications:** validate zero shapes, nil/typed-nil, nonfinite input, true output overflow, option precedence, rank rejection, canceled contexts, and condition-limit equality.
 7. **Performance:** benchmark construction independently of solve, including large/tall shapes and exceptional exact-arithmetic paths. Recheck allocations after numerical changes.
+8. **Economy SVD truth:** verify tall/wide dimensions, descending nonnegative singular values, reconstruction, both orthogonality equations, exact-zero completion, repeated-subspace projectors, tiny modes and output overflow. Budget exhaustion must not look successful.
 
-The public examples in `matrix/example_test.go` exercise physical blending with LU, multichannel calibration with QR, correlated sensor correction with Cholesky, rank refusal, extreme row norms, and cancellation-sensitive covariance. They use actual public APIs and fixed `Output` expectations.
+The public examples in `matrix/example_test.go` exercise physical blending with LU, multichannel calibration with QR, correlated sensor correction with Cholesky, rank refusal, extreme row norms, cancellation-sensitive covariance, and five rectangular SVD scenarios. They use actual public APIs and fixed `Output` expectations.
 
 ## 10.15. Package Boundaries and Downstream Integration
 
@@ -1148,6 +1154,7 @@ flowchart TD
     Core[core.Graph topology] --> Mat[matrix: adjacency / incidence / distances]
     Mat --> Num[matrix: dense algebra and stable statistics]
     Num --> Fac[matrix: LU / QR / Cholesky / Solve]
+    Num --> SVD[matrix: direct rectangular economy SVD]
     Mat --> TSP[tsp: matrix-backed routing]
     Mat --> Stats[stats: training-only standardization]
     Series[series: explicit timestamps and validity masks] --> App[caller-selected valid observations]
@@ -1155,14 +1162,365 @@ flowchart TD
     App --> Num
     Stats --> DTW[dtw: multivariate alignment]
     Fac --> Apps[caller-owned regression / calibration / spectral workflows]
+    SVD --> Compression[caller-defined rank truncation / diagnostics]
 ```
 
 `matrix` does not import `stats` or `series`. `stats` may consume `matrix.Matrix`; therefore reversing that dependency would create an import cycle. `series` supplies ordered values and validity masks, not implicit interpolation. PCA, OLS, Ridge, and spectral clustering are downstream **workflows**, not automatically promised by `FactorQR` or `Covariance` alone; for example, PCA still requires a suitable eigendecomposition and a numerical validation strategy.
+
+## 10.16. Rectangular Economy SVD: Direct Singular-Mode Analysis
+
+`SVD` is a **separate, public matrix decomposition**. It does not change the
+full-column-rank contract of `SolveLeastSquares`, and it does not activate the
+reserved `pca.ThinSVD` solver. Its purpose is to describe a finite rectangular
+matrix in an orthogonal coordinate system while retaining *every* singular mode,
+including nonzero modes below the reported numerical-rank threshold.
+
+### 10.16.1. What the caller receives
+
+For a finite input `A` with `m>=1` rows and `n>=1` columns, let
+`k=min(m,n)`. The economy factorization has the following dimensions:
+
+![Economy SVD shapes](https://latex.codecogs.com/svg.image?A%5Capprox%20U%5CSigma%20V%5E%7B%5Cmathsf%7BT%7D%7D%2C%5Cquad%20U%5Cin%5Cmathbb%7BR%7D%5E%7Bm%5Ctimes%20k%7D%2C%5Cquad%20V%5E%7B%5Cmathsf%7BT%7D%7D%5Cin%5Cmathbb%7BR%7D%5E%7Bk%5Ctimes%20n%7D)
+
+| Result member    | Size    | Meaning on `err == nil`                                             |
+|:-----------------|:--------|:--------------------------------------------------------------------|
+| `U`              | `m x k` | Left singular directions, columns approximately orthonormal         |
+| `SingularValues` | `k`     | All nonnegative singular values, ordered from largest to smallest   |
+| `VT`             | `k x n` | Right singular directions as rows, paired with `U`                  |
+| `Rank`           | integer | Relative **numerical** rank, not an instruction to truncate factors |
+| `Iterations`     | integer | Number of completed lexicographic Jacobi sweeps; may be zero        |
+| `Converged`      | boolean | Whether the final normalized column-correlation criterion was met   |
+
+The matrices and singular-value slice are independent, caller-owned artifacts.
+`SVDResult.IsNil()` checks only pointer presence; it does **not** certify
+`Converged`, factor accuracy, or downstream modeling suitability.
+
+The fixed numerical-rank policy is:
+
+![Numerical SVD rank](https://latex.codecogs.com/svg.image?%5Coperatorname%7Brank%7D_%7B%5Crm%20num%7D%28A%29%3D%5C%23%5C%7Bi%3As_i%2Fs_0%3E%5Cmax%28m%2Cn%29%5C%2C2%5E%7B-52%7D%5C%7D)
+
+Here `eps=2^-52`. The implementation tests `s[i]/s[0]` against
+`max(m,n)*eps` rather than first forming a potentially overflowing threshold.
+For an all-zero input, rank is zero and all singular values are zero.
+**A nonzero singular value below the rank threshold is still returned** with
+its corresponding vectors; it is never erased merely to make `Rank` smaller.
+If an application wants a rank-`r` approximation, it explicitly selects the
+first `r` modes after examining the complete result.
+
+### 10.16.2. APIs and option semantics
+
+```go
+func SVD(ctx context.Context, a Matrix, options SVDOptions) (*SVDResult, error)
+func SVDDefault(ctx context.Context, input Matrix) (*SVDResult, error)
+func SVDWithTolerance(ctx context.Context, input Matrix, tolerance float64) (*SVDResult, error)
+func SVDWithMaxIterations(ctx context.Context, input Matrix, maxIterations int) (*SVDResult, error)
+```
+
+| Policy                     | Zero value  | Explicit admissible value | Meaning                                                   |
+|:---------------------------|:------------|:--------------------------|:----------------------------------------------------------|
+| `SVDOptions.MaxIterations` | 100         | positive integer          | Maximum *full sweeps*, not number of individual rotations |
+| `SVDOptions.Tolerance`     | `8 * 2^-52` | finite `0 < t < 1`        | Maximum accepted **normalized column correlation**        |
+
+`Tolerance` is not a rank cutoff and is not an absolute reconstruction-error
+bound. Increasing it can stop rotations sooner at the price of worse
+orthogonality or reconstruction accuracy. The single-parameter wrappers are
+thin facades over `SVD`, not independent numerical implementations.
+
+Validation follows the public order: context (nil or already canceled), matrix
+presence, positive/checked dimensions, options, then finite matrix elements.
+All data must be finite: `+Inf` is meaningful for distance matrices but is
+**never** an admissible singular-decomposition input. Generic `Matrix.At`
+errors retain their original cause under `errors.Is`.
+
+### 10.16.3. Why one-sided Jacobi, rather than a Gram-matrix eigensolver?
+
+Computing the spectrum of `A^T*A` magnifies conditioning and can erase small
+singular directions. For a full-column-rank matrix, its 2-norm condition
+number is the **square** of the original condition number:
+
+![Squared conditioning of normal equations](https://latex.codecogs.com/svg.image?%5Ckappa_2%28A%5E%7B%5Cmathsf%7BT%7D%7DA%29%3D%5Cleft%28%5Cfrac%7B%5Csigma_%7B%5Cmax%7D%28A%29%7D%7B%5Csigma_%7B%5Cmin%7D%28A%29%7D%5Cright%29%5E2%3D%5Ckappa_2%28A%29%5E2)
+
+The SVD kernel instead rotates **the original matrix
+columns**, after orienting the problem so its working row count is no smaller
+than its working column count. No `A^T*A` or `A*A^T` matrix is formed.
+
+For each pair of nonzero working columns `p<q`, the kernel estimates the
+correlation using compensated arithmetic in normalized coordinates:
+
+![Normalized column correlation](https://latex.codecogs.com/svg.image?%5Crho_%7Bpq%7D%3D%5Cfrac%7B%5Clangle%20B_p%2CB_q%5Crangle%7D%7B%5ClVert%20B_p%5CrVert_2%5ClVert%20B_q%5CrVert_2%7D)
+
+If its absolute value exceeds `Tolerance`, a bounded tangent is selected and
+a right-side Jacobi rotation updates both working columns and their matching
+columns in the small orthogonal accumulator. The sweep order is fixed:
+`(0,1)`, `(0,2)`, ... `(k-2,k-1)`. After **each completed full sweep**, all
+pairwise correlations are measured *again*; the number of skipped pairs is not
+used as a substitute for convergence checking.
+
+**Exponent-aware scaling matters.** Every nonzero working column carries its
+own binary exponent:
+
+![Independent column exponents](https://latex.codecogs.com/svg.image?B_j%3D2%5E%7Be_j%7Dz_j%2C%5Cquad%20%5ClVert%20z_j%5CrVert_%7B%5Cinfty%7D%5Cin%5B1%2F2%2C1%29)
+
+This preserves widely separated **independent** singular modes such as
+`diag(1e308,1e-300)`, including representable subnormals, without first
+underflowing the smaller column through a global scale. Column norms and
+correlations are evaluated on bounded values, and the singular values are
+reconstructed with checked exponent arithmetic. A truly unrepresentable
+published singular value is `ErrOverflow`, not a successful infinity.
+
+The following pseudocode describes the **control flow**, not the private
+floating-point layout or its guarded tangent branches:
+
+```text
+snapshot := finite, checked, detached input
+working := snapshot or transpose(snapshot)  // make working rows >= columns
+for each working column j:
+    store normalized column z[j] and its independent binary exponent e[j]
+rightBasis := identity(k)
+
+if maximumNormalizedCorrelation(working) <= tolerance:
+    sweeps := 0
+    converged := true
+else:
+    for sweep := 1 .. maximumSweeps:
+        for each (p,q) with 0 <= p < q < k, lexicographic:
+            rho := compensated normalized correlation(p,q)
+            if abs(rho) > tolerance:
+                t := bounded Jacobi tangent from scaled column lengths and rho
+                rotate p,q in physical coordinates, updating rightBasis
+                renormalize both outputs and their exponents
+        sweeps := sweep
+        if maximumNormalizedCorrelation(working) <= tolerance:
+            converged := true
+            break
+
+sort modes by descending physical singular value, stable on exact ties
+complete exactly zero left vectors using deterministic double MGS
+map transpose-dual factors back to original orientation when wide
+canonicalize signs after mapping; compute relative numerical Rank
+publish detached factors, preserving failure/diagnostic semantics
+```
+
+The pairwise scans and transformations cost `O(max(m,n)*k^2)` per full
+sweep. This includes checking the final normalized correlation; a budget of
+100 **sweeps** is not merely 100 pair rotations. The factorization retains
+`O((m+n)*k)` floating storage, including its public economy factors.
+
+The method does **not** inherit LAPACK `DGEJSV`'s full preconditioning and
+numerical guarantees simply because both are Jacobi-based. In particular,
+severe coupling can demand a right-singular-vector coefficient below the
+smallest representable binary64 value, and roundoff-sensitive exactly
+low-rank data can prevent the normalized correlation test from completing.
+Do not describe the implementation as universally accurate for every finite
+input.
+
+```mermaid
+flowchart TD
+    A[Finite m-by-n matrix] --> B{m >= n?}
+    B -->|yes| C[Work directly on A]
+    B -->|no| D[Transpose to tall orientation]
+    C --> E[Independent binary exponent per column]
+    D --> E
+    E --> F[Measure pairwise normalized correlations]
+    F --> G{All correlations within tolerance?}
+    G -->|yes| H[Stable sort and basis completion]
+    G -->|no| I[Rotate pairs in fixed order]
+    I --> J[Renormalize each rotated column]
+    J --> K[Recheck correlations after full sweep]
+    K --> L{Budget exhausted?}
+    L -->|no| G
+    L -->|yes| M[Diagnostic result + ErrNotConverged]
+    H --> N[Transpose-dualize if wide; canonicalize signs]
+    N --> O[Detached economy SVD result]
+```
+
+### 10.16.4. Wide matrices, exact zeros, repeated modes and signs
+
+When `m<n`, factoring the transpose avoids allocating an `n x n` right
+basis. If `A^T = U_t * Sigma * VT_t`, then the result for the original input is
+`U = VT_t^T` and `VT = U_t^T` by transposing the complete identity:
+
+![Rectangular SVD transpose duality](https://latex.codecogs.com/svg.image?A%5E%7B%5Cmathsf%7BT%7D%7D%3DU_t%5CSigma%20V_t%5E%7B%5Cmathsf%7BT%7D%7D%5C%20%5CLongrightarrow%5C%20A%3DV_t%5CSigma%20U_t%5E%7B%5Cmathsf%7BT%7D%7D)
+
+The public dimensions remain `m x m` and
+`m x n` in this wide case. The kernel allocates no *full large* orthogonal
+basis; the smaller `k x k` accumulator is permitted.
+
+Only **exact-zero** working columns require orthonormal completion. The
+implementation scans standard basis candidates `e_0, e_1, ...` in ascending
+order and applies two modified Gram-Schmidt passes against the retained
+nonzero columns and earlier completions. This does not discard small nonzero
+singular modes below `Rank`. For all-zero matrices, it produces deterministic
+orthonormal economy factors.
+
+After sorting and the wide transpose mapping, the largest-absolute entry of
+each public `U` column is made nonnegative; ties choose the lowest row index.
+Every sign flip also flips the paired row in `VT`, leaving the reconstruction
+unchanged. **Repeated singular values do not define a unique individual
+basis**: compare projectors onto the complete repeated-mode subspace and a
+scaled reconstruction residual rather than coordinate-by-coordinate vectors.
+A sign convention does not make degenerate eigenvectors unique under data
+perturbations.
+
+### 10.16.5. Failure, ownership and concurrency
+
+| Condition                           | Returned pair                 | What downstream code must do                                       |
+|:------------------------------------|:------------------------------|:-------------------------------------------------------------------|
+| Nil context                         | `nil, ErrInvalidOption`       | Pass a real context                                                |
+| Pre-canceled or canceled operation  | `nil, ctx.Err()`              | Do not consume partial factors                                     |
+| Nil/typed-nil matrix                | `nil, ErrNilMatrix`           | Fix input wiring                                                   |
+| Empty SVD shape                     | `nil, ErrBadShape`            | Do not confuse structural zero-shapes with valid SVD inputs        |
+| Invalid dimensions/product          | `nil, ErrInvalidDimensions`   | Reject unsafe shape arithmetic                                     |
+| Invalid options                     | `nil, ErrInvalidOption`       | Fix sweep/tolerance policy                                         |
+| NaN or infinity in input            | `nil, ErrNaNInf`              | Validate numeric data upstream                                     |
+| Required singular output not finite | `nil, ErrOverflow`            | Reconsider units or the algorithmic domain                         |
+| Sweep budget exhausted              | `diagnostic, ErrNotConverged` | Inspect `Iterations`; **do not use as orthogonal factors**         |
+| Basis-completion failure            | `nil, ErrNotConverged`        | Treat as unsuccessful decomposition                                |
+| Success                             | `result, nil`                 | Verify application-specific reconstruction/orthogonality tolerance |
+
+The non-nil diagnostic result on sweep exhaustion has `Converged=false`,
+but its left factors may still be nonorthogonal. It is not a substitute for a
+successful SVD, a solver or a fitted PCA model. The public result's `IsNil`
+merely reports pointer identity. The `SVD` call snapshots the finite input,
+uses call-local workspaces, and returns detached outputs; parallel read-only
+calls are supported, but caller mutation of the input during a call is not.
+
+### 10.16.6. Operational interpretation: singular energy, rank and residuals
+
+For moderate-amplitude singular values, an `r`-mode truncation retains the
+following fraction of **matrix Frobenius energy**:
+
+![SVD truncated energy ratio](https://latex.codecogs.com/svg.image?E_r%3D%5Cfrac%7B%5Csum_%7Bi%3D1%7D%5Er%20s_i%5E2%7D%7B%5Csum_%7Bi%3D1%7D%5Ek%20s_i%5E2%7D)
+
+For enormous singular values, calculate the ratio from normalized
+`s[i]/s[0]` terms rather than squaring the physical singular values. For an
+all-zero matrix the denominator is zero: the caller must define its own
+appropriate behavior rather than divide by zero. An energy fraction is a
+*compression diagnostic*, **not** a forecast accuracy, risk metric, or
+statistical explained-variance claim without the required centering and
+model-validation context.
+
+Useful independent checks for a successful result include:
+
+- The public economy shapes and finite nonincreasing singular values.
+- Relative reconstruction error using a **scaled** Frobenius norm; do not
+  form `A - U*Sigma*VT` naively at extreme exponent ranges.
+- `U^T*U` and `VT*VT^T` close to identity at an agreed, dimension-aware
+  tolerance; strict bitwise equality is not a floating-point criterion.
+- Orthogonal **projector** consistency for complete repeated singular
+  subspaces, not individual vectors or arbitrary sign choices.
+- Singular-value reference fixtures (such as independent LAPACK values)
+  without claiming identical vector signs for repeated modes.
+
+### 10.16.7. Runnable scenario: turbine health telemetry compression
+
+Twelve synchronized acquisition windows capture six response channels with
+overlapping shaft-vibration and thermal contributions. An engineer needs to
+know whether two latent directions are sufficient to store the **observed
+window**, before any external alarm threshold or predictive maintenance model
+is defined. The fixture is deterministic and synthetic, not real plant data.
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+
+    "github.com/lvlath/go/matrix"
+)
+
+func main() {
+    shaft := []int{-3, -2, -1, 0, 1, 2, 3, 2, 1, 0, -1, -2}
+    thermal := []int{2, 1, 0, -1, -2, -3, -2, -1, 0, 1, 2, 3}
+    shaftResponse := []int{7, 5, 3, 2, 4, 6}
+    thermalResponse := []int{1, -2, 5, 4, -3, 2}
+
+    observations, err := matrix.NewDense(len(shaft), len(shaftResponse))
+    if err != nil {
+        fmt.Println("matrix:", err)
+        return
+    }
+    for window := range shaft {
+        for sensor := range shaftResponse {
+            value := float64(shaft[window]*shaftResponse[sensor] +
+                thermal[window]*thermalResponse[sensor])
+            if err := observations.Set(window, sensor, value); err != nil {
+                fmt.Println("data:", err)
+                return
+            }
+        }
+    }
+    result, err := matrix.SVDDefault(context.Background(), observations)
+    if err != nil {
+        // ErrNotConverged may carry a diagnostic result, but never a usable basis.
+        fmt.Println("svd:", err)
+        return
+    }
+
+    retained, total := 0.0, 0.0
+    for mode, singular := range result.SingularValues {
+        energy := singular * singular // Bounded synthetic measurements only.
+        total += energy
+        if mode < 2 {
+            retained += energy
+        }
+    }
+    fmt.Printf("windows=%d sensors=%d numeric-rank=%d top-two=%.1f%%\n",
+        observations.Rows(), observations.Cols(), result.Rank, 100*retained/total)
+
+    // Output: windows=12 sensors=6 numeric-rank=2 top-two=100.0%
+}
+```
+
+The scenario reports a **compression choice** for this observed window.
+Do not silently interpret these two directions as stable physical states,
+future fault predictors, or an approved maintenance action. Production systems
+must validate data cadence, feature units, baseline centering and out-of-sample
+performance independently. To compare additional domain cases, run:
+
+```sh
+go test ./matrix -run 'ExampleSVD_' -count=1
+go test ./matrix -run '^TestSVD_' -count=1
+go test -race ./matrix -count=1
+go test ./... -count=1
+go vet ./...
+golangci-lint run
+```
+
+The current `matrix/example_test.go` contains five SVD scenarios:
+`ExampleSVD_turbineVibrationReduction`, `ExampleSVD_marketExposureCompression`,
+`ExampleSVD_wideAntennaCalibration`, `ExampleSVD_warehouseDemandRedundancy`, and
+`ExampleSVD_wideRangeMetrology`. The independent SVD benchmarks are maintained in `matrix/bench_test.go`
+and include `1000x16`, `16x1000`, and `128x128` shapes. These are
+performance fixtures rather than accuracy certificates.
+
+### 10.16.8. Boundaries with QR, covariance, PCA and other packages
+
+| Application question                                      | API                               | Boundary                                                                          |
+|:----------------------------------------------------------|:----------------------------------|:----------------------------------------------------------------------------------|
+| Solve a full-column-rank tall system with RHS             | `SolveLeastSquares` or `FactorQR` | QR remains strict; it does not call SVD automatically                             |
+| Understand independent directions of a rectangular matrix | `SVD` / `SVDDefault`              | No response vector, pseudoinverse or solver result                                |
+| Estimate sample cross-feature variance                    | `Covariance`                      | Returns a sample covariance with denominator `n-1`; it is not the SVD kernel      |
+| Fit an implemented frozen PCA model                       | `pca.Fit` with `CovarianceEigen`  | Requires train-only preprocessing and PCA's independent validation                |
+| Request PCA `ThinSVD`                                     | `pca.Fit`                         | Currently returns `ErrUnsupportedSolver`; the matrix API alone does not enable it |
+
+`CenterColumns` preserves a more accurate internal center than the public
+rounded `means` slice may show. A caller computing a centered SVD must use
+the returned *centered matrix*, not re-create it by subtracting the rounded
+means; applying the same center to holdout data is a separate fitted-model
+problem. Current `pca` owns its frozen two-part center and still uses its
+`CovarianceEigen` solver. `matrix.SVD` does not fit, transform or reconstruct
+PCA models, and does not infer time-series validity masks.
+
+For package-level law consult [`../matrix/doc.go`](../../../../Downloads/matrix_docs_sync_v3/matrix/doc.go); for
+cross-package choices consult [`TUTORIAL.md`](TUTORIAL.md#8-matrix-foundations)
+and [`FAQ_&_TIPS.md`](FAQ_%26_TIPS.md#6-matrix-faq).
 
 **Next reading:** [`TUTORIAL.md`](TUTORIAL.md) for the learning path, [`FAQ_&_TIPS.md`](FAQ_%26_TIPS.md) for failure handling, and [`../matrix/doc.go`](../matrix/doc.go) for the package charter and public law.
 
 ---
 
-**lvlath/matrix**: deterministic dense algebra, explicit statistical and factorization contracts, and graph semantics without ambiguity.
+**lvlath/matrix**: deterministic dense graph algebra, stable statistics, reusable factor solves, and independent direct economy SVD without hidden numerical fallback.
 
 > Next: [11. Traveling Salesman (TSP) →](TSP.md)

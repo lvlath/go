@@ -41,6 +41,7 @@
     - Fixed-order conditional Gaussian ARIMA, Schur roots, burn-in, anchored integration and marginal innovation variance.
     - Frozen PyTorch IFGO LSTM weights, exact-zero batch masking, ModelID-bound streaming state and numeric overflow classification.
     - Common-n Durbin-Levinson PACF, prediction-error variance, stable centering, nilable results and AR-order diagnostic boundaries.
+    - Economy SVD dimensions, independent column scaling, rank versus truncation, diagnostic nonconvergence and PCA solver boundaries.
 
   License:
     lvlath is licensed under AGPL-3.0-only. See ../LICENSE.
@@ -119,6 +120,7 @@ Start with the question, not the algorithm name.
 | “What is the cheapest connected backbone?”                                                                    | `mst`                                 | MST solves minimum connected spanning structure.                                                      |
 | “What is the maximum throughput?”                                                                             | `flow`                                | Flow solves capacity-constrained source-to-sink movement.                                             |
 | “How do I turn graph topology into numeric features?”                                                         | `matrix`                              | Adjacency, incidence, degree vector, metric closure, algebra.                                         |
+| “How do I inspect singular directions of a rectangular dataset?”                                              | `matrix.SVDDefault`                   | Direct economy Jacobi; numerical rank and full singular modes without normal equations.               |
 | “How do I model a grid map?”                                                                                  | `gridgraph`                           | Generates lattice topology instead of manual wiring.                                                  |
 | “How do I build repeatable fixtures?”                                                                         | `builder`                             | Deterministic graph/data generation.                                                                  |
 | “How do I compress a fixed-size scalar time-series window?”                                                   | `paa`                                 | Exact fractional PAA averages with rational boundaries and no dropped tail.                           |
@@ -160,6 +162,7 @@ minimize weighted cost                 -> Dijkstra
 connect all cheaply                    -> MST
 maximize throughput                    -> Flow
 compute all-pairs costs                -> Matrix metric closure
+inspect rectangular singular modes     -> Matrix SVDDefault (not pseudoinverse/PCA Fit)
 validate grid/causal features          -> Series
 stream/merge stable moments            -> Stats
 fit training-only scaling              -> Stats
@@ -784,6 +787,127 @@ The QR constructor recomputes the trailing norms on each pivot; it is *not* a li
 Not necessarily. First distinguish `ErrAsymmetry` (the pairwise symmetry contract failed) from `ErrNotPositiveDefinite` (a nonpositive Cholesky pivot). Tolerances `absTol, relTol` only permit *small asymmetry*, not a shift of negative eigenvalues. If the physical matrix is indefinite, changing to a different solver is an explicit modeling decision; do not silently add diagonal jitter or hide the failure.
 
 For mathematics, zero-shape tables, pseudocode, and real calibration examples, read [`MATRICES.md`](MATRICES.md#1011-reusable-factorizations-different-problems-different-contracts).
+
+### Q6.19. Does `matrix` implement SVD now, or is it still a future capability?
+
+Yes. `matrix.SVD(ctx,A,SVDOptions{})` is a direct **economy SVD** using cyclic
+one-sided Jacobi rotations, with `SVDDefault`, `SVDWithTolerance` and
+`SVDWithMaxIterations` as thin facades. It is separate from the reusable
+LU/QR/Cholesky solve API. `FactorQR` does **not** fall back to SVD on a wide
+or rank-deficient system, and `SVD` does not itself solve `A*x=b`.
+See the [complete SVD chapter](MATRICES.md#1016-rectangular-economy-svd-direct-singular-mode-analysis).
+
+### Q6.20. What does *economy* mean for a tall or wide matrix?
+
+For `A[m,n]`, `k=min(m,n)`, with `U[m,k]`, `SingularValues[k]`, and `VT[k,n]`.
+The working orientation is tall: wide matrices use the SVD of `A^T` and
+exchange the roles of its left/right factors. For a `5 x 18` matrix, expect
+`U[5,5]` and `VT[5,18]`, **not** `VT[18,18]`. Working and output storage is
+`O((m+n)*k)` and nominal time is `O((sweeps+1)*max(m,n)*k^2)`;
+expensive convergence and completion work is not free just because a matrix is wide.
+
+### Q6.21. Is numerical `Rank` the number of published nonzero singular values?
+
+Not necessarily. It is a **relative numerical rank**: the count of modes with
+`s[i]/s[0] > max(m,n)*2^-52` (`Rank=0` if `s[0]==0`). Small nonzero singular
+values and their vectors remain in the *full economy* result, even below the
+cutoff. A caller-defined rank-`r` compression explicitly chooses the first
+`r` modes; it does not mutate `Rank` or retroactively zero unused values.
+For `diag(1,1e-12)`, both modes are retained. Do not infer exact algebraic
+rank or predictive importance solely from this threshold.
+
+### Q6.22. Which SVD options control convergence? Can I set zero sweeps?
+
+`MaxIterations=0` means the **default of 100 complete sweeps**, not an
+explicit zero-work mode. `Tolerance=0` means `8*2^-52`; positive tolerance
+must be finite and strictly less than 1. Negative sweeps, NaN/infinite or
+out-of-range tolerance return `ErrInvalidOption`. Tolerance measures normalized
+cross-column correlation, **not** singular-value truncation or an absolute
+Frobenius residual bound. Already orthogonal matrices can succeed after
+**zero completed sweeps** even with a positive configured budget.
+
+### Q6.23. Why does `ErrNotConverged` sometimes return a result and sometimes nil?
+
+On exhaustion of a **completed full-sweep budget**, the algorithm returns a
+finite *diagnostic* `SVDResult` with `Converged=false` alongside
+`ErrNotConverged`. Its left factors may remain nonorthogonal: **do not** use it
+for PCA, inverse problems, compression decisions, or rank certification.
+An unresolved orthonormal-basis completion can also report `ErrNotConverged`,
+but returns **nil**. Cancellation returns nil with `ctx.Err()`; invalid data
+and true output overflow return nil with their own sentinel. First branch on
+`err`, then inspect diagnostic metadata only when explicitly supported.
+`result.IsNil()` only checks whether the pointer is nil, not convergence.
+
+```go
+result, err := matrix.SVDDefault(ctx, observations)
+if errors.Is(err, matrix.ErrNotConverged) {
+    // A non-nil result is diagnostic only; never consume its U/VT as a model.
+    return err
+}
+if err != nil {
+    return err
+}
+_ = result.Rank // Safe to use only after the successful error check.
+```
+
+The snippet assumes an existing `ctx context.Context`, finite `observations
+matrix.Matrix`, and imports `errors` and `github.com/lvlath/go/matrix`.
+
+### Q6.24. Why not compute singular values through `EigenSym(A^T*A)`?
+
+Forming normal equations squares the effective conditioning and can erase
+small directions before the eigensolver sees them. `matrix.SVD` rotates
+columns of `A` (or `A^T` when wide) directly; it never constructs the Gram
+matrix. This restriction applies to **SVD and least-squares solvers**; it does
+not mean `matrix.Covariance` must stop computing sample covariance when
+covariance itself is the requested statistical result.
+
+### Q6.25. How do extreme magnitudes affect singular values?
+
+The working representation stores independent binary exponents per column.
+This avoids global-scale underflow for independent modes such as
+`diag(1e308,1e-300)` and permits representable subnormals. It does **not**
+guarantee convergence for every finite input: extreme coupled columns may
+require a right singular-vector coefficient smaller than the smallest
+representable `float64`, and some exactly low-rank inputs can stagnate due
+to roundoff. An unrepresentable *output* singular value is `ErrOverflow`; a
+stalled correlation reduction is `ErrNotConverged`. Neither is a successful
+zero mode or a justified reason to loosen tolerance silently.
+
+### Q6.26. Can I compare individual `U` columns between repeated runs or libraries?
+
+The canonical sign convention chooses the first maximum-absolute row in each
+`U` column and flips the corresponding `VT` row. It removes a sign ambiguity,
+not the arbitrary orientation of a **repeated singular subspace**. For equal
+or clustered singular values, compare singular values, scaled reconstruction
+and the orthogonal projector of a *complete* retained degenerate subspace.
+Also check `U^T*U ~= I` and `VT*VT^T ~= I`; no arbitrary literal vector
+comparison is a mathematical oracle in this setting.
+
+### Q6.27. Is `SVD` a drop-in replacement for `pca.ThinSVD`?
+
+No. `matrix.SVD` is implemented, but the current `pca` package still rejects
+`pca.ThinSVD` with `ErrUnsupportedSolver`; it uses the `CovarianceEigen`
+path unless a future explicit integration changes the PCA contract. In
+particular, `SVD` does not learn and retain PCA's fitted training center or
+apply it to holdout observations. If you need to center a training matrix
+before standalone SVD, consume the **actual centered output** from
+`CenterColumns`; reconstructing it from rounded published means can lose
+sub-ULP differences. Do not relabel uncentered singular energy as PCA's
+explained variance.
+
+### Q6.28. Is SVD thread-safe, and where are the realistic examples?
+
+Concurrent read-only `SVD` calls are independent: the API snapshots inputs and
+uses per-call workspaces. Concurrent mutation of a `Dense` or its `View`
+during a read is unsupported. A successful result owns its `U`, `VT` and
+singular values; callers may mutate it without changing another result.
+The five executable scenarios live in `matrix/example_test.go`: turbine
+telemetry, multi-asset return compression, RF calibration, warehouse demand,
+and wide-range metrology. The scenarios use deterministic synthetic data,
+not live market or plant feeds.
+Use `go test ./matrix -run 'ExampleSVD_' -count=1` and the independent SVD
+fixtures before relying on a deployment-specific accuracy threshold.
 
 ---
 
@@ -1977,7 +2101,7 @@ For the precise contract, see [`RIDGE.md`](RIDGE.md), [`ridge/doc.go`](../ridge/
 
 ### Q13d.1. Why does PCA reject `ThinSVD` instead of silently running the covariance solver?
 
-`ThinSVD` is a reserved, **unimplemented** enum value. `pca.Fit` returns `ErrUnsupportedSolver` before reading matrix data. A covariance eigensolver squares the conditioning burden and cannot be relabeled a direct SVD. Use `CovarianceEigen` only when its numeric acceptance and validation requirements are appropriate; there is no hidden fallback.
+`ThinSVD` is a reserved, **unimplemented PCA solver selection**. `pca.Fit` returns `ErrUnsupportedSolver` before reading matrix data, even though `matrix.SVD` is now available as a separate decomposition API. A covariance eigensolver squares the conditioning burden and cannot be relabeled direct SVD. Use `CovarianceEigen` only when its numeric acceptance and validation requirements are appropriate; there is no hidden fallback or automatic PCA integration.
 
 ### Q13d.2. How are `Components=0` and `RankTolerance=0` interpreted?
 
