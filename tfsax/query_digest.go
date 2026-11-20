@@ -7,7 +7,9 @@ package tfsax
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"math"
 	"sort"
 )
@@ -68,12 +70,19 @@ func QueriesHash(queries []NamedQuery) (string, error) {
 		writeHashWord(hasher, named.ID)
 		writeHashWord(hasher, uint64(len(named.Family)))
 		_, _ = hasher.Write([]byte(named.Family))
-		// ValidateQuery has already rejected nonpositive TopK; this direct guard
-		// anchors the signed-to-unsigned conversion locally for security analysis.
+		// ValidateQuery rejects nonpositive TopK. Preserve that local admission
+		// boundary before writing a fixed-width query identity.
 		if named.Query.TopK < 1 {
 			return "", ErrInvalidInput
 		}
-		writeHashWord(hasher, uint64(named.Query.TopK))
+
+		// Every Go int fits in int64, including on 32-bit targets. For accepted
+		// positive TopK values, little-endian int64 and uint64 have identical
+		// eight-byte encodings. This preserves the established hash format
+		// without introducing a signed-to-unsigned integer conversion.
+		if err := binary.Write(hasher, binary.LittleEndian, int64(named.Query.TopK)); err != nil {
+			return "", errors.Join(ErrInvalidInput, err)
+		}
 		writeHashWord(hasher, uint64(len(named.Query.Values)))
 		for _, sample := range named.Query.Values {
 			writeHashWord(hasher, math.Float64bits(sample))

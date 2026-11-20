@@ -42,30 +42,6 @@ func mustNilState(t *testing.T, value any, wantNil bool, operation string) {
 	}
 }
 
-// mustEqualBool compares observable boolean contracts without coercing values.
-func mustEqualBool(t *testing.T, got, want bool, operation string) {
-	t.Helper()
-	if got != want {
-		t.Fatalf("%s: got=%t want=%t", operation, got, want)
-	}
-}
-
-// mustEqualInt compares exact counts, indexes and work-accounting invariants.
-func mustEqualInt(t *testing.T, got, want int, operation string) {
-	t.Helper()
-	if got != want {
-		t.Fatalf("%s: got=%d want=%d", operation, got, want)
-	}
-}
-
-// mustEqualString compares deterministic schema and representation identities.
-func mustEqualString(t *testing.T, got, want, operation string) {
-	t.Helper()
-	if got != want {
-		t.Fatalf("%s: got=%q want=%q", operation, got, want)
-	}
-}
-
 func mustIDs(t *testing.T, got, want []tfsax.CandidateID) {
 	t.Helper()
 	if len(got) != len(want) {
