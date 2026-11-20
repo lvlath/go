@@ -3,9 +3,9 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/TUTORIAL.md
-  Package reference: matrix, stats, ols, ridge, series, pacf, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima, lstm and the wider lvlath package family
+  Package reference: matrix, stats, ols, ridge, series, pacf, tfsax, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima, lstm and the wider lvlath package family
   Contract status: learning guide; package doc.go and source define the public API.
-  Scope: graph, matrix, factorization, statistical and temporal workflows, including causal MACD, rolling MFI, cumulative OBV, Chaikin A/D, reproducible parallel Monte Carlo, exact-in-distribution GBM, experimental Merton jump diffusion, GJR-GARCH causal volatility with constrained Gaussian QMLE, and fixed-order conditional Gaussian ARIMA with anchored forecasts, and frozen IFGO LSTM recurrent inference, and finite-window Durbin-Levinson PACF estimation.
+  Scope: graph, matrix, factorization, statistical and temporal workflows, including causal MACD, rolling MFI, cumulative OBV, Chaikin A/D, reproducible parallel Monte Carlo, exact-in-distribution GBM, experimental Merton jump diffusion, GJR-GARCH causal volatility with constrained Gaussian QMLE, and fixed-order conditional Gaussian ARIMA with anchored forecasts, and frozen IFGO LSTM recurrent inference, and finite-window Durbin-Levinson PACF estimation, and the TFSAX research-only DTW-versus-SAX retrieval gate.
   lvlath - Repository Tutorial
 
   Purpose:
@@ -25,7 +25,7 @@
 
 > **hard math on an easy level**
 
-Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fitted feature scaling, covariance PCA, causal Wilder RSI, SMA-seeded MACD, rolling Money Flow Index, compensated On-Balance Volume, Chaikin A/D, reproducible parallel Monte Carlo, exact-lognormal GBM paths, stationary asymmetric GJR-GARCH conditional variance, fixed-order conditional Gaussian ARIMA, frozen LSTM forward inference, and time-series alignment.
+Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fitted feature scaling, covariance PCA, causal Wilder RSI, SMA-seeded MACD, rolling Money Flow Index, compensated On-Balance Volume, Chaikin A/D, reproducible parallel Monte Carlo, exact-lognormal GBM paths, stationary asymmetric GJR-GARCH conditional variance, fixed-order conditional Gaussian ARIMA, frozen LSTM forward inference, time-series alignment, and research-only DTW-versus-SAX retrieval audits.
 
 This tutorial is the beginning of the learning path. It introduces the objects and ideas that most packages share: graphs, matrices, options, result artifacts, error contracts, and deterministic algorithm execution.
 
@@ -66,6 +66,7 @@ This tutorial is the beginning of the learning path. It introduces the objects a
     11s. [ARIMA Foundations: Conditional Likelihood, Differencing and Anchored Forecasts](#11s-arima-foundations-conditional-likelihood-differencing-and-anchored-forecasts)
     11t. [LSTM Foundations: Frozen IFGO Inference and Masked Streaming](#11t-lstm-foundations-frozen-ifgo-inference-and-masked-streaming)
     11u. [PACF Foundations: Partial Dependence and Prediction Variance](#11u-pacf-foundations-partial-dependence-and-prediction-variance)
+    11v. [TFSAX Research Gate: Exact DTW Truth, SAX Ranking and Reproducible Evidence](#11v-tfsax-research-gate-exact-dtw-truth-sax-ranking-and-reproducible-evidence)
 12. [Algorithm Selection Guide](#12-algorithm-selection-guide)
 13. [Professional Best Practices](#13-professional-best-practices)
 14. [Where To Go Next](#14-where-to-go-next)
@@ -115,6 +116,7 @@ The library covers:
 * `lstm` immutable PyTorch IFGO forward inference with frozen numeric weights, masked batch-first sequences and ModelID-verified continuation;
 * `paa` exact fractional time-series compression, rational segment boundaries and value-only feature projection;
 * `sax` symbolic words from fractional PAA and compatible Euclidean MINDIST (not a DTW lower bound);
+* `tfsax` an explicitly unapproved research gate: exact absolute-cost DTW truth, SAX TopM heuristic refinement, temporal provenance checks and reproducible synthetic comparisons; no TFSAX encoder or certified pruning;
 * `tsp` matrix-backed tour optimization with exact, approximate, matching, and local-search regimes;
 * `gridgraph` generated lattice topology;
 * `builder` deterministic fixtures for examples, tests, and benchmarks.
@@ -224,45 +226,46 @@ A shortest-path formula is easy. A reliable Go package must also answer:
 
 Read these files as a learning path. `doc.go` files define implemented package contracts; `docs/*.md` files teach the theory, diagrams, pitfalls, and recipes.
 
-| Step | Document                                   | What you learn                                                                                                                |
-|:-----|:-------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------|
-| 1    | [`CORE.md`](CORE.md)                       | Graph capabilities, deterministic topology, ownership, locks, graph invariants.                                               |
-| 2    | [`BFS.md`](BFS.md)                         | Hop-distance traversal, `Result`, components, filters, partial-result behavior.                                               |
-| 3    | [`DFS.md`](DFS.md)                         | Finish order, DFS forest, deterministic cycle witnesses, topological sort.                                                    |
-| 4    | [`DIJKSTRA.md`](DIJKSTRA.md)               | Full SSSP vs target Dijkstra/A*, consistent/balanced potentials, original EdgeIDs, exact cutoff, walls and error contracts.   |
-| 5    | [`MST.md`](MST.md)                         | Exact Prim/Kruskal MST/MSF, KMB Steiner networks, closed/fixed-end tree walks, original IDs and separate numeric contracts.   |
-| 6    | [`FLOW.md`](FLOW.md)                       | Capacity networks, residual graph state, Ford-Fulkerson, Edmonds-Karp, Dinic.                                                 |
-| 7    | [`MATRICES.md`](MATRICES.md)               | Dense storage, graph adapters, zero-weight policy, statistics, factor solves and one-sided Jacobi economy SVD.                            |
-| 8    | [`SERIES.md`](SERIES.md)                   | Exact signed-nanosecond grids, causal arrays, masks, overflow, and index windows.                                             |
-| 8a   | [`STATS.md`](STATS.md)                     | Welford/Chan moments, exact binary-input mean, scaled variance, immutable fitted scaling and error laws.                      |
-| 8b   | [`PAA.md`](PAA.md)                         | Exact fractional segment geometry, nearest-even floating arithmetic, wrappers, and SAX-oriented ownership.                    |
-| 8c   | [`SAX.md`](SAX.md)                         | Right-bin quantization, SHA-256 policy identity, Euclidean MINDIST, DTW non-pruning law and examples.                         |
-| 8d   | [`OLS.md`](OLS.md)                         | Pivoted-QR full-rank regression, scale-only origin policy, frozen coefficients, SSE and error contracts.                      |
-| 8e   | [`RIDGE.md`](RIDGE.md)                     | Positive-Lambda augmented Householder QR, unpenalized intercept, stable strongly regularized slopes, immutable models.        |
-| 8f   | [`PCA.md`](PCA.md)                         | Strict covariance eigenanalysis, train-only latent factors, reconstruction residuals and solver limitations.                  |
-| 8g   | [`HMM.md`](HMM.md)                         | Typed hidden-state models, strict online causal filtering, retrospective smoothing, Viterbi, independent-sequence EM.         |
-| 8h   | [`ACF.md`](ACF.md)                         | Direct sample ACF, common/pair-adjusted estimators, Toeplitz PSD limits, scaled arithmetic and independent oracle.            |
-| 8i   | [`BOOTSTRAP.md`](BOOTSTRAP.md)             | Three block-index laws, unbiased integers, replay, resource admission and partial cancellation.                               |
-| 8j   | [`RNG.md`](RNG.md)                         | PCG-DXSM128/64 streams, open uniforms, Box-Muller spare protocol, logical paths and replay.                                   |
-| 8k   | [`RSI.md`](RSI.md)                         | Wilder seed and smoothing, readiness masks, snapshot ABI, price domain, batch/stream parity.                                  |
-| 8l   | [`MACD.md`](MACD.md)                       | Appel EMA with SMA seed, three signed outputs, exact warmup, bitwise batch/stream parity and checkpoint trust.                |
-| 8m   | [`MFI.md`](MFI.md)                         | Compensated rolling MFI, zero-volume slots, canonical batch/stream parity and checkpoint integrity boundaries.                |
-| 8n   | [`OBV.md`](OBV.md)                         | Cumulative signed volume, first-bar zero, Neumaier accumulation, stream rollback and externally authenticated replay.         |
-| 8o   | [`AD.md`](AD.md)                           | Chaikin close-location-weighted volume, first-bar inclusion, stable multiplier, Neumaier rebase and snapshot trust.           |
-| 8p   | [`MONTECARLO.md`](MONTECARLO.md)           | Parallel path streams, ordered moments, bounded dispatch, exact quantiles and partial-result policy.                          |
-| 8q   | [`GBM.md`](GBM.md)                         | Exact lognormal increments on irregular grids, strict unit matching, stable log-growth publication, RNG/MC bridge.            |
-| 8r   | [`JUMPDIFFUSION.md`](JUMPDIFFUSION.md)     | Compensated Merton jumps, inversion/PTRS, RNG order, errors and model limits.                                                 |
-| 8s   | [`GJRGARCH.md`](GJRGARCH.md)               | Causal asymmetric variance, stationary forecast, deterministic constrained Gaussian QMLE and risk release gates.              |
-| 8t   | [`ARIMA.md`](ARIMA.md)                     | Conditional Gaussian ARIMA, Schur root validation, differenced drift, anchors and innovation-only forecast variance.          |
-| 8u   | [`LSTM.md`](LSTM.md)                       | Frozen PyTorch IFGO weights, tensor masks, streaming equivalence, model identity, arithmetic safety and pinned golden oracle. |
-| 8v   | [`PACF.md`](PACF.md)                       | Durbin-Levinson PACF, common-n covariance, stable variances, error law and practical applications.                            |
-| 9    | [`DTW.md`](DTW.md)                         | `Align`, `AlignCostMatrix`, `AlignMatrix`, `AlignBounded`, exact `Search`, numeric and path artifacts.                        |
-| 9a   | [`DTW_SEARCH.md`](DTW_SEARCH.md)           | Fixed-length exact top-K, certified LB_Keogh, workers, budgets, and partial-result law.                                       |
-| 10   | [`TSP.md`](TSP.md)                         | Matrix-backed tours, exact regimes, Christofides, Blossom matching, local search, timeouts.                                   |
-| 11   | [`GRID_GRAPH.md`](GRID_GRAPH.md)           | Lattice topology for traversal/routing demos and pathfinding fixtures.                                                        |
-| 12   | [`FAQ_&_TIPS.md`](FAQ_%26_TIPS.md)         | Troubleshooting, package selection, testing/benchmark/documentation pitfalls.                                                 |
-| 13   | [`lvlath_UES.md`](lvlath_UES.md)           | Universal engineering standard for package quality and contribution discipline.                                               |
-| 14   | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | Branching, tests, linting, examples, docs, benchmark, and PR workflow.                                                        |
+| Step | Document                                   | What you learn                                                                                                                 |
+|:-----|:-------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------|
+| 1    | [`CORE.md`](CORE.md)                       | Graph capabilities, deterministic topology, ownership, locks, graph invariants.                                                |
+| 2    | [`BFS.md`](BFS.md)                         | Hop-distance traversal, `Result`, components, filters, partial-result behavior.                                                |
+| 3    | [`DFS.md`](DFS.md)                         | Finish order, DFS forest, deterministic cycle witnesses, topological sort.                                                     |
+| 4    | [`DIJKSTRA.md`](DIJKSTRA.md)               | Full SSSP vs target Dijkstra/A*, consistent/balanced potentials, original EdgeIDs, exact cutoff, walls and error contracts.    |
+| 5    | [`MST.md`](MST.md)                         | Exact Prim/Kruskal MST/MSF, KMB Steiner networks, closed/fixed-end tree walks, original IDs and separate numeric contracts.    |
+| 6    | [`FLOW.md`](FLOW.md)                       | Capacity networks, residual graph state, Ford-Fulkerson, Edmonds-Karp, Dinic.                                                  |
+| 7    | [`MATRICES.md`](MATRICES.md)               | Dense storage, graph adapters, zero-weight policy, statistics, factor solves and one-sided Jacobi economy SVD.                 |
+| 8    | [`SERIES.md`](SERIES.md)                   | Exact signed-nanosecond grids, causal arrays, masks, overflow, and index windows.                                              |
+| 8a   | [`STATS.md`](STATS.md)                     | Welford/Chan moments, exact binary-input mean, scaled variance, immutable fitted scaling and error laws.                       |
+| 8b   | [`PAA.md`](PAA.md)                         | Exact fractional segment geometry, nearest-even floating arithmetic, wrappers, and SAX-oriented ownership.                     |
+| 8c   | [`SAX.md`](SAX.md)                         | Right-bin quantization, SHA-256 policy identity, Euclidean MINDIST, DTW non-pruning law and examples.                          |
+| 8c1  | [`TFSAX.md`](TFSAX.md)                     | Exact-DTW research truth, classical SAX heuristic ranking, no invented TFSAX codec, reproducible provenance and research gate. |
+| 8d   | [`OLS.md`](OLS.md)                         | Pivoted-QR full-rank regression, scale-only origin policy, frozen coefficients, SSE and error contracts.                       |
+| 8e   | [`RIDGE.md`](RIDGE.md)                     | Positive-Lambda augmented Householder QR, unpenalized intercept, stable strongly regularized slopes, immutable models.         |
+| 8f   | [`PCA.md`](PCA.md)                         | Strict covariance eigenanalysis, train-only latent factors, reconstruction residuals and solver limitations.                   |
+| 8g   | [`HMM.md`](HMM.md)                         | Typed hidden-state models, strict online causal filtering, retrospective smoothing, Viterbi, independent-sequence EM.          |
+| 8h   | [`ACF.md`](ACF.md)                         | Direct sample ACF, common/pair-adjusted estimators, Toeplitz PSD limits, scaled arithmetic and independent oracle.             |
+| 8i   | [`BOOTSTRAP.md`](BOOTSTRAP.md)             | Three block-index laws, unbiased integers, replay, resource admission and partial cancellation.                                |
+| 8j   | [`RNG.md`](RNG.md)                         | PCG-DXSM128/64 streams, open uniforms, Box-Muller spare protocol, logical paths and replay.                                    |
+| 8k   | [`RSI.md`](RSI.md)                         | Wilder seed and smoothing, readiness masks, snapshot ABI, price domain, batch/stream parity.                                   |
+| 8l   | [`MACD.md`](MACD.md)                       | Appel EMA with SMA seed, three signed outputs, exact warmup, bitwise batch/stream parity and checkpoint trust.                 |
+| 8m   | [`MFI.md`](MFI.md)                         | Compensated rolling MFI, zero-volume slots, canonical batch/stream parity and checkpoint integrity boundaries.                 |
+| 8n   | [`OBV.md`](OBV.md)                         | Cumulative signed volume, first-bar zero, Neumaier accumulation, stream rollback and externally authenticated replay.          |
+| 8o   | [`AD.md`](AD.md)                           | Chaikin close-location-weighted volume, first-bar inclusion, stable multiplier, Neumaier rebase and snapshot trust.            |
+| 8p   | [`MONTECARLO.md`](MONTECARLO.md)           | Parallel path streams, ordered moments, bounded dispatch, exact quantiles and partial-result policy.                           |
+| 8q   | [`GBM.md`](GBM.md)                         | Exact lognormal increments on irregular grids, strict unit matching, stable log-growth publication, RNG/MC bridge.             |
+| 8r   | [`JUMPDIFFUSION.md`](JUMPDIFFUSION.md)     | Compensated Merton jumps, inversion/PTRS, RNG order, errors and model limits.                                                  |
+| 8s   | [`GJRGARCH.md`](GJRGARCH.md)               | Causal asymmetric variance, stationary forecast, deterministic constrained Gaussian QMLE and risk release gates.               |
+| 8t   | [`ARIMA.md`](ARIMA.md)                     | Conditional Gaussian ARIMA, Schur root validation, differenced drift, anchors and innovation-only forecast variance.           |
+| 8u   | [`LSTM.md`](LSTM.md)                       | Frozen PyTorch IFGO weights, tensor masks, streaming equivalence, model identity, arithmetic safety and pinned golden oracle.  |
+| 8v   | [`PACF.md`](PACF.md)                       | Durbin-Levinson PACF, common-n covariance, stable variances, error law and practical applications.                             |
+| 9    | [`DTW.md`](DTW.md)                         | `Align`, `AlignCostMatrix`, `AlignMatrix`, `AlignBounded`, exact `Search`, numeric and path artifacts.                         |
+| 9a   | [`DTW_SEARCH.md`](DTW_SEARCH.md)           | Fixed-length exact top-K, certified LB_Keogh, workers, budgets, and partial-result law.                                        |
+| 10   | [`TSP.md`](TSP.md)                         | Matrix-backed tours, exact regimes, Christofides, Blossom matching, local search, timeouts.                                    |
+| 11   | [`GRID_GRAPH.md`](GRID_GRAPH.md)           | Lattice topology for traversal/routing demos and pathfinding fixtures.                                                         |
+| 12   | [`FAQ_&_TIPS.md`](FAQ_%26_TIPS.md)         | Troubleshooting, package selection, testing/benchmark/documentation pitfalls.                                                  |
+| 13   | [`lvlath_UES.md`](lvlath_UES.md)           | Universal engineering standard for package quality and contribution discipline.                                                |
+| 14   | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | Branching, tests, linting, examples, docs, benchmark, and PR workflow.                                                         |
 
 Suggested route:
 
@@ -300,7 +303,9 @@ Working on numeric/time-series workflows:
   MONTECARLO.Run -> mean/variance/SE / optional exact quantiles -> application decision policy
   OLS/RIDGE residual window -> ACF/PACF -> investigate serial dependence (NOT a p-value)
   MATRICES -> HMM.Smooth / Decode -> offline incident reconstruction
+  SERIES -> frozen raw splits -> tfsax.ValidateWindowRecords -> exact DTW oracle vs SAX ranking (research only)
   SAX (Euclidean screening) != DTW (nonlinear alignment)
+  TFSAX research gate != production encoder or certified DTW pruning
   MATRICES -> TSP
 
 Contributing:
@@ -2031,7 +2036,7 @@ If `NoIntercept=true`, there is **no column of ones**, the physical intercept is
 
 ### 11d.2. Why is a safe penalty weight not enough?
 
-With two observations `X=[1,2]`, `y=[1,2]`, `NoIntercept=true`, and `Lambda=1e100`, the **correct** coefficient is `5/(5+2*Lambda)≈2.5e-100` — exceptionally small but nonzero. Forming `sqrt(n*Lambda)` through the naive floating multiplication can overflow at high Lambda, but even `sqrt(n)*sqrt(Lambda)` alone does not eliminate Householder cancellation: original observation rows placed before a much larger penalty row can lose the tiny `Qᵀ*y` projection and produce `-0`.
+With two observations `X=[1,2]`, `y=[1,2]`, `NoIntercept=true`, and `Lambda=1e100`, the **correct** coefficient is `5/(5+2*Lambda)≈2.5e-100` - exceptionally small but nonzero. Forming `sqrt(n*Lambda)` through the naive floating multiplication can overflow at high Lambda, but even `sqrt(n)*sqrt(Lambda)` alone does not eliminate Householder cancellation: original observation rows placed before a much larger penalty row can lose the tiny `Qᵀ*y` projection and produce `-0`.
 
 The fitted QR input is an *exactly equivalent system* that performs three deterministic operations:
 
@@ -5046,6 +5051,103 @@ not imply that `pacf` imports `acf` or that `arima.Fit` automatically
 selects an order. See [`PACF.md`](PACF.md), [`../pacf/doc.go`](../pacf/doc.go),
 and [the PACF FAQ](FAQ_%26_TIPS.md#13t-pacf-faq---covariance-recurrence-and-safe-interpretation)
 for the full mathematical and operational boundaries.
+
+---
+
+## 11v. TFSAX Research Gate: Exact DTW Truth, SAX Ranking and Reproducible Evidence
+
+The package [`github.com/lvlath/go/tfsax`](../tfsax/doc.go) is an intentionally **restricted research adapter**, not an additional implemented symbolic encoding. The title “TFSAX” is only a research label until a precise source-backed (or clearly original) representation, score, alphabet and independent reference encoder are specified. Neither a passing benchmark nor `Definition.Approved=true` activates missing mathematics.
+
+### 11v.1. Three distinct notions of retrieval completeness
+
+A scientific search experiment must distinguish **what was executed**, **which candidates were examined**, and **whether the returned TopK is globally exact**. The current package implements:
+
+```text
+                  frozen candidate universe (N finite equal-length windows)
+                           /                         \
+                  ScanExact /                           \ PrepareSAXIndex
+                           |                              |
+                    full DTW over N                    SAX MINDIST sort
+                           |                              |
+                    exact TopK, ID ties             TopM exact-DTW refine
+                           |                              |
+                   Complete = true                 Complete = true
+                   Exact    = true                 Exact    = false
+                           \                            /
+                            \-- strict Recall@K -------/
+                                        |
+                                family-local report
+```
+
+The underlying objective is `dtw.Align` with **absolute** local cost `|a-b|`, fixed endpoints and explicit Sakoe–Chiba radius. `window=-1` is unrestricted, `window=0` is diagonal only. Classical `sax.Encoder.Mindist` relates to compatible Euclidean representations; it is **not** a safe universal lower bound for this DTW objective. Therefore `SAXIndex.Search` returns exact DTW scores *within the heuristic shortlist*, but `Diagnostics.Exact=false` for the global corpus, even when measured recall happens to equal one.
+
+`RetrievalResult.Complete` means the requested algorithm has finished; `Diagnostics.Exact` means mathematical completeness relative to the frozen exact target. They are not synonyms. An empty exact TopK makes `RecallAtK(...).Applicable=false` rather than a fabricated 100% success. Equal DTW costs break ties by the smaller numerical `CandidateID`.
+
+### 11v.2. Executable research audit: industrial sensor patterns without any JSON input
+
+A rotating-equipment quality team may compare a library of 20 fixed-length vibration signatures against a new independent measurement. The fixed synthetic generator stands in for *authorized, timestamp-validated physical data*; it does not assert any real diagnostic threshold, defective-bearing identification or live predictive accuracy. We test the research API and the mathematics of result flags, rather than inventing a business decision.
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+
+    "github.com/lvlath/go/tfsax"
+)
+
+func main() {
+    corpus, err := tfsax.GenerateFamily(tfsax.FamilyWarp, 91, 20, 32)
+    if err != nil { fmt.Println("corpus:", err); return }
+    independent, err := tfsax.GenerateFamily(tfsax.FamilyWarp, 1091, 1, 32)
+    if err != nil { fmt.Println("query:", err); return }
+    query := tfsax.Query{Values: independent[0].Values, TopK: 3}
+
+    exact, err := tfsax.ScanExact(context.Background(), corpus, query, 4)
+    if err != nil { fmt.Println("exact:", err); return }
+    shortlist, err := tfsax.ScanSAXWithOptions(
+        context.Background(), corpus, query,
+        tfsax.SAXSearchOptions{Window: 4, Shortlist: 10, Segments: 8, Alphabet: 8},
+    )
+    if err != nil { fmt.Println("SAX:", err); return }
+    recall := tfsax.RecallAtK(shortlist.Candidates, exact.Candidates)
+    fmt.Printf("exact=%t, SAX-exact=%t, recall-applicable=%t\n",
+        exact.Diagnostics.Exact, shortlist.Diagnostics.Exact, recall.Applicable)
+    // Output: exact=true, SAX-exact=false, recall-applicable=true
+}
+```
+
+No external JSON plan is loaded. `DefaultProtocol`, `UnresolvedDefinition` and typed `Experiment` provide the equivalent **in-memory** run configuration when benchmarking multiple queries using `RunAvailableComparison`. `tfsax/protocol.json` and `tfsax/definition.json` are optional versioned audit records, not runtime dependencies. Their tags simply pin `encoding/json` field names and introduce no additional language, service, or third-party library.
+
+### 11v.3. Train-only statistics require raw-time provenance
+
+```text
+Raw chronological data
+       |
+       +-- freeze Train -> Calibration -> Test BEFORE slicing
+       |
+       +-- validate gaps: purge >= window width
+       |                  separation >= purge + horizon + embargo
+       |
+       +-- validate every WindowRecord.Support and LabelEnd
+       |
+       +-- FitIDs must be a subset of TrainIDs
+       |
+       +-- freeze fitting and representation parameters
+       |
+       +-- run independent heldout queries against frozen candidate universe
+```
+
+`ValidateSplit` only proves declared separation and disjoint IDs. `ValidateWindowRecords` also checks that each ID has one witness with its entire support and prediction-label endpoint within its raw partition. Neither routine can independently authenticate a dishonest importer or discover a global normalization model fitted earlier on Test; source timestamps and fit history must be retained by the application. Window-local SAX population Z normalization is explicitly part of SAX's encoding policy, not a fitted global train/test standardizer.
+
+### 11v.4. Freeze evidence before benchmarking, and refuse incomplete claims
+
+Record `GeneratorVersion`, `rng.Factory.Version()`, original corpus/query hashes, query seed(s), immutable protocol thresholds, DTW band, SAX dimensions, benchmark environment, raw timing observations and memory measurements. Do **not** include volatile `DurationNS` in deterministic semantic hashes. `SAXIndex.IndexBytes()` measures only the ID+symbol payload; it excludes retained raw corpus, allocator overhead and resident memory and cannot justify a memory-benefit claim.
+
+The engineering research gates are **zero certified false exclusions**, strict Recall@K **at least 0.99** on each predeclared non-adversarial family, missed-best **at most 0.01**, median speedup **at least 2×**, and measured index-memory ratio **at most 2×** the actual SAX baseline. Report each synthetic family, adversarial failures and the worst case; never optimize these criteria on the heldout Test set. These numbers are *acceptance targets*, not achieved results.
+
+`RunAvailableComparison` currently produces **two arms only**. `Run` and `ScanLBConservative` refuse to claim four-arm completion or proven floating-point DTW pruning. Until a source-backed definition, independent encoder, certified lower bound and independently audited benchmark exist, production promotion remains **NOT ADMITTED**. See [`TFSAX.md`](TFSAX.md) for the mathematical restrictions, method matrix, resource equations and reproducible evidence checklist, [`tfsax/example_test.go`](../tfsax/example_test.go) for executable stress cases, and [`examples/tfsax_go_only`](../examples/tfsax_go_only/main.go) for a completely file-free runnable comparison.
 
 ---
 

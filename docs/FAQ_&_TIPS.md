@@ -3,7 +3,7 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/FAQ_&_TIPS.md
-  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima, lstm, pacf and the wider lvlath package family
+  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima, lstm, pacf, tfsax and the wider lvlath package family
   lvlath - FAQ & Tips
 
   Purpose:
@@ -42,6 +42,7 @@
     - Frozen PyTorch IFGO LSTM weights, exact-zero batch masking, ModelID-bound streaming state and numeric overflow classification.
     - Common-n Durbin-Levinson PACF, prediction-error variance, stable centering, nilable results and AR-order diagnostic boundaries.
     - Economy SVD dimensions, independent column scaling, rank versus truncation, diagnostic nonconvergence and PCA solver boundaries.
+    - Research-only TFSAX exact-DTW/SAX comparisons, leakage-safe evidence, NA metrics, optional Go-native JSON audit and strict non-admission.
 
   License:
     lvlath is licensed under AGPL-3.0-only. See ../LICENSE.
@@ -93,6 +94,7 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
     13r. [ARIMA FAQ](#13r-arima-faq-conditional-gaussian-fit-schur-constraints-and-anchored-forecasts)
     13s. [LSTM FAQ](#13s-lstm-faq-ifgo-inference-masking-and-streaming-replay)
     13t. [PACF FAQ](#13t-pacf-faq---covariance-recurrence-and-safe-interpretation)
+    13u. [TFSAX FAQ](#13u-tfsax-faq---research-only-dtw-retrieval-and-reproducible-evidence)
 14. [Builder and gridgraph tips](#14-builder-and-gridgraph-tips)
 15. [Errors and diagnostics](#15-errors-and-diagnostics)
 16. [Determinism and concurrency](#16-determinism-and-concurrency)
@@ -125,6 +127,7 @@ Start with the question, not the algorithm name.
 | “How do I build repeatable fixtures?”                                                                         | `builder`                             | Deterministic graph/data generation.                                                                  |
 | “How do I compress a fixed-size scalar time-series window?”                                                   | `paa`                                 | Exact fractional PAA averages with rational boundaries and no dropped tail.                           |
 | “How do I encode a fixed-length symbolic signature?”                                                          | `sax`                                 | Fractional PAA + right-bin quantization, compatible Euclidean MINDIST.                                |
+| “How do I audit exact DTW recall versus a SAX heuristic without claiming a TFSAX encoder?”                    | `tfsax` research gate                 | Separate exact full scan, TopM SAX ranking and strict-ID family metrics; not production TFSAX.        |
 | “How do I align two time series?”                                                                             | `dtw`                                 | Dynamic Time Warping handles local timing drift.                                                      |
 | “How do I compute robust moments or merge workers?”                                                           | `stats`                               | Welford/Chan moments, exact mean sum, scaled M2.                                                      |
 | “How do I normalize heldout features without refit?”                                                          | `stats`                               | Immutable fitted model over matrix columns.                                                           |
@@ -189,6 +192,7 @@ compute exact empirical path quantiles -> MONTECARLO RunWithQuantiles (budgeted 
 draw dependent-data index replicates   -> BOOTSTRAP SampleIndices (no statistic or CI)
 retrospective regime audit             -> HMM Smooth / Decode (future-conditioned)
 encode symbolic SAX words              -> SAX
+audit SAX shortlist versus exact DTW   -> TFSAX research adapter (NOT production encoder)
 align time-warped signals              -> DTW
 build a closed tour                    -> TSP
 ```
@@ -4102,7 +4106,7 @@ context check on each attempt. Exhaustion returns `ErrBudget` and the already
 completed path prefix. `UniformOpen` values must be finite and strictly in
 `(0,1)`; out-of-range endpoints return `ErrDomain`, while NaN/Inf returns
 `ErrNonFinite`. A custom RNG that blocks inside its method cannot be forcibly
-interrupted by a Go context—this is a limitation of the external interface.
+interrupted by a Go context - this is a limitation of the external interface.
 
 ### Q13p.9. What are the mean and count limits?
 
@@ -5041,6 +5045,71 @@ For runnable realistic synthetic workflows see
 [`pacf/example_test.go`](../pacf/example_test.go) and
 [`examples/pacf/main.go`](../examples/pacf/main.go); for the proof and
 numerical contract see [`PACF.md`](PACF.md).
+
+---
+
+## 13u. TFSAX FAQ - research-only DTW retrieval and reproducible evidence
+
+### Q13u.1. Is `tfsax` a finished symbolic time-series encoder?
+
+No. `github.com/lvlath/go/tfsax` contains real deterministic **research infrastructure**, including an exact absolute-cost DTW oracle, a standard SAX heuristic index, synthetic stress families, metrics and validation gates. It does not contain a source-backed mathematical TFSAX encoder, a `Fit` or `Encode` implementation for a proposed new representation, a certified symbolic-DTW lower bound, or a complete four-arm benchmark. `Run` therefore returns errors matching `ErrUndefinedRepresentation` and `ErrUncertifiedBound` for an otherwise validated experiment. A user-supplied `Definition.Approved` flag cannot supply proof or executable code.
+
+### Q13u.2. Why are there `protocol.json` and `definition.json` files in a Go repository?
+
+They are **optional audit artifacts** for scientific reproducibility, not inputs that every library call loads. `Protocol`, `Definition` and `Thresholds` are plain Go values that can be created directly with `DefaultProtocol`, `UnresolvedDefinition` and struct literals. The `.json` example files document a frozen experimental plan and an explicitly unresolved scientific definition. The helpers `DigestJSON`, `ParseProtocol` and `WriteJSON` rely on Go's **standard-library** `encoding/json`; no external Go module, server or foreign language is involved.
+
+Dropping the files is computationally possible but removes a handy versioned audit record. Removing the `json:"..."` tags or serialization helpers would change field-name layout and research digest compatibility; do this only under an explicit new record contract, with migration and regression tests. **No JSON file is required for in-memory exact or SAX searches.**
+
+### Q13u.3. If the package is research-only, what can I safely call today?
+
+Use `ExactDTW` for one pair, `ScanExact` for exhaustive TopK, `PrepareSAXIndex` + `SAXIndex.Search` for repeated **heuristic** shortlists, or `RunAvailableComparison` for exactly two measured branches. `ScanExactUnbounded` selects window `-1`; `ScanExactDiagonal` selects window `0`. The one-shot `ScanSAXWithOptions` includes index construction, unlike a warmed prepared index. Results are independent of the caller's source buffers; in particular, prepared index construction clones its corpus.
+
+```go
+// In a function with ctx context.Context and independently prepared corpus/query:
+exact, err := tfsax.ScanExact(ctx, corpus, query, 4)
+if err != nil { return err }
+heuristic, err := tfsax.ScanSAXWithOptions(ctx, corpus, query,
+    tfsax.SAXSearchOptions{Window: 4, Shortlist: 12, Segments: 8, Alphabet: 8})
+if err != nil { return err }
+recall := tfsax.RecallAtK(heuristic.Candidates, exact.Candidates)
+_ = recall // Report as an empirical metric; do not change heuristic.Exact.
+```
+
+This snippet requires `import "github.com/lvlath/go/tfsax"` and the stated local variables; for a full compilable pipeline, see [`TFSAX.md`](TFSAX.md#41-fully-in-memory-no-files-no-marshaling-executable-go-example) and `tfsax/example_test.go`.
+
+### Q13u.4. Why is SAX MINDIST **not** a DTW lower bound?
+
+`SAXIndex` ranks using the existing `sax.Encoder.Mindist`, which is a compatible **Euclidean** lower-bound dissimilarity. DTW can repeat samples along a nonlinear warping path and achieve a smaller cost. For example, `q=[0,0,1,1]` and `c=[0,1,1,1]` align at unrestricted absolute-cost DTW zero while their direct pointwise difference is positive. Using that pointwise difference or an arbitrary positive Euclidean SAX bound as an exact-DTW pruning certificate could discard a true match. Rank and refine; never claim certified exclusion from MINDIST.
+
+### Q13u.5. But isn't LB_Keogh an established DTW bound?
+
+The envelope inequality can be justified **in real arithmetic** under explicit local-cost, endpoint and radius assumptions. The package's `LBKeoghAbsolute` is a **float64 diagnostic**, not a machine-safe pruning certificate. A single `math.Nextafter` adjustment and exhaustive short-alphabet tests do not establish safety against every floating-point rounding and overflow case of the exact scorer. Consequently `ScanLBConservative` refuses with `ErrUncertifiedBound`. Exact pruning must be separately proved with a numerically safe comparison protocol.
+
+### Q13u.6. What do `Complete`, `Exact`, `Examined` and `Pruned` mean?
+
+`Complete=true` means the **requested procedure** finished. `Diagnostics.Exact=true` means it has a mathematical guarantee of returning the exact TopK over the complete frozen corpus. A complete full scan has both true; a complete heuristic shortlist has `Exact=false`, even if observed recall is one. `Examined` counts full-DTW evaluations; `Pruned` counts skipped refinements, regardless of whether they were proven safe. The returned `Candidates` slice is detached, tie-broken by `(DTW distance, smallest numeric CandidateID)`. `IsNil()` tests only receiver pointer presence, not candidate count or completeness.
+
+### Q13u.7. What if all exact candidates are unreachable, or TopK exceeds available matches?
+
+`ScanExact` returns only reachable IDs; a successful full scan can have fewer than TopK with `Complete=true`. `RecallAtK(got, want)` and `MissedBest(got, want)` return `MetricValue{Applicable:false}` for an empty exact truth set, not a fake perfect score. Note that **equal-length finite windows always have an admissible diagonal DTW path** for any nonnegative band, so a test of an all-unreachable corpus cannot simply pretend equal-length windows become unreachable because the band is tight. Keep the mathematical preconditions honest.
+
+### Q13u.8. How do I protect calibration from time leakage?
+
+Freeze raw chronological intervals **before** sliding windows. Call `ValidateSplit` for ordered, separated Train/Calibration/Test intervals, `purge >= full window support width`, gap at least `purge+horizon+embargo`, and `FitIDs ⊆ TrainIDs`. Call `ValidateWindowRecords` to bind each ID to exactly one declared raw support interval and a checked `LabelEnd`, both inside its original partition. Neither function authenticates a dishonest timestamp importer or a global scaler fitted previously on heldout observations: external data provenance and fitted-model history are still required.
+
+### Q13u.9. Are repeated seeds sufficient for a publishable benchmark?
+
+No. Persist `GeneratorVersion`, `rng.Factory.Version()`, independent corpus/query seeds and logical paths, source timestamps, corpus digest, query digest, DTW policy, SAX segments/alphabet, implementation revision, toolchain and hardware. `CorpusHash` commits to *ordered* IDs and exact binary64 bits; `QueriesHash` sorts query IDs. Neither cryptographically authenticates external provenance. Do not benchmark queries copied verbatim from the indexed corpus except in explicitly labeled known-match functional tests.
+
+### Q13u.10. Can I trust `SAXIndex.IndexBytes()` as actual memory usage?
+
+No. It counts serialized CandidateID and SAX symbol payload only, not copied raw windows, object headers, allocator overhead or resident memory. The package retains **both** private SAX words and detached raw windows needed for exact DTW refinement. For a comparison against SAX, measure actual index build allocations, retained memory and query allocations under the same corpus. Benchmark preparation and warmup separately; do not claim speedup from a one-shot `ScanSAX` build versus an already warmed exact scan.
+
+### Q13u.11. What must a successful research gate prove?
+
+A complete independently specified representation; independent reference encoder; certified bound if pruning is claimed; train-only fitted coordinates; actual four-arm results against one DTW oracle; zero false exclusions in certified exact mode; strict Recall@K at least 0.99 on **each predeclared** non-adversarial family; missed-best rate at most 0.01; median query latency at least twice as fast with measured index memory at most twice the SAX baseline. Report all adversarial and worst-case families. The current package has **not** met the definition and four-arm evidence requirements. A negative report means *not admitted on existing evidence*, not a proof that all future representations fail.
+
+See the [complete TFSAX reference](TFSAX.md), [SAX](SAX.md), [DTW search](DTW_SEARCH.md), and [`tfsax/doc.go`](../tfsax/doc.go).
 
 ---
 

@@ -8,7 +8,7 @@
     This README is the public face of lvlath. It presents the library as a
     deterministic, contract-driven Go toolkit for graph algorithms, flow networks,
     dense graph algebra, routing, exact timestamp grids, causal time-series primitives, Wilder RSI batch/stream filtering, SMA-seeded MACD, compensated MFI, compensated cumulative OBV, Chaikin A/D, fixed-window ACF and Durbin-Levinson PACF, fractional PAA,
-    symbolic SAX encoding, dependent-data block-index resampling, path-indexed parallel Monte Carlo simulation, exact-in-distribution GBM and Merton jump-diffusion paths, causal GJR-GARCH volatility, fixed-order conditional Gaussian ARIMA with anchored forecasts, frozen IFGO LSTM recurrent inference, alignment, and reproducible algorithm engineering. It should give a new reader immediate confidence in
+    symbolic SAX encoding, research-only TFSAX exact-DTW/SAX retrieval audits, dependent-data block-index resampling, path-indexed parallel Monte Carlo simulation, exact-in-distribution GBM and Merton jump-diffusion paths, causal GJR-GARCH volatility, fixed-order conditional Gaussian ARIMA with anchored forecasts, frozen IFGO LSTM recurrent inference, alignment, and reproducible algorithm engineering. It should give a new reader immediate confidence in
     what lvlath can solve, how packages compose, where the formal contracts live,
     and why this repository is engineered beyond ad-hoc algorithm snippets.
 
@@ -48,7 +48,7 @@
 
 # lvlath
 
-**lvlath** is a pure-Go algorithm engineering library for graphs, flows, dense graph algebra, routing, exact timestamp grids, causal series transforms, fractional PAA, symbolic SAX time-series signatures, stable statistical moments, fitted feature scaling, sample autocorrelation and partial autocorrelation, Wilder RSI, SMA-seeded MACD, compensated OHLCV Money Flow Index, cumulative On-Balance Volume, Chaikin Accumulation/Distribution, covariance PCA, causal Hidden Markov Models, version-pinned PCG-DXSM stochastic streams, time-series alignment, reproducible parallel Monte Carlo drivers, exact-in-distribution geometric Brownian motion and Merton jump-diffusion paths, asymmetric stationary GJR-GARCH conditional volatility, fixed-order conditional Gaussian ARIMA level forecasts, deterministic single-layer IFGO LSTM inference, and reproducible test fixtures.
+**lvlath** is a pure-Go algorithm engineering library for graphs, flows, dense graph algebra, routing, exact timestamp grids, causal series transforms, fractional PAA, symbolic SAX time-series signatures, TFSAX research-only retrieval comparisons, stable statistical moments, fitted feature scaling, sample autocorrelation and partial autocorrelation, Wilder RSI, SMA-seeded MACD, compensated OHLCV Money Flow Index, cumulative On-Balance Volume, Chaikin Accumulation/Distribution, covariance PCA, causal Hidden Markov Models, version-pinned PCG-DXSM stochastic streams, time-series alignment, reproducible parallel Monte Carlo drivers, exact-in-distribution geometric Brownian motion and Merton jump-diffusion paths, asymmetric stationary GJR-GARCH conditional volatility, fixed-order conditional Gaussian ARIMA level forecasts, deterministic single-layer IFGO LSTM inference, and reproducible test fixtures.
 
 It is built for people who need algorithmic tools they can explain in a code review, trust in CI, compose across packages, and debug from deterministic artifacts instead of guessing why an answer changed.
 
@@ -65,6 +65,7 @@ It is built for people who need algorithmic tools they can explain in a code rev
 * `series` checks exact timestamp grids and exposes mask-aware causal transformations without interpolation;
 * `paa` compresses every sample of a finite series into exact fractional equal-duration averages, without dropped tails or padding;
 * `sax` quantizes fractional PAA to compatible symbolic words with Euclidean MINDIST; it never promotes that bound to a DTW pruning certificate;
+* `tfsax` supplies an **unapproved research gate** for independent exact-DTW versus classical SAX TopM retrieval evaluation, synthetic stress data and temporal leakage audits; it does **not** supply a new TFSAX encoder or proven DTW pruning;
 * `stats` provides scaled Welford/Chan moments and immutable training-only feature standardization without refit;
 * `ols` fits full-rank original-unit linear models through pivoted QR, with an explicit zero-origin policy and frozen predictions;
 * `ridge` fits strongly correlated or wide linear models with a caller-chosen positive L2 penalty, unpenalized intercept and stable augmented QR coordinates;
@@ -255,6 +256,7 @@ lvlath/
 ├── series/                # exact timestamp grids, causal transforms, complete index windows
 ├── paa/                   # fractional PAA, exact rational geometry, detached averages
 ├── sax/                   # symbolic PAA words, SHA-256 policy identity, Euclidean MINDIST
+├── tfsax/                 # research-only exact-DTW/SAX comparison; no TFSAX encoder or certified pruning
 ├── stats/                 # scaled Welford/Chan moments and immutable fitted scaling
 ├── ols/                   # QR regression, full-rank gate, frozen physical coefficients
 ├── ridge/                 # positive-Lambda Tikhonov, balanced augmented QR, immutable fit
@@ -312,6 +314,7 @@ lvlath/
 │   ├── LSTM.md
 │   ├── PAA.md
 │   ├── SAX.md
+│   ├── TFSAX.md           # research gate, exact/heuristic boundaries, provenance, optional JSON artifacts
 │   ├── GRID_GRAPH.md
 │   ├── MATRICES.md     # canonical complete matrix reference
 │   ├── TSP.md
@@ -603,6 +606,7 @@ approves risk-model deployment. Details follow in the
 | `series`        | Exact signed-nanosecond grid checks, causal lag/difference/returns, and complete index windows.                                                | Detached validity masks, checked integer intervals, and explicit whole-slot gaps without interpolation.                    | Telemetry preparation, causal features, window scheduling, signal-quality gates.                               |
 | `paa`           | Fractional PAA with exact, unsimplified rational segment geometry and a correctly rounded final binary64 mean.                                 | Never discards remainder samples or fabricates zeros; results are detached.                                                | SAX preparation, telemetry compression, fixed-dimensional sequence features.                                   |
 | `sax`           | Fixed-length symbolic words, pinned Gaussian/custom thresholds, immutable encoders and Euclidean MINDIST.                                      | Right-bin equality, SHA-256 policy identity, detached results; no false DTW pruning claim.                                 | Telemetry signatures, approximate candidate ranking, shape-change screening.                                   |
+| `tfsax`         | Research-only exact-DTW versus prepared SAX ranking, deterministic stress families and temporal provenance gates.                              | Explicit `Complete`/`Exact`, strict recall/NA, frozen in-memory plan; no production encoder or certified LB.               | Scientific retrieval audits, independently seeded synthetic comparison, missed-best detection.                 |
 | `ols`           | Full-column-rank least-squares regression, immutable original-unit coefficients and QR diagnostics.                                            | Explicit intercept/scale-only origin policies, rank refusal, training SSE, no heldout refit.                               | CAPM factors, sensor calibration, energy-load forecasting.                                                     |
 | `ridge`         | Tikhonov L2 regression with mandatory Lambda>0 and immutable physical-unit inference.                                                          | Stable balanced augmented Householder QR, p>n, duplicated predictors, unpenalized intercept and checked objective.         | Correlated multi-factor hedges, wide optical sensors, seasonal AR(12).                                         |
 | `rng`           | Version-pinned SHA-256/PCG-DXSM128/64 streams, strict uniform midpoints, cached Box-Muller normals and batch facades.                          | Immutable factory, logical path isolation, no hot-loop allocation and exact raw consumption.                               | Monte Carlo paths, risk simulation, sensor fault injection, repeatable stress experiments.                     |
@@ -797,6 +801,42 @@ func main() {
 The immutable Encoder is safe for concurrent inference with stable inputs and Results; `Result.Symbols` and optional `Result.PAA` are detached. Constant Z windows use explicit `RejectConstant` or `ZeroWord` policy (which makes **normalized coordinates**, not necessarily symbol indexes, zero). A matching `EncodingID` proves mathematical policy compatibility, not authenticity of externally mutable Result data.
 
 See [`docs/SAX.md`](docs/SAX.md) for the full fractional Jensen proof, symbol-bin convention, encoding hash serialization, error precedence, numerical limitations, performance and independent regression oracles. Five runnable synthetic operational examples are provided in [`sax/example_test.go`](sax/example_test.go).
+
+### TFSAX: exact-DTW/SAX retrieval research without inventing an encoder
+
+`github.com/lvlath/go/tfsax` is a **research-only** package. It asks whether a future rigorously specified symbolic representation can outperform the existing SAX filter at a precommitted strict-ID recall target. The name **TFSAX does not currently define a mathematical encoder**. The package therefore provides *no* production `Fit`/`Encode`, no certified symbolic DTW pruning, and no claimed empirical victory. `Run` correctly rejects a missing four-way experiment instead of returning fictitious measurements.
+
+| Research question                                                            | Current Go surface                                              | Guarantee                                                                                     |
+|:-----------------------------------------------------------------------------|:----------------------------------------------------------------|:----------------------------------------------------------------------------------------------|
+| What are the full-universe nearest neighbors under the accepted scalar DTW?  | `ScanExact`, `RunExactReference`                                | Exact full scan, fixed endpoints, absolute-cost `dtw.Align`, sorted `(DTW, CandidateID)`      |
+| Can classical SAX rank a smaller set of candidates for exact DTW refinement? | `PrepareSAXIndex` + `SAXIndex.Search`, `RunAvailableComparison` | Heuristic TopM, with `Diagnostics.Exact=false`; empirical Recall@K only                       |
+| Can an unproven lower bound certify DTW exclusions?                          | `ScanLBConservative`, `LBKeoghAbsolute`                         | Diagnostic only; exact pruning refuses with `ErrUncertifiedBound`                             |
+| Is the proposed TFSAX algorithm defined well enough to deploy?               | `Definition`, `ValidateDefinition`, `Run`                       | **NOT ADMITTED** without formal mathematics, independent reference and full four-arm evidence |
+
+**Use the library entirely in Go:** `Protocol`, `Thresholds`, `Definition` and `Experiment` are typed Go values. Neither `protocol.json` nor `definition.json` is loaded by a search or comparison call. Both files are *optional versioned reproducibility records*, not foreign-language dependencies; the `json:"..."` tags affect only serialization by Go's standard library and preserve stable historical field names/hashes. Deleting or changing this record ABI would require a separately versioned migration, not a silent cleanup.
+
+```go
+// Run inside a function with ctx context.Context and ordinary Go imports.
+corpus, err := tfsax.GenerateFamily(tfsax.FamilyMotif, 701, 24, 24)
+if err != nil { return err }
+independent, err := tfsax.GenerateFamily(tfsax.FamilyMotif, 1701, 1, 24)
+if err != nil { return err }
+query := tfsax.Query{Values: independent[0].Values, TopK: 3}
+exact, err := tfsax.ScanExact(ctx, corpus, query, 4)
+if err != nil { return err }
+approx, err := tfsax.ScanSAXWithOptions(ctx, corpus, query,
+    tfsax.SAXSearchOptions{Window: 4, Shortlist: 10, Segments: 6, Alphabet: 8})
+if err != nil { return err }
+recall := tfsax.RecallAtK(approx.Candidates, exact.Candidates)
+// recall is an empirical observation; approx.Diagnostics.Exact remains false.
+_ = recall
+```
+
+The snippet assumes the stated imports, `ctx context.Context` and a function returning `error`. The [complete runnable, no-JSON scenario](docs/TFSAX.md#41-fully-in-memory-no-files-no-marshaling-executable-go-example) demonstrates the whole experiment; run the file-free [`examples/tfsax_go_only`](examples/tfsax_go_only/main.go) scenario with `go run ./examples/tfsax_go_only`, and see [`tfsax/example_test.go`](tfsax/example_test.go) for additional stress and temporal-leakage tests. All representative demonstrations use deterministic **synthetic** observations, not recorded exchange prices or deployed plant alarm thresholds.
+
+A valid study freezes raw Train/Calibration/Test intervals before creating overlapping windows, checks full supports and label horizons using `ValidateWindowRecords`, retains independent query seeds and exact-bit corpus/query digests, and reports `RecallAtK`, missed-best and the **worst** family. `Complete=true` only reports procedural completion; `Diagnostics.Exact=true` reports mathematical global exactness. Empty exact targets yield NA, not fabricated perfect recall. Timing and memory results must be measured separately for index build, cached queries and real retained allocations; `SAXIndex.IndexBytes()` counts only ID+symbol payload.
+
+**Research admission thresholds are requirements, not achievements:** zero certified false exclusions; Recall@K at least 0.99 per predeclared non-adversarial family; missed-best rate at most 0.01; at least 2× median speedup with at most 2× **measured** index memory compared with SAX. Until independent TFSAX definition, safe bound and four-arm results exist, the decision remains **NOT ADMITTED**. See [`docs/TFSAX.md`](docs/TFSAX.md), [`tfsax/doc.go`](tfsax/doc.go), and the [TFSAX Tutorial](docs/TUTORIAL.md#11v-tfsax-research-gate-exact-dtw-truth-sax-ranking-and-reproducible-evidence).
 
 ### Stats: stable reductions and train-only feature calibration
 
@@ -2485,46 +2525,47 @@ for masked streaming from a frozen model.
 
 ## Current contract documentation
 
-| Layer                          | File                                             | Purpose                                                                                                                         |
-|:-------------------------------|:-------------------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------|
-| Tutorial                       | [`docs/TUTORIAL.md`](docs/TUTORIAL.md)           | First guided entry into graph/matrix concepts, package roles, examples, and best practices.                                     |
-| Core spec                      | [`docs/CORE.md`](docs/CORE.md)                   | Graph model, capability law, deterministic enumeration, locks, topology invariants.                                             |
-| BFS spec                       | [`docs/BFS.md`](docs/BFS.md)                     | Hop-distance math, BFS result semantics, partial results, weak components.                                                      |
-| DFS spec                       | [`docs/DFS.md`](docs/DFS.md)                     | Post-order semantics, cycle witnesses, DFS forest, topological sort.                                                            |
-| Shortest paths spec            | [`docs/DIJKSTRA.md`](docs/DIJKSTRA.md)           | Full SSSP vs four target methods, consistency proofs, balanced potentials, exact arithmetic and runnable scenarios.             |
-| MST spec                       | [`docs/MST.md`](docs/MST.md)                     | Exact Prim/Kruskal, KMB Steiner approximation, tree-covering walks, original IDs, numeric/error contracts.                      |
-| Flow spec                      | [`docs/FLOW.md`](docs/FLOW.md)                   | Max-flow/min-cut math, residual networks, Ford-Fulkerson, Edmonds-Karp, Dinic.                                                  |
-| DTW spec                       | [`docs/DTW.md`](docs/DTW.md)                     | Dynamic programming, numeric classification, windows, penalties and path recovery.                                              |
-| DTW exact search               | [`docs/DTW_SEARCH.md`](docs/DTW_SEARCH.md)       | Bounded classification, fixed-length top-K, certified pruning, budgets and worker law.                                          |
-| Fractional PAA                 | [`docs/PAA.md`](docs/PAA.md)                     | Exact step-function geometry, output ownership, nearest-even arithmetic, wrappers and integration.                              |
-| Symbolic SAX                   | [`docs/SAX.md`](docs/SAX.md)                     | Canonical words, Euclidean MINDIST proof, versioned identity, errors and false-DTW-pruning counterexample.                      |
-| Series primitives              | [`docs/SERIES.md`](docs/SERIES.md)               | Exact integer grids, causal transforms, result masks, numeric safeguards, index windows.                                        |
-| Deterministic RNG streams      | [`docs/RNG.md`](docs/RNG.md)                     | Pinned PCG-DXSM128/64, SHA-256 state mapping, strict uniform, Gaussian spare and replay.                                        |
-| Monte Carlo driver             | [`docs/MONTECARLO.md`](docs/MONTECARLO.md)       | Path-keyed replay, bounded dispatch, vector moments, exact empirical quantiles, memory limits and prefix failures.              |
-| GBM exact lognormal paths      | [`docs/GBM.md`](docs/GBM.md)                     | Model equations, unit dimensions, input precedence, robust price publication and Monte Carlo bridge.                            |
-| GJR-GARCH conditional variance | [`docs/GJRGARCH.md`](docs/GJRGARCH.md)           | Strict causality, asymmetric shock mathematics, stationary forecasts, QMLE gradient, KKT projection and release policy.         |
-| ARIMA mean/level forecasting   | [`docs/ARIMA.md`](docs/ARIMA.md)                 | Conditional Gaussian fit, burn-in, Schur roots, anchor recovery, impulse variance and operational limits.                       |
-| Frozen IFGO LSTM inference     | [`docs/LSTM.md`](docs/LSTM.md)                   | Combined PyTorch biases, tensor/length masks, exact overflow, ModelID, streaming replay and CPU-double oracle boundaries.       |
-| Merton jump-diffusion          | [`docs/JUMPDIFFUSION.md`](docs/JUMPDIFFUSION.md) | Compound Poisson log-jump law, compensation, bounded PTRS, RNG replay, errors and source attribution.                           |
-| Stable statistics              | [`docs/STATS.md`](docs/STATS.md)                 | Welford/Chan, exact mean sum, scaled M2, fitted scaling, sentinels, immutable inference.                                        |
-| Stable Ridge regression        | [`docs/RIDGE.md`](docs/RIDGE.md)                 | Positive-Lambda augmented QR, strict intercept policy, wide/collinear designs, nonzero tiny coefficients and frozen prediction. |
-| Dependent index bootstrap      | [`docs/BOOTSTRAP.md`](docs/BOOTSTRAP.md)         | Moving/Circular/Stationary laws, exact integer mapping, replay, budget and partial rows.                                        |
-| Sample autocorrelation         | [`docs/ACF.md`](docs/ACF.md)                     | Common/lag-adjusted ACF, full-window centering, Toeplitz PSD proof and numeric limitations.                                     |
-| Partial autocorrelation        | [`docs/PACF.md`](docs/PACF.md)                   | Common-n covariance, Durbin-Levinson recursion, V_m, stable arithmetic and error precedence.                                    |
-| Wilder RSI                     | [`docs/RSI.md`](docs/RSI.md)                     | Stable ratio math, exact seed/warmup, batch/stream equivalence, sentinels and checkpoint ABI.                                   |
-| SMA-seeded MACD                | [`docs/MACD.md`](docs/MACD.md)                   | Appel EMA seed/recurrence, signed values, aligned masks, batch/stream parity, checkpoint safety.                                |
-| Compensated MFI                | [`docs/MFI.md`](docs/MFI.md)                     | Typical-price OHLCV flow, transition windows, Neumaier rebase, warmup masks and versioned state.                                |
-| Cumulative OBV                 | [`docs/OBV.md`](docs/OBV.md)                     | First-bar zero, signed close comparisons, Neumaier compensation, atomic Push and snapshot trust model.                          |
-| Chaikin A/D                    | [`docs/AD.md`](docs/AD.md)                       | First-bar weighted contribution, stable close-location geometry, Neumaier rebase, global errors and fixed snapshot ABI.         |
-| Finite-state HMM               | [`docs/HMM.md`](docs/HMM.md)                     | Causal log-domain filtering, retrospective smoothing, Viterbi, multi-sequence MAP-EM, error and identity laws.                  |
-| Fitted covariance PCA          | [`docs/PCA.md`](docs/PCA.md)                     | Train-only orthogonal projection, checked covariance eigenpairs, numerical rank and leakage-safe reconstruction.                |
-| Stable OLS regression          | [`docs/OLS.md`](docs/OLS.md)                     | Pivoted Householder QR, explicit intercept, physical coefficients, SSE, frozen Model and holdout pitfalls.                      |
-| Grid spec                      | [`docs/GRID_GRAPH.md`](docs/GRID_GRAPH.md)       | Grid/lattice graph modeling and pathfinding-oriented construction.                                                              |
-| Matrix spec                    | [`docs/MATRICES.md`](docs/MATRICES.md)           | Canonical dense/graph/statistics/factorization/economy-SVD reference; this is the authoritative matrix guide.                   |
-| TSP spec                       | [`docs/TSP.md`](docs/TSP.md)                     | Tour optimization, exact vs approximate methods, metric assumptions.                                                            |
-| Engineering standard           | [`docs/lvlath_UES.md`](docs/lvlath_UES.md)       | Repository engineering standard and quality expectations.                                                                       |
-| FAQ                            | [`docs/FAQ_&_TIPS.md`](docs/FAQ_%26_TIPS.md)     | Troubleshooting, common pitfalls, usage tips.                                                                                   |
-| Contribution guide             | [`CONTRIBUTING.md`](CONTRIBUTING.md)             | Branching, tests, linting, coverage, PR rules.                                                                                  |
+| Layer                          | File                                             | Purpose                                                                                                                          |
+|:-------------------------------|:-------------------------------------------------|:---------------------------------------------------------------------------------------------------------------------------------|
+| Tutorial                       | [`docs/TUTORIAL.md`](docs/TUTORIAL.md)           | First guided entry into graph/matrix concepts, package roles, examples, and best practices.                                      |
+| Core spec                      | [`docs/CORE.md`](docs/CORE.md)                   | Graph model, capability law, deterministic enumeration, locks, topology invariants.                                              |
+| BFS spec                       | [`docs/BFS.md`](docs/BFS.md)                     | Hop-distance math, BFS result semantics, partial results, weak components.                                                       |
+| DFS spec                       | [`docs/DFS.md`](docs/DFS.md)                     | Post-order semantics, cycle witnesses, DFS forest, topological sort.                                                             |
+| Shortest paths spec            | [`docs/DIJKSTRA.md`](docs/DIJKSTRA.md)           | Full SSSP vs four target methods, consistency proofs, balanced potentials, exact arithmetic and runnable scenarios.              |
+| MST spec                       | [`docs/MST.md`](docs/MST.md)                     | Exact Prim/Kruskal, KMB Steiner approximation, tree-covering walks, original IDs, numeric/error contracts.                       |
+| Flow spec                      | [`docs/FLOW.md`](docs/FLOW.md)                   | Max-flow/min-cut math, residual networks, Ford-Fulkerson, Edmonds-Karp, Dinic.                                                   |
+| DTW spec                       | [`docs/DTW.md`](docs/DTW.md)                     | Dynamic programming, numeric classification, windows, penalties and path recovery.                                               |
+| DTW exact search               | [`docs/DTW_SEARCH.md`](docs/DTW_SEARCH.md)       | Bounded classification, fixed-length top-K, certified pruning, budgets and worker law.                                           |
+| Fractional PAA                 | [`docs/PAA.md`](docs/PAA.md)                     | Exact step-function geometry, output ownership, nearest-even arithmetic, wrappers and integration.                               |
+| Symbolic SAX                   | [`docs/SAX.md`](docs/SAX.md)                     | Canonical words, Euclidean MINDIST proof, versioned identity, errors and false-DTW-pruning counterexample.                       |
+| TFSAX research gate            | [`docs/TFSAX.md`](docs/TFSAX.md)                 | Exact DTW truth versus heuristic SAX shortlists, temporal provenance, empirical metrics and scientifically honest non-admission. |
+| Series primitives              | [`docs/SERIES.md`](docs/SERIES.md)               | Exact integer grids, causal transforms, result masks, numeric safeguards, index windows.                                         |
+| Deterministic RNG streams      | [`docs/RNG.md`](docs/RNG.md)                     | Pinned PCG-DXSM128/64, SHA-256 state mapping, strict uniform, Gaussian spare and replay.                                         |
+| Monte Carlo driver             | [`docs/MONTECARLO.md`](docs/MONTECARLO.md)       | Path-keyed replay, bounded dispatch, vector moments, exact empirical quantiles, memory limits and prefix failures.               |
+| GBM exact lognormal paths      | [`docs/GBM.md`](docs/GBM.md)                     | Model equations, unit dimensions, input precedence, robust price publication and Monte Carlo bridge.                             |
+| GJR-GARCH conditional variance | [`docs/GJRGARCH.md`](docs/GJRGARCH.md)           | Strict causality, asymmetric shock mathematics, stationary forecasts, QMLE gradient, KKT projection and release policy.          |
+| ARIMA mean/level forecasting   | [`docs/ARIMA.md`](docs/ARIMA.md)                 | Conditional Gaussian fit, burn-in, Schur roots, anchor recovery, impulse variance and operational limits.                        |
+| Frozen IFGO LSTM inference     | [`docs/LSTM.md`](docs/LSTM.md)                   | Combined PyTorch biases, tensor/length masks, exact overflow, ModelID, streaming replay and CPU-double oracle boundaries.        |
+| Merton jump-diffusion          | [`docs/JUMPDIFFUSION.md`](docs/JUMPDIFFUSION.md) | Compound Poisson log-jump law, compensation, bounded PTRS, RNG replay, errors and source attribution.                            |
+| Stable statistics              | [`docs/STATS.md`](docs/STATS.md)                 | Welford/Chan, exact mean sum, scaled M2, fitted scaling, sentinels, immutable inference.                                         |
+| Stable Ridge regression        | [`docs/RIDGE.md`](docs/RIDGE.md)                 | Positive-Lambda augmented QR, strict intercept policy, wide/collinear designs, nonzero tiny coefficients and frozen prediction.  |
+| Dependent index bootstrap      | [`docs/BOOTSTRAP.md`](docs/BOOTSTRAP.md)         | Moving/Circular/Stationary laws, exact integer mapping, replay, budget and partial rows.                                         |
+| Sample autocorrelation         | [`docs/ACF.md`](docs/ACF.md)                     | Common/lag-adjusted ACF, full-window centering, Toeplitz PSD proof and numeric limitations.                                      |
+| Partial autocorrelation        | [`docs/PACF.md`](docs/PACF.md)                   | Common-n covariance, Durbin-Levinson recursion, V_m, stable arithmetic and error precedence.                                     |
+| Wilder RSI                     | [`docs/RSI.md`](docs/RSI.md)                     | Stable ratio math, exact seed/warmup, batch/stream equivalence, sentinels and checkpoint ABI.                                    |
+| SMA-seeded MACD                | [`docs/MACD.md`](docs/MACD.md)                   | Appel EMA seed/recurrence, signed values, aligned masks, batch/stream parity, checkpoint safety.                                 |
+| Compensated MFI                | [`docs/MFI.md`](docs/MFI.md)                     | Typical-price OHLCV flow, transition windows, Neumaier rebase, warmup masks and versioned state.                                 |
+| Cumulative OBV                 | [`docs/OBV.md`](docs/OBV.md)                     | First-bar zero, signed close comparisons, Neumaier compensation, atomic Push and snapshot trust model.                           |
+| Chaikin A/D                    | [`docs/AD.md`](docs/AD.md)                       | First-bar weighted contribution, stable close-location geometry, Neumaier rebase, global errors and fixed snapshot ABI.          |
+| Finite-state HMM               | [`docs/HMM.md`](docs/HMM.md)                     | Causal log-domain filtering, retrospective smoothing, Viterbi, multi-sequence MAP-EM, error and identity laws.                   |
+| Fitted covariance PCA          | [`docs/PCA.md`](docs/PCA.md)                     | Train-only orthogonal projection, checked covariance eigenpairs, numerical rank and leakage-safe reconstruction.                 |
+| Stable OLS regression          | [`docs/OLS.md`](docs/OLS.md)                     | Pivoted Householder QR, explicit intercept, physical coefficients, SSE, frozen Model and holdout pitfalls.                       |
+| Grid spec                      | [`docs/GRID_GRAPH.md`](docs/GRID_GRAPH.md)       | Grid/lattice graph modeling and pathfinding-oriented construction.                                                               |
+| Matrix spec                    | [`docs/MATRICES.md`](docs/MATRICES.md)           | Canonical dense/graph/statistics/factorization/economy-SVD reference; this is the authoritative matrix guide.                    |
+| TSP spec                       | [`docs/TSP.md`](docs/TSP.md)                     | Tour optimization, exact vs approximate methods, metric assumptions.                                                             |
+| Engineering standard           | [`docs/lvlath_UES.md`](docs/lvlath_UES.md)       | Repository engineering standard and quality expectations.                                                                        |
+| FAQ                            | [`docs/FAQ_&_TIPS.md`](docs/FAQ_%26_TIPS.md)     | Troubleshooting, common pitfalls, usage tips.                                                                                    |
+| Contribution guide             | [`CONTRIBUTING.md`](CONTRIBUTING.md)             | Branching, tests, linting, coverage, PR rules.                                                                                   |
 
 ---
 
@@ -3100,73 +3141,74 @@ incidence matrix:       columns are edge identities, not vertex-pair weights
 
 ### By failure mode you need to avoid
 
-| Risk                                                                            | lvlath answer                                                                                                |
-|:--------------------------------------------------------------------------------|:-------------------------------------------------------------------------------------------------------------|
-| Map-order flakiness in examples/tests                                           | `core` deterministic surfaces and package tie-break laws.                                                    |
-| Invalid topology reaches algorithms                                             | Graph capability validation and package-level input validators.                                              |
-| BFS used for weighted routing                                                   | Separate BFS hop semantics from Dijkstra weighted semantics.                                                 |
-| DFS order misread as discovery order                                            | DFS `Result.Order` is documented finish order.                                                               |
-| Unknown target treated as unreachable                                           | Dijkstra keeps target-domain errors separate from `+Inf` distances.                                          |
-| Runtime route policy deletes graph structure                                    | Dijkstra thresholds/cutoffs model the run without mutating topology.                                         |
-| Disconnected MST silently becomes forest                                        | `mst.WithForest` is explicit; strict MST returns disconnection.                                              |
-| Terminal-only optimization confused with full MST                               | `mst.SteinerTree` uses required terminals and original edges; it is an approximation, not an exact MST.      |
-| Network cost mistaken for inspection-route cost                                 | `SteinerResult.TotalWeight` counts unique links; `WalkResult.Distance` counts actual passages.               |
-| Repeated walk EdgeIDs removed as duplicates                                     | `SteinerWalk` repeats original IDs by design while covering every selected tree edge.                        |
-| Non-finite MST weights corrupt sorting/heap behavior                            | MST rejects `NaN`, `+Inf`, `-Inf` before kernel execution.                                                   |
-| Flow output hides residual state                                                | Flow result includes residual-network semantics.                                                             |
-| DTW path requested from rolling memory                                          | DTW memory/path policy is explicit; path needs full accumulated storage.                                     |
-| Missing timestamps silently treated as samples                                  | `series.Validate` reports whole-slot gaps; no values or time slots are synthesized.                          |
-| PAA fractional remainder dropped or padded with zeros                           | `paa.Transform` uses integer exact-overlap geometry; neither truncation nor padding occurs.                  |
-| SAX breakpoint labels mistaken for encoding identity                            | `EncodingID` hashes actual threshold content and numeric policy; `BreakpointID` is audit-only.               |
-| Euclidean SAX MINDIST incorrectly used to prune DTW                             | Do not prune; the two distance objectives differ and a positive MINDIST may accompany zero DTW.              |
-| LagAdjusted clipped to [-1,1] or treated as Toeplitz PSD                        | Preserve the estimator convention; use CommonDenominator for exact-arithmetic PSD compatibility.             |
-| Block-bootstrap path silently replaced by IID modulo-biased shuffling           | `bootstrap` uses exact rejection, explicit block topology, per-replicate streams and versioned metadata.     |
-| Worker-tied seeds or shared mutable pseudo-random streams                       | Use `rng.Factory.Stream(seed,uint64(logicalPath))` and reduce path results by stable index.                  |
-| Worker-count-dependent Monte Carlo means/variance or an unbounded pending queue | `montecarlo` uses path-ID streams, coordinator-only `stats.Moments`, and a `2W` issue window.                |
-| A partial Monte Carlo prefix interpreted as a completed risk estimate           | Check `err`/`Complete`; `Completed` is a contiguous prefix, quantiles nil on failure.                        |
-| GBM annualized drift silently applied to a seconds grid                         | `gbm` rejects unit mismatches; callers must convert drift and volatility separately.                         |
-| Representable GBM price rejected through intermediate `S*exp` overflow          | Anchored log-growth and wide diffusion arithmetic defer conversion to a safe publication boundary.           |
-| GBM underflow replaced by a fake positive epsilon or partial payoff             | Zero/Inf prices yield `ErrOverflow`; only completed prefixes survive, never successful maturity substitutes. |
-| Current GJR residual used to compute its own conditional variance               | The observation at t contributes only to h[t+1]; never update h[t] from epsilon[t].                          |
-| GJR likelihood silently clamps variance below the floor                         | Reject infeasible candidates; clipping computed h[t] changes both loss and analytic gradient.                |
-| GJR optimizer candidate treated as successfully fitted                          | Check `err==nil` AND `Diagnostics.Converged`; `IsNil` is only pointer presence.                              |
-| ARIMA drift `c` mistaken for stationary mean or long-run price growth           | `c` is the differenced intercept; when stationary, mean `c/(1-sum(phi))`.                                    |
-| Integrated ARIMA forecasts accidentally start at level/slope zero               | Anchor `d=1` on last level, `d=2` on last level and last first difference.                                   |
-| Conditional SSE includes burn-in or uses raw `n` for variance                   | First `max(p,q)` differenced observations condition only; profile over `EffectiveN`.                         |
-| ARIMA root boundary silently clipped or nonconverged fit deployed               | Reject Schur unit roots; classify `ErrNotConverged` and retain only a diagnostic candidate.                  |
-| LSTM gate rows or combined biases are imported in the wrong ABI                 | Require i/f/g/o contiguous H-row blocks and precombined input+recurrent bias; verify golden parity.          |
-| LSTM padding updates state or repeats the last hidden feature                   | Masked steps must skip both states; Sequence tails are exactly zero, while Final keeps last valid state.     |
-| LSTM affine overflow is hidden behind sigmoid saturation                        | Reject exact unrepresentable affines as ErrOverflow; do not invent a finite gate.                            |
-| Horizon covariance materialized or uncertainty interpreted as complete          | Linear impulse-response marginal variance excludes parameter uncertainty and joint horizon covariance.       |
-| Merton log-jump mean `m` used as the compensator `k`                            | Compensated Merton drift uses `lambda*expm1(m+s^2/2)`, never `lambda*m`.                                     |
-| Poisson count replaced by a Gaussian at high intensity                          | Use bounded PTRS at mean>=30, not a continuous approximation.                                                |
-| An incomplete jump path silently priced as a maturity scenario                  | Reject `!Complete` in `montecarlo.Sampler`; retain diagnostic prefix only.                                   |
-| Full-window ACF mistaken for a causal streaming feature                         | Fit only a fixed permitted window; appending observations can revise every lag.                              |
-| PACF lag-adjusted covariance, in-place coefficients or epsilon variance clamp   | Use common-n covariance, disjoint coefficient rows, and `ErrSingular` instead of fabricated V_m.             |
-| Warmup zero mistaken for a computed zero                                        | `series.TransformResult.Valid` marks computed cells; retain it with `Values`.                                |
-| MFI zero-volume or unchanged-price bars silently dropped                        | Retain every observed transition slot; a missing candle is a separate feed-integrity error.                  |
-| MFI checkpoint Config mistaken for integrity proof                              | Authenticate the entire Snapshot and persist source offset; Config is only an algorithm/period identity.     |
-| First OBV candle incorrectly contributes its volume                             | Seed the first accepted Close only; its valid OBV must be exactly positive zero.                             |
-| OBV correction is lost after a large opposite-signed volume                     | Preserve sum and compensation across Push and Snapshot/Restore; do not flatten them.                         |
-| OBV checkpoint Config is treated as proof of authentic feed history             | Authenticate the entire snapshot and its external source cursor; Config hashes a public algorithm ID.        |
-| A/D bar zero is dropped or the multiplier forms 2*Close near MaxFloat64         | Include the first weighted contribution; use bounded distances and the flat-range branch.                    |
-| A/D loses low-order corrections or accepts an unauthenticated checkpoint        | Preserve both Neumaier coordinates; authenticate snapshot plus source epoch/offset externally.               |
-| DTW over-warps a signal                                                         | Use window and slope penalty deliberately.                                                                   |
-| Feature scale dominates multivariate DTW                                        | Normalize before `dtw.AlignMatrix`; it uses squared L2 row cost.                                             |
-| High-offset variance vanishes or intermediate `M2` overflows                    | `stats.Moments` uses scaled Welford/Chan; exact binary sum preserves the final mean.                         |
-| Holdout data refits a normalizer or constant features vanish                    | `stats.Standardizer` freezes training parameters; `UnitScaleConstant` preserves novel deviations.            |
-| PCA loadings drift after observing a holdout batch                              | `pca.Model.Transform` retains train-only origin, scales and loading basis; it does not refit.                |
-| Unconverged Jacobi result or negative eigenvalue is hidden                      | PCA rejects failed eigenpair/PSD checks and never silently substitutes ThinSVD.                              |
-| Zero-weight edge disappears in matrix adjacency                                 | Use zero-preserving matrix policy; absence becomes `+Inf`.                                                   |
-| Metric closure exported as fake topology                                        | Matrix refuses metric-closure export as ordinary graph topology.                                             |
-| TSP receives sparse unresolved `+Inf` matrix                                    | Use metric closure only when indirect travel is domain-valid; final kernels need finite completeness.        |
-| Christofides ratio claimed with greedy matching                                 | `tsp.BlossomMatch` is required for the formal `1.5` ratio.                                                   |
-| Branch-and-Bound timeout is mistaken for optimality                             | Inspect TSP `Result.TimedOut` and TSP `Result.Optimal`.                                                      |
-| Local-search TSP treated as proof                                               | 2-opt/3-opt improve tours; they do not certify global optimum.                                               |
-| Randomized tests/benchmarks drift                                               | Use fixed seeds or deterministic `builder` fixtures.                                                         |
-| Docs describe fictional APIs                                                    | `{package}/doc.go`, `docs/{PACKAGE}.md`, examples, and tests must stay synchronized.                         |
-| QR rank failure silently treated as direct SVD                                  | QR stays full-column-rank only; use standalone `matrix.SVD` for decomposition, not an implicit solve.        |
-| SVD nonconvergence used as a successful factorization                           | Reject `ErrNotConverged` for downstream computation; optional returned factors are diagnostic only.          |
+| Risk                                                                                           | lvlath answer                                                                                                |
+|:-----------------------------------------------------------------------------------------------|:-------------------------------------------------------------------------------------------------------------|
+| Map-order flakiness in examples/tests                                                          | `core` deterministic surfaces and package tie-break laws.                                                    |
+| Invalid topology reaches algorithms                                                            | Graph capability validation and package-level input validators.                                              |
+| BFS used for weighted routing                                                                  | Separate BFS hop semantics from Dijkstra weighted semantics.                                                 |
+| DFS order misread as discovery order                                                           | DFS `Result.Order` is documented finish order.                                                               |
+| Unknown target treated as unreachable                                                          | Dijkstra keeps target-domain errors separate from `+Inf` distances.                                          |
+| Runtime route policy deletes graph structure                                                   | Dijkstra thresholds/cutoffs model the run without mutating topology.                                         |
+| Disconnected MST silently becomes forest                                                       | `mst.WithForest` is explicit; strict MST returns disconnection.                                              |
+| Terminal-only optimization confused with full MST                                              | `mst.SteinerTree` uses required terminals and original edges; it is an approximation, not an exact MST.      |
+| Network cost mistaken for inspection-route cost                                                | `SteinerResult.TotalWeight` counts unique links; `WalkResult.Distance` counts actual passages.               |
+| Repeated walk EdgeIDs removed as duplicates                                                    | `SteinerWalk` repeats original IDs by design while covering every selected tree edge.                        |
+| Non-finite MST weights corrupt sorting/heap behavior                                           | MST rejects `NaN`, `+Inf`, `-Inf` before kernel execution.                                                   |
+| Flow output hides residual state                                                               | Flow result includes residual-network semantics.                                                             |
+| DTW path requested from rolling memory                                                         | DTW memory/path policy is explicit; path needs full accumulated storage.                                     |
+| Missing timestamps silently treated as samples                                                 | `series.Validate` reports whole-slot gaps; no values or time slots are synthesized.                          |
+| PAA fractional remainder dropped or padded with zeros                                          | `paa.Transform` uses integer exact-overlap geometry; neither truncation nor padding occurs.                  |
+| SAX breakpoint labels mistaken for encoding identity                                           | `EncodingID` hashes actual threshold content and numeric policy; `BreakpointID` is audit-only.               |
+| Euclidean SAX MINDIST incorrectly used to prune DTW                                            | Do not prune; the two distance objectives differ and a positive MINDIST may accompany zero DTW.              |
+| An undefined TFSAX score promoted to production or a two-arm study presented as four-arm proof | `tfsax.Run` refuses; only available exact/SAX arms are measured, and heuristic `Exact` stays false.          |
+| LagAdjusted clipped to [-1,1] or treated as Toeplitz PSD                                       | Preserve the estimator convention; use CommonDenominator for exact-arithmetic PSD compatibility.             |
+| Block-bootstrap path silently replaced by IID modulo-biased shuffling                          | `bootstrap` uses exact rejection, explicit block topology, per-replicate streams and versioned metadata.     |
+| Worker-tied seeds or shared mutable pseudo-random streams                                      | Use `rng.Factory.Stream(seed,uint64(logicalPath))` and reduce path results by stable index.                  |
+| Worker-count-dependent Monte Carlo means/variance or an unbounded pending queue                | `montecarlo` uses path-ID streams, coordinator-only `stats.Moments`, and a `2W` issue window.                |
+| A partial Monte Carlo prefix interpreted as a completed risk estimate                          | Check `err`/`Complete`; `Completed` is a contiguous prefix, quantiles nil on failure.                        |
+| GBM annualized drift silently applied to a seconds grid                                        | `gbm` rejects unit mismatches; callers must convert drift and volatility separately.                         |
+| Representable GBM price rejected through intermediate `S*exp` overflow                         | Anchored log-growth and wide diffusion arithmetic defer conversion to a safe publication boundary.           |
+| GBM underflow replaced by a fake positive epsilon or partial payoff                            | Zero/Inf prices yield `ErrOverflow`; only completed prefixes survive, never successful maturity substitutes. |
+| Current GJR residual used to compute its own conditional variance                              | The observation at t contributes only to h[t+1]; never update h[t] from epsilon[t].                          |
+| GJR likelihood silently clamps variance below the floor                                        | Reject infeasible candidates; clipping computed h[t] changes both loss and analytic gradient.                |
+| GJR optimizer candidate treated as successfully fitted                                         | Check `err==nil` AND `Diagnostics.Converged`; `IsNil` is only pointer presence.                              |
+| ARIMA drift `c` mistaken for stationary mean or long-run price growth                          | `c` is the differenced intercept; when stationary, mean `c/(1-sum(phi))`.                                    |
+| Integrated ARIMA forecasts accidentally start at level/slope zero                              | Anchor `d=1` on last level, `d=2` on last level and last first difference.                                   |
+| Conditional SSE includes burn-in or uses raw `n` for variance                                  | First `max(p,q)` differenced observations condition only; profile over `EffectiveN`.                         |
+| ARIMA root boundary silently clipped or nonconverged fit deployed                              | Reject Schur unit roots; classify `ErrNotConverged` and retain only a diagnostic candidate.                  |
+| LSTM gate rows or combined biases are imported in the wrong ABI                                | Require i/f/g/o contiguous H-row blocks and precombined input+recurrent bias; verify golden parity.          |
+| LSTM padding updates state or repeats the last hidden feature                                  | Masked steps must skip both states; Sequence tails are exactly zero, while Final keeps last valid state.     |
+| LSTM affine overflow is hidden behind sigmoid saturation                                       | Reject exact unrepresentable affines as ErrOverflow; do not invent a finite gate.                            |
+| Horizon covariance materialized or uncertainty interpreted as complete                         | Linear impulse-response marginal variance excludes parameter uncertainty and joint horizon covariance.       |
+| Merton log-jump mean `m` used as the compensator `k`                                           | Compensated Merton drift uses `lambda*expm1(m+s^2/2)`, never `lambda*m`.                                     |
+| Poisson count replaced by a Gaussian at high intensity                                         | Use bounded PTRS at mean>=30, not a continuous approximation.                                                |
+| An incomplete jump path silently priced as a maturity scenario                                 | Reject `!Complete` in `montecarlo.Sampler`; retain diagnostic prefix only.                                   |
+| Full-window ACF mistaken for a causal streaming feature                                        | Fit only a fixed permitted window; appending observations can revise every lag.                              |
+| PACF lag-adjusted covariance, in-place coefficients or epsilon variance clamp                  | Use common-n covariance, disjoint coefficient rows, and `ErrSingular` instead of fabricated V_m.             |
+| Warmup zero mistaken for a computed zero                                                       | `series.TransformResult.Valid` marks computed cells; retain it with `Values`.                                |
+| MFI zero-volume or unchanged-price bars silently dropped                                       | Retain every observed transition slot; a missing candle is a separate feed-integrity error.                  |
+| MFI checkpoint Config mistaken for integrity proof                                             | Authenticate the entire Snapshot and persist source offset; Config is only an algorithm/period identity.     |
+| First OBV candle incorrectly contributes its volume                                            | Seed the first accepted Close only; its valid OBV must be exactly positive zero.                             |
+| OBV correction is lost after a large opposite-signed volume                                    | Preserve sum and compensation across Push and Snapshot/Restore; do not flatten them.                         |
+| OBV checkpoint Config is treated as proof of authentic feed history                            | Authenticate the entire snapshot and its external source cursor; Config hashes a public algorithm ID.        |
+| A/D bar zero is dropped or the multiplier forms 2*Close near MaxFloat64                        | Include the first weighted contribution; use bounded distances and the flat-range branch.                    |
+| A/D loses low-order corrections or accepts an unauthenticated checkpoint                       | Preserve both Neumaier coordinates; authenticate snapshot plus source epoch/offset externally.               |
+| DTW over-warps a signal                                                                        | Use window and slope penalty deliberately.                                                                   |
+| Feature scale dominates multivariate DTW                                                       | Normalize before `dtw.AlignMatrix`; it uses squared L2 row cost.                                             |
+| High-offset variance vanishes or intermediate `M2` overflows                                   | `stats.Moments` uses scaled Welford/Chan; exact binary sum preserves the final mean.                         |
+| Holdout data refits a normalizer or constant features vanish                                   | `stats.Standardizer` freezes training parameters; `UnitScaleConstant` preserves novel deviations.            |
+| PCA loadings drift after observing a holdout batch                                             | `pca.Model.Transform` retains train-only origin, scales and loading basis; it does not refit.                |
+| Unconverged Jacobi result or negative eigenvalue is hidden                                     | PCA rejects failed eigenpair/PSD checks and never silently substitutes ThinSVD.                              |
+| Zero-weight edge disappears in matrix adjacency                                                | Use zero-preserving matrix policy; absence becomes `+Inf`.                                                   |
+| Metric closure exported as fake topology                                                       | Matrix refuses metric-closure export as ordinary graph topology.                                             |
+| TSP receives sparse unresolved `+Inf` matrix                                                   | Use metric closure only when indirect travel is domain-valid; final kernels need finite completeness.        |
+| Christofides ratio claimed with greedy matching                                                | `tsp.BlossomMatch` is required for the formal `1.5` ratio.                                                   |
+| Branch-and-Bound timeout is mistaken for optimality                                            | Inspect TSP `Result.TimedOut` and TSP `Result.Optimal`.                                                      |
+| Local-search TSP treated as proof                                                              | 2-opt/3-opt improve tours; they do not certify global optimum.                                               |
+| Randomized tests/benchmarks drift                                                              | Use fixed seeds or deterministic `builder` fixtures.                                                         |
+| Docs describe fictional APIs                                                                   | `{package}/doc.go`, `docs/{PACKAGE}.md`, examples, and tests must stay synchronized.                         |
+| QR rank failure silently treated as direct SVD                                                 | QR stays full-column-rank only; use standalone `matrix.SVD` for decomposition, not an implicit solve.        |
+| SVD nonconvergence used as a successful factorization                                          | Reject `ErrNotConverged` for downstream computation; optional returned factors are diagnostic only.          |
 
 ---
 
