@@ -122,4 +122,12 @@ var (
 
 	// ErrATSPNotSupportedByAlgo reports a symmetric-only algorithm used for ATSP.
 	ErrATSPNotSupportedByAlgo = errors.New("tsp: algorithm does not support ATSP")
+
+	// ErrNumericOverflow reports a cost sum that cannot be represented as a finite float64.
+	// It does not describe a non-finite input weight or an incomplete route.
+	ErrNumericOverflow = errors.New("tsp: route or matching cost overflows float64")
+
+	// ErrSizeOverflow reports an unrepresentable dense allocation or matching capacity.
+	// It is distinct from the solver's policy-driven ErrSizeTooLarge limit.
+	ErrSizeOverflow = errors.New("tsp: allocation size overflows int")
 )

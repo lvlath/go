@@ -49,8 +49,8 @@
 //   - ExactHeldKarp provides exact dynamic programming for guarded small instances.
 //   - BranchAndBound provides exact search when the search completes.
 //   - Christofides provides a symmetric metric approximation pipeline.
-//   - BlossomMatch provides exact minimum-weight perfect matching for Christofides.
-//   - GreedyMatch provides an explicit weaker matching mode with no formal ratio.
+//   - BlossomMatch delegates exact MWPM to the independent match.Perfect package.
+//   - GreedyMatch delegates an explicit weaker matching policy with no formal ratio.
 //   - TwoOptOnly and ThreeOptOnly provide deterministic local-search regimes.
 //   - Optional metric closure resolves +Inf missing edges before final kernels.
 //
@@ -139,6 +139,28 @@
 // current tour inside their implemented neighborhoods, but they do not certify
 // global optimality.
 //
+// In the asymmetric 2-opt regime, an accepted move reverses a contiguous tour
+// segment AND accounts for every internally reversed directed arc. Reconnecting
+// the two boundary arcs without that reversal would split a single directed
+// Hamiltonian cycle into two disjoint cycles. Directed 3-opt remains a more
+// restricted, orientation-preserving neighborhood and is not full ATSP 3-opt.
+//
+// The final cost of an improved tour is recomputed from the published tour
+// rather than inferred from accumulated floating-point move deltas. An
+// asymmetric result is not reversed for symmetric-style canonical appearance.
+//
+// # Independent matching boundary
+//
+// The package github.com/lvlath/go/match independently owns the weighted
+// Blossom numerical engine, Greedy pivot policy, ordered subset mapping and
+// complete detached pairing result. tsp imports match, never vice versa.
+// applyChristofidesMatching translates tsp.MatchingAlgo to match.Algorithm;
+// the adapter validates all returned pairs before appending reciprocal
+// undirected edges to the Christofides-local Eulerian adjacency. There is no
+// second Blossom implementation in tsp and no hidden Greedy fallback.
+// DefaultOptions currently selects BlossomMatch; choosing GreedyMatch is an
+// explicit weakening of the approximation guarantee.
+
 // ATSP 3-opt mode is restricted 3-opt*: it preserves segment orientation and
 // does not implement full arbitrary directed 3-opt reconnection.
 //

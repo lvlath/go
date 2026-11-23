@@ -67,7 +67,7 @@ func (m benchmarkDenseMatrix) Cols() int {
 //   - Time O(1), Space O(1).
 func (m benchmarkDenseMatrix) At(row int, col int) (float64, error) {
 	if row < 0 || row >= m.Rows() || col < 0 || col >= m.Cols() {
-		return 0, matrix.ErrIndexOutOfBounds
+		return 0, matrix.ErrOutOfRange
 	}
 
 	return m.data[row][col], nil
@@ -79,7 +79,7 @@ func (m benchmarkDenseMatrix) At(row int, col int) (float64, error) {
 //   - Time O(1), Space O(1).
 func (m benchmarkDenseMatrix) Set(row int, col int, value float64) error {
 	if row < 0 || row >= m.Rows() || col < 0 || col >= m.Cols() {
-		return matrix.ErrIndexOutOfBounds
+		return matrix.ErrOutOfRange
 	}
 
 	m.data[row][col] = value

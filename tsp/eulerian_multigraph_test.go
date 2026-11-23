@@ -1,128 +1,120 @@
-package tsp
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2025-2026 katalvlaran
+
+// Package tsp_test protects public Eulerian handling of parallel edges and matching.
+// Tests build multigraphs through real public APIs instead of private topology hooks.
+package tsp_test
 
 import (
 	"errors"
 	"testing"
+
+	"github.com/lvlath/go/match"
+	"github.com/lvlath/go/tsp"
 )
 
-func TestCanonicalizeUndirectedMultigraphPreservesParallelEulerianMultigraph(t *testing.T) {
-	raw := [][]int{
+// TestEulerianParallelEdgesPreserveMultiplicity checks a reciprocal raw multigraph.
+// Its six undirected edges must be traversed once each without deduplication.
+func TestEulerianParallelEdgesPreserveMultiplicity(t *testing.T) {
+	adjacency := [][]int{
 		{2, 1, 2, 1},
 		{2, 0, 2, 0},
 		{1, 0, 1, 0},
 	}
-
-	got, err := canonicalizeUndirectedMultigraph(raw)
+	walk, err := tsp.EulerianCircuit(adjacency, 0)
 	if err != nil {
-		t.Fatalf("canonicalizeUndirectedMultigraph: %v", err)
+		t.Fatal(err)
 	}
-
-	for vertex := range got {
-		if len(got[vertex]) != 4 {
-			t.Fatalf("degree[%d] got %d want 4 adj=%v", vertex, len(got[vertex]), got)
-		}
-		if (len(got[vertex]) & 1) != 0 {
-			t.Fatalf("degree[%d]=%d must be even adj=%v", vertex, len(got[vertex]), got)
-		}
-	}
-
-	walk, err := EulerianCircuit(got, 0)
-	if err != nil {
-		t.Fatalf("EulerianCircuit: %v adj=%v", err, got)
-	}
-	if len(walk) == 0 || walk[0] != 0 || walk[len(walk)-1] != 0 {
-		t.Fatalf("bad closed walk: %v", walk)
+	if err := verifyEulerianWalkUsesEveryEdgeForTest(adjacency, walk, 0); err != nil {
+		t.Fatalf("multigraph edge multiplicities were lost: %v", err)
 	}
 }
 
-func TestCanonicalizeUndirectedMultigraphRejectsOddDegreeAfterReciprocalRebuild(t *testing.T) {
-	raw := [][]int{
+// TestEulerianRejectsNonReciprocalEvenDegrees rejects malformed half-edge topology.
+// Every vertex has even degree, but opposite directed multiplicities disagree.
+func TestEulerianRejectsNonReciprocalEvenDegrees(t *testing.T) {
+	adjacency := [][]int{
 		{1, 1, 2, 2},
 		{2, 2},
 		{0, 0},
 	}
-
-	_, err := canonicalizeUndirectedMultigraph(raw)
-	if !errors.Is(err, ErrNonEulerian) {
-		t.Fatalf("err got %v want %v", err, ErrNonEulerian)
+	walk, err := tsp.EulerianCircuit(adjacency, 0)
+	if walk != nil || !errors.Is(err, tsp.ErrNonEulerian) {
+		t.Fatalf("nonreciprocal multigraph: walk=%v err=%v", walk, err)
 	}
 }
 
-func TestChristofidesKernelMatchingProducesEulerianMultigraphSeedN16Seed2(t *testing.T) {
-	const n = 16
-	const seed int64 = 2
-
-	dist := seededMetricCompleteForTest(n, seed)
-
-	opts := DefaultOptions()
-	opts.Algo = Christofides
-	opts.Symmetric = true
-	opts.MatchingAlgo = BlossomMatch
-	opts.EnableLocalSearch = false
-	opts.StartVertex = int(seed % n)
-
-	_, mstAdjacency, err := MinimumSpanningTree(dist)
+// TestChristofidesMatchingProducesEulerianMultigraphSeedN16Seed2 protects parity.
+// It composes public Prim MST and match.Perfect, then checks every edge of the Euler tour.
+func TestChristofidesMatchingProducesEulerianMultigraphSeedN16Seed2(t *testing.T) {
+	const n, seed = 16, int64(2)
+	distance := seededMetricCompleteForTest(t, n, seed)
+	_, adjacency, err := tsp.MinimumSpanningTree(distance)
 	if err != nil {
-		t.Fatalf("MinimumSpanningTree: %v", err)
+		t.Fatalf("MST: %v", err)
 	}
-
-	odd := collectOddDegreeVertices(mstAdjacency)
-	if len(odd)&1 == 1 {
-		t.Fatalf("MST odd set has odd cardinality: odd=%v degrees=%v", odd, degreesOfAdjForDebug(mstAdjacency))
-	}
-
-	if _, err = applyChristofidesMatching(odd, dist, mstAdjacency, opts); err != nil {
-		t.Fatalf("applyChristofidesMatching: %v odd=%v", err, odd)
-	}
-
-	eulerianAdjacency, err := canonicalizeUndirectedMultigraph(mstAdjacency)
-	if err != nil {
-		t.Fatalf("canonicalizeUndirectedMultigraph: %v odd=%v rawDegrees=%v adj=%v",
-			err, odd, degreesOfAdjForDebug(mstAdjacency), mstAdjacency)
-	}
-
-	for vertex := range eulerianAdjacency {
-		if len(eulerianAdjacency[vertex])&1 == 1 {
-			t.Fatalf("canonical degree[%d]=%d odd=%v rawDegrees=%v canonicalDegrees=%v",
-				vertex,
-				len(eulerianAdjacency[vertex]),
-				odd,
-				degreesOfAdjForDebug(mstAdjacency),
-				degreesOfAdjForDebug(eulerianAdjacency),
-			)
+	odd := make([]int, 0, n)
+	for vertex, neighbors := range adjacency {
+		if len(neighbors)&1 != 0 {
+			odd = append(odd, vertex)
 		}
 	}
-
-	if _, err = EulerianCircuit(eulerianAdjacency, opts.StartVertex); err != nil {
-		t.Fatalf("EulerianCircuit: %v odd=%v canonicalDegrees=%v canonicalAdj=%v",
-			err, odd, degreesOfAdjForDebug(eulerianAdjacency), eulerianAdjacency)
+	if len(odd)&1 != 0 {
+		t.Fatalf("odd-degree set has odd size: %v", odd)
+	}
+	result, err := match.Perfect(distance, odd)
+	if err != nil {
+		t.Fatalf("Blossom on MST odd vertices: %v", err)
+	}
+	if result == nil {
+		t.Fatal("solver returned a nil result without an error")
+	}
+	if len(result.Pairs) != len(odd)/2 {
+		t.Fatalf("incomplete matching: %+v", result)
+	}
+	// Each matched endpoint's parity changes once; the complete graph becomes Eulerian.
+	for _, edge := range result.Pairs {
+		adjacency[edge.U] = append(adjacency[edge.U], edge.V)
+		adjacency[edge.V] = append(adjacency[edge.V], edge.U)
+	}
+	for vertex, neighbors := range adjacency {
+		if len(neighbors)&1 != 0 {
+			t.Fatalf("odd degree after matching: v=%d neighbors=%v", vertex, neighbors)
+		}
+	}
+	walk, err := tsp.EulerianCircuit(adjacency, int(seed%n))
+	if err != nil {
+		t.Fatalf("postmatching Eulerian circuit: %v", err)
+	}
+	if err := verifyEulerianWalkUsesEveryEdgeForTest(adjacency, walk, int(seed%n)); err != nil {
+		t.Fatalf("Eulerian graph traversal: %v", err)
 	}
 }
 
-func TestChristofidesBlossomMetricFuzzSeedN16Seed2(t *testing.T) {
-	const n = 16
-	const seed int64 = 2
-
-	dist := seededMetricCompleteForTest(n, seed)
-
-	opts := DefaultOptions()
-	opts.Algo = Christofides
+// TestChristofidesMetricRegressionSeedN16Seed2 checks full public TSP integration.
+// It independently validates route cardinality, closure and exact starting position.
+func TestChristofidesMetricRegressionSeedN16Seed2(t *testing.T) {
+	const n, seed = 16, int64(2)
+	distance := seededMetricCompleteForTest(t, n, seed)
+	opts := tsp.DefaultOptions()
+	opts.Algo = tsp.Christofides
 	opts.Symmetric = true
-	opts.MatchingAlgo = BlossomMatch
+	opts.MatchingAlgo = tsp.BlossomMatch
 	opts.EnableLocalSearch = false
 	opts.StartVertex = int(seed % n)
-
-	result, err := ChristofidesSolve(dist, opts)
+	result, err := tsp.ChristofidesSolve(distance, opts)
 	if err != nil {
-		t.Fatalf("ChristofidesSolve: %v", err)
+		t.Fatalf("Christofides: %v", err)
 	}
-	if err = validateResultForTest(result, n, opts.StartVertex, Christofides); err != nil {
-		t.Fatalf("result: %v result=%+v", err, result)
+	if err := validateResultForTest(result, n, opts.StartVertex, tsp.Christofides); err != nil {
+		t.Fatalf("invalid route: %v", err)
 	}
 }
 
-func TestEulerianCircuitPairsParallelEdgesByOppositeDirection(t *testing.T) {
-	adj := [][]int{
+// TestEulerianParallelEdgePairingAtArbitraryStart guards a larger multigraph.
+// Every pair of opposite half-edges must be consumed even with parallel edges.
+func TestEulerianParallelEdgePairingAtArbitraryStart(t *testing.T) {
+	adjacency := [][]int{
 		{1, 4},
 		{0, 4},
 		{7, 9},
@@ -140,33 +132,11 @@ func TestEulerianCircuitPairsParallelEdgesByOppositeDirection(t *testing.T) {
 		{10, 11, 13, 15},
 		{13, 14},
 	}
-
-	walk, err := EulerianCircuit(adj, 2)
+	walk, err := tsp.EulerianCircuit(adjacency, 2)
 	if err != nil {
-		t.Fatalf("EulerianCircuit: %v", err)
+		t.Fatal(err)
 	}
-
-	halfEdges := 0
-	for vertex := range adj {
-		if len(adj[vertex])&1 == 1 {
-			t.Fatalf("degree[%d]=%d must be even", vertex, len(adj[vertex]))
-		}
-		halfEdges += len(adj[vertex])
+	if err := verifyEulerianWalkUsesEveryEdgeForTest(adjacency, walk, 2); err != nil {
+		t.Fatalf("parallel-edge pairing: %v", err)
 	}
-
-	if len(walk) != halfEdges/2+1 {
-		t.Fatalf("walk length got %d want %d walk=%v", len(walk), halfEdges/2+1, walk)
-	}
-	if walk[0] != 2 || walk[len(walk)-1] != 2 {
-		t.Fatalf("walk must start and end at 2: %v", walk)
-	}
-}
-
-func degreesOfAdjForDebug(adj [][]int) []int {
-	degrees := make([]int, len(adj))
-	for vertex := range adj {
-		degrees[vertex] = len(adj[vertex])
-	}
-
-	return degrees
 }

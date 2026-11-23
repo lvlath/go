@@ -86,6 +86,7 @@ It is built for people who need algorithmic tools they can explain in a code rev
 * `gjrgarch` provides immutable asymmetric return-variance models, strictly causal filtering, expected-variance forecasts and constrained Gaussian QMLE;
 * `arima` fits a fixed nonseasonal conditional Gaussian ARIMA law, validates strict Schur roots and predicts anchored levels with marginal innovation variances;
 * `lstm` evaluates one immutable PyTorch-ordered IFGO layer over checked batch-first finite tensors, with zero-padded masks, detached streaming states and exact overflow classification;
+* `match` exposes exact-or-error weighted Blossom and explicit last-pivot Greedy over ordered matrix subsets, without importing TSP or mutating adjacency;
 * `flow`, `mst`, `tsp`, `dtw`, `gridgraph`, and `builder` packages extend the same discipline into optimization, alignment, fixtures, and examples.
 
 ---
@@ -279,7 +280,8 @@ lvlath/
 ├── lstm/                  # immutable IFGO forward inference, masked batches, stateful chunks
 ├── gridgraph/             # 2D lattice graph generation
 ├── matrix/                # dense graph algebra, stable statistics, pivoted factors, solves and economy SVD
-├── tsp/                   # tour construction, local search, exact small-instance routing
+├── match/                 # independent minimum-weight perfect matching: Blossom and Greedy
+├── tsp/                   # tours, Christofides adapter over match, local search, exact routing
 ├── builder/               # deterministic fixtures and graph generators
 │
 ├── docs/
@@ -317,6 +319,7 @@ lvlath/
 │   ├── TFSAX.md           # research gate, exact/heuristic boundaries, provenance, optional JSON artifacts
 │   ├── GRID_GRAPH.md
 │   ├── MATRICES.md     # canonical complete matrix reference
+│   ├── MATCH.md
 │   ├── TSP.md
 │   ├── lvlath_UES.md
 │   └── FAQ_&_TIPS.md
@@ -2562,6 +2565,7 @@ for masked streaming from a frozen model.
 | Stable OLS regression          | [`docs/OLS.md`](docs/OLS.md)                     | Pivoted Householder QR, explicit intercept, physical coefficients, SSE, frozen Model and holdout pitfalls.                       |
 | Grid spec                      | [`docs/GRID_GRAPH.md`](docs/GRID_GRAPH.md)       | Grid/lattice graph modeling and pathfinding-oriented construction.                                                               |
 | Matrix spec                    | [`docs/MATRICES.md`](docs/MATRICES.md)           | Canonical dense/graph/statistics/factorization/economy-SVD reference; this is the authoritative matrix guide.                    |
+| Matching spec                  | [`docs/MATCH.md`](docs/MATCH.md)                 | Exact-or-error weighted Blossom, Greedy, original-index subset mapping, cost and ownership laws.                                 |
 | TSP spec                       | [`docs/TSP.md`](docs/TSP.md)                     | Tour optimization, exact vs approximate methods, metric assumptions.                                                             |
 | Engineering standard           | [`docs/lvlath_UES.md`](docs/lvlath_UES.md)       | Repository engineering standard and quality expectations.                                                                        |
 | FAQ                            | [`docs/FAQ_&_TIPS.md`](docs/FAQ_%26_TIPS.md)     | Troubleshooting, common pitfalls, usage tips.                                                                                    |
@@ -3125,6 +3129,7 @@ incidence matrix:       columns are edge identities, not vertex-pair weights
 | "How do I solve a reusable SPD coupling system?"                                               | `matrix.FactorCholesky`                                            | Symmetry/SPD validation, measured condition and detached solutions.                                   |
 | "How do I compute topology features?"                                                          | `matrix.NewAdjacencyMatrix`, `NewIncidenceMatrix`, `DegreeVector`  | Matrix artifacts preserve topology policy.                                                            |
 | "How do I compute all-pairs route distances?"                                                  | `matrix.BuildMetricClosure`                                        | Floyd-Warshall distance artifact with `+Inf` semantics.                                               |
+| "How do I pair an even subset of sensor, taxi or relay endpoints?"                             | `match.Perfect` / `match.GreedyPerfect`                            | Blossom solves exact MWPM; Greedy is a deliberate weaker pivot heuristic.                             |
 | "How do I solve a complete inspection/delivery tour?"                                          | `tsp.SolveMatrix`                                                  | TSP kernels consume matrix cost models.                                                               |
 | "How do I solve TSP from graph topology?"                                                      | `tsp.SolveGraph`                                                   | Graph is adapted at the facade boundary, then solved as a matrix problem.                             |
 | "How do I get exact TSP for a small instance?"                                                 | `tsp.ExactHeldKarp` / `tsp.BranchAndBound` policy                  | Exactness is explicit and guarded.                                                                    |
@@ -3138,6 +3143,49 @@ incidence matrix:       columns are edge identities, not vertex-pair weights
 | "How do I resume one LSTM inference across ordered chunks?"                                    | `Model.InferFinal` / `Model.InferChunk`                            | Reuse both Hidden/Cell, verify ModelID and recompute per-chunk lengths.                               |
 | "How do I model sudden positive or negative price jumps on that GBM grid?"                     | `jumpdiffusion.Simulate` / `SimulateSeeded`                        | Compensated Merton log-jump model, bounded discrete Poisson counts and explicit model limitations.    |
 | "How do I build repeatable graphs?"                                                            | `builder` / `gridgraph`                                            | Generated fixtures should be deterministic.                                                           |
+
+### Minimum-weight perfect matching: `match` is not `tsp`
+
+`match.Perfect` solves complete undirected minimum-weight pairing on an **even
+ordered subset** of original `matrix.Matrix` indices. The result contains
+canonical original-index `Pairs`, raw checked `Cost`, algorithm identity and
+`Optimal` metadata. It does **not** plan a route or change graph topology.
+The independent Blossom numerical engine is exact-or-error; there is no
+fallback to Greedy. `match.GreedyPerfect` uses the existing deterministic
+last-pivot/swap-delete heuristic and cannot claim global optimality.
+
+```go
+// Complete symmetric cost model with three possible matching costs: 5, 4, 101.
+dist, err := matrix.NewDense(4, 4)
+if err != nil {
+    return err
+}
+if err := dist.Fill([]float64{
+    0, 2, 2, 1,
+    2, 0, 100, 2,
+    2, 100, 0, 3,
+    1, 2, 3, 0,
+}); err != nil {
+    return err
+}
+exact, err := match.Perfect(dist, []int{0, 1, 2, 3})
+if err != nil {
+    return err
+}
+fmt.Println(exact.Pairs, exact.Cost) // [{0 2} {1 3}] 4
+```
+
+This fragment belongs inside a function returning `error`; add the imports
+`fmt`, `github.com/lvlath/go/matrix` and `github.com/lvlath/go/match`.
+For a complete executable 20-task transport handoff, 12-node radio pairing
+and MST/odd-degree/Eulerian integration, run
+`go test ./match -run '^ExamplePerfect_' -count=1` and see
+[`docs/MATCH.md`](docs/MATCH.md) and [`match/example_test.go`](match/example_test.go).
+The suite explicitly demonstrates Greedy cost **101** on the four-node trap
+versus exact cost **4**. The TSP Christofides adapter validates the detached
+match and owns all multigraph mutation: `tsp -> match -> matrix`, never
+`match -> tsp`. The 1.5 Christofides theorem additionally requires a
+symmetric **metric** TSP matrix; matching alone does not establish metricity.
 
 ### By failure mode you need to avoid
 

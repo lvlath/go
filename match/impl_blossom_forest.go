@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2025-2026 katalvlaran
 
-// Package tsp manages the alternating forest for dense weighted Blossom search.
+// Package match manages the alternating forest for dense weighted Blossom search.
 // The forest discovers tight-edge events: grow, shrink, augment, and expand.
 // It is rebuilt for each augmentation attempt from the current committed matching.
 //
@@ -12,16 +12,16 @@
 //   - Route events to grow, shrink, augment, or expand handlers.
 //
 // Boundaries:
-//   - Slack and dual updates live in blossom_dual.go.
-//   - Path realization and lifting live in blossom_path.go.
-//   - Matching mutation lives in blossom_augment.go.
-//   - Cycle contraction details live in blossom_contract.go.
+//   - Slack and dual updates live in impl_blossom_dual.go.
+//   - Path realization and lifting live in impl_blossom_path.go.
+//   - Matching mutation lives in impl_blossom_augment.go.
+//   - Cycle contraction details live in impl_blossom_contract.go.
 //
 // AI-Hints:
 //   - Do not mutate mate[] from forest scanning.
 //   - Do not classify same-tree outer/outer edges as augmenting paths.
 //   - Do not reuse forest labels across augmentation attempts.
-package tsp
+package match
 
 import "fmt"
 
@@ -85,8 +85,8 @@ const (
 // AI-Hints:
 //   - Do not remove aVertex/bVertex.
 //   - Do not apply events directly inside incident-edge loops.
-//   - Do not store original TSP matrix vertices in a/b.
-//   - Do not store original TSP graph IDs here; these are local matchingProblem vertices.
+//   - Do not store original matrix vertices in a/b.
+//   - Do not store original matrix indices here; these are local matchingProblem vertices.
 type blossomEvent struct {
 	// kind selects which structural mutation must be applied.
 	kind blossomEventKind
@@ -266,60 +266,6 @@ func (e *blossomEngine) findAndApplyAugmentation() error {
 	return fmt.Errorf("search exceeded step limit=%d mate=%v mateEdge=%v label=%v parent=%v root=%v dual=%v base=%v: %w",
 		maxSteps, e.mate, e.mateEdge, e.label, e.parent, e.treeRoot, e.dual, e.base, ErrInvalidMatching)
 }
-
-/*func (e *blossomEngine) findAndApplyAugmentation() error {
-	e.resetForest()
-
-	for vertex := 0; vertex < e.problem.n; vertex++ {
-		if e.mate[vertex] != noVertex {
-			continue
-		}
-
-		node := e.inBlossom[vertex]
-		e.assignOuterRoot(node)
-	}
-
-	//for {
-
-	// temporary solution
-	maxSteps := e.augmentationStepLimit()
-	for step := 0; step < maxSteps; step++ {
-		event, ok, err := e.scanTightEdges()
-		if err != nil {
-			return err
-		}
-		if ok {
-			done, applyErr := e.applyBlossomEvent(event)
-			if applyErr != nil {
-				return applyErr
-			}
-			if done {
-				return nil
-			}
-
-			continue
-		}
-
-		delta, err := e.nextDelta()
-		if err != nil {
-			return err
-		}
-
-		if err = e.applyDelta(delta); err != nil {
-			return err
-		}
-
-		if delta.kind == deltaExpandInnerBlossom {
-			if err = e.expand(delta.node); err != nil {
-				return err
-			}
-		}
-
-		e.rewindForestScan()
-	}
-	// temporary solution
-	return ErrInvalidMatching
-}*/
 
 // resetForest clears the alternating forest while preserving matching and contraction state.
 // Each augmentation search starts from the current committed matching, then builds a fresh
@@ -594,7 +540,7 @@ func (e *blossomEngine) nodeContainsVertex(node int, vertex int) bool {
 //
 // AI-Hints:
 //   - Do not guess orientation from edge.u<edge.v.
-//   - Do not use this helper with original TSP matrix vertex IDs.
+//   - Do not use this helper with original matrix vertex IDs.
 func (e *blossomEngine) orientEdgeForNodes(edgeID int, a int, b int) (int, int, error) {
 	if edgeID < 0 || edgeID >= len(e.edges) {
 		return noVertex, noVertex, ErrInvalidMatching
@@ -866,44 +812,6 @@ func (e *blossomEngine) applyBlossomEvent(event blossomEvent) (bool, error) {
 		return false, fmt.Errorf("unknown event kind %d event=%+v: %w", event.kind, event, ErrInvalidMatching)
 	}
 }
-
-/*func (e *blossomEngine) applyBlossomEvent(event blossomEvent) (bool, error) {
-	switch event.kind {
-	case eventGrow:
-		if err := e.grow(event); err != nil {
-			return false, err
-		}
-
-		return false, nil
-
-	case eventShrink:
-		if err := e.shrink(event); err != nil {
-			return false, err
-		}
-
-		return false, nil
-
-	case eventAugment:
-		if err := e.augment(event); err != nil {
-			return false, err
-		}
-
-		return true, nil
-
-	case eventExpand:
-		if err := e.expand(event.a); err != nil {
-			return false, err
-		}
-
-		return false, nil
-
-	case eventNone:
-		return false, ErrInvalidMatching
-
-	default:
-		return false, ErrInvalidMatching
-	}
-}*/
 
 // grow extends an alternating tree through a tight edge to an unlabeled top-level node.
 // The entered original vertex becomes the inner side of the grow step; its committed

@@ -21,7 +21,7 @@
     - Exact Held-Karp dynamic programming under explicit size guards.
     - Exact Branch-and-Bound when search completes.
     - Christofides for symmetric complete metric TSP.
-    - Exact Blossom MWPM and explicit Greedy matching policies inside Christofides.
+    - Independent `match` Blossom MWPM and explicit Greedy matching policies consumed by Christofides.
     - Symmetric and directed local-search regimes.
     - Eulerian multigraph construction, parallel-edge-safe Hierholzer traversal,
       shortcutting, tour validation, and result publication.
@@ -203,24 +203,28 @@ $$ \Delta = c(a,c)+c(b,d)-c(a,b)-c(c,d) $$
 A move is accepted only when:
 $$ \Delta < -\varepsilon $$
 
-For directed 2-opt*, the move is orientation-preserving: it rewires tails rather than reversing a segment. The directed mode must not be described as full arbitrary ATSP 3-opt.
+For directed 2-opt, the kernel reverses the middle segment to preserve one Hamiltonian cycle. Unlike symmetric 2-opt, the directed move delta includes the changed direction of **every internal segment arc**:
+
+$$ \Delta = c(a,c)+c(b,d)-c(a,b)-c(c,d) + \sum_{t=i}^{k-1}\big[c(\pi_{t+1},\pi_t)-c(\pi_t,\pi_{t+1})\big] $$
+
+Here `a=T[i-1]`, `b=T[i]`, `c=T[k]`, and `d=T[k+1]`. Pure tail swapping of two arcs in **one directed cycle** without reversing the middle segment would create two disconnected subtours. The directed 3-opt neighborhood is separately restricted and does not implement arbitrary ATSP 3-opt.
 
 ### Complexity summary
 
-| Phase                           | Time                                         | Space                  | Publication meaning                                |
-|:--------------------------------|:---------------------------------------------|:-----------------------|:---------------------------------------------------|
-| Option validation               | `O(1)`                                       | `O(1)`                 | Rejects invalid policy before kernel trust.        |
-| Matrix validation               | `O(n²)`                                      | `O(1)` to `O(n²)`      | Enforces numeric and symmetry/completeness policy. |
-| Metric closure                  | `O(n³)`                                      | `O(n²)`                | Resolves `+Inf` before final kernels.              |
-| Held-Karp                       | `O(n²2ⁿ)`                                    | `O(n2ⁿ)`               | Exact optimal result on completion.                |
-| Branch-and-Bound                | exponential worst case                       | `O(n²)+O(n)`           | Exact only when completed.                         |
-| One-tree bound iteration        | `O(n²)`                                      | `O(n²)`                | Lower-bound computation, not a route.              |
-| Christofides MST                | `O(n²)` dense regime                         | adjacency buffers      | Approximation pipeline stage.                      |
-| Blossom MWPM                    | polynomial dense exact matching              | matching-local buffers | Required for 1.5 ratio publication.                |
-| Eulerian circuit                | `O(V+E)`                                     | `O(V+E)`               | Consumes every multigraph edge exactly once.       |
-| Shortcut and result publication | `O(E+n)`                                     | `O(n)`                 | Produces detached Hamiltonian tour.                |
-| 2-opt                           | `O(iterations*n²)`                           | `O(n)`                 | Heuristic, no global certificate.                  |
-| 3-opt                           | `O(iterations*n³)` in symmetric scan regimes | `O(n)`                 | Heuristic, no global certificate.                  |
+| Phase                           | Time                                                                                | Space                          | Publication meaning                                 |
+|:--------------------------------|:------------------------------------------------------------------------------------|:-------------------------------|:----------------------------------------------------|
+| Option validation               | `O(1)`                                                                              | `O(1)`                         | Rejects invalid policy before kernel trust.         |
+| Matrix validation               | `O(n²)`                                                                             | `O(1)` to `O(n²)`              | Enforces numeric and symmetry/completeness policy.  |
+| Metric closure                  | `O(n³)`                                                                             | `O(n²)`                        | Resolves `+Inf` before final kernels.               |
+| Held-Karp                       | `O(n²2ⁿ)`                                                                           | `O(n2ⁿ)`                       | Exact optimal result on completion.                 |
+| Branch-and-Bound                | exponential worst case                                                              | `O(n²)+O(n)`                   | Exact only when completed.                          |
+| One-tree bound iteration        | `O(n²)`                                                                             | `O(n²)`                        | Lower-bound computation, not a route.               |
+| Christofides MST                | `O(n²)` dense regime                                                                | adjacency buffers              | Approximation pipeline stage.                       |
+| Blossom MWPM                    | exact dense search; global bound not certified for this implementation              | `O(k²)` dense matching storage | Required for 1.5 ratio publication on metric input. |
+| Eulerian circuit                | `O(V+E)`                                                                            | `O(V+E)`                       | Consumes every multigraph edge exactly once.        |
+| Shortcut and result publication | `O(E+n)`                                                                            | `O(n)`                         | Produces detached Hamiltonian tour.                 |
+| 2-opt                           | symmetric `O(iterations*n²)`; directed `O(iterations*n³)` worst-case candidate scan | `O(n)`                         | Heuristic, no global certificate.                   |
+| 3-opt                           | `O(iterations*n³)` in symmetric scan regimes                                        | `O(n)`                         | Heuristic, no global certificate.                   |
 
 ---
 
@@ -363,7 +367,7 @@ Options describe solver policy. They must not mutate topology and must not silen
 | `Seed`                | Controls deterministic randomized components.                            |
 | `MaxExactN`           | Bounds exact Held-Karp selection when `Algo==Auto`.                      |
 
-`DefaultOptions()` selects Christofides, symmetric input, Greedy matching, no metric closure, and local search enabled. `BlossomMatch` is available as an explicit caller-selected policy when the caller requires exact MWPM semantics and formal Christofides ratio publication.
+`DefaultOptions()` selects Christofides, symmetric input, **BlossomMatch**, no metric closure and local search enabled. GreedyMatch is an explicitly requested weaker mode. Note that selecting BlossomMatch does not prove the input is metric; establishing triangle inequality remains the caller's responsibility.
 
 ### Numeric policy
 
@@ -440,7 +444,7 @@ FUNCTION HeldKarp(dist, opts):
   close best tour through start
   reconstruct parent path
   rotate to StartVertex
-  canonicalize orientation
+  canonicalize orientation only when symmetric
   validate and publish Exact=true, Optimal=true
 ```
 
@@ -509,7 +513,8 @@ FUNCTION Christofides(dist, opts):
 
   eulerian = EulerianCircuit(H, StartVertex)
   tour = ShortcutEulerianToHamiltonian(eulerian, n, StartVertex)
-  CanonicalizeOrientationInPlace(tour)
+  if Symmetric:
+    CanonicalizeOrientationInPlace(tour)
   cost = tourCost(dist, tour)
 
   publish detached Result
@@ -581,130 +586,65 @@ FUNCTION EulerianCircuit(adj, start):
   return circuit
 ```
 
-### Directed 2-opt* boundary
+### Directed 2-opt reversal boundary
 
 ```text
-FUNCTION DirectedTwoOptStar(tour):
-  build successor representation
-  evaluate directed tail-swap candidates
-  accept only delta < -Eps
-  rewire successors without reversing segment orientation
-  reconstruct closed tour from StartVertex
-  publish heuristic result without exact or optimal certificate
+FUNCTION DirectedTwoOptReversal(tour, i, k):
+  evaluate delta = changed boundary arcs + changed internal directions
+  accept only when delta < -Eps
+  reverse tour[i:k+1] to preserve one connected Hamiltonian cycle
+  re-evaluate the final published tour cost from source weights
+  preserve directed tour orientation (never mirror it for canonical appearance)
+  publish Exact=false, Optimal=false
 ```
+
+Directed 2-opt candidate evaluation includes `O(k-i)` arc differences and
+therefore up to `O(n³)` work per complete neighborhood scan. The internal
+reversal is a valid directed Hamiltonian cycle; **a two-arc tail swap without
+reversal would yield two subtours in a single-cycle TSP**.
 
 ---
 
 ## 11.7. ASCII Diagrams
 
-### 11.7.1. Christofides route pressure on a cold-chain dispatch matrix
+### 11.7.1. Cold-chain distribution: a verified six-stop metric fixture
 
-This diagram explains how the cold-chain example works. The full solver receives a complete 10x10 matrix. The diagram shows the final deterministic route reported by the example, not every matrix edge.
+The current executable `tsp/example_test.go` uses a **6 × 6** symmetric road
+travel-time matrix. All 216 ordered triangle inequalities have been checked
+for this fixed fixture; the approximation hypothesis is met rather than
+merely asserted. The route starts and ends at the regional bio-hub.
 
 ```text
-╔══════════════════════════════════════════════════════════════════════════════╗
-║ BIOPHARMACEUTICAL COLD-CHAIN ROUTE                                           ║
-║ Cost unit: minutes, thermal envelope: 240 minutes                            ║
-╠════╦════════════════════════════╦════════════════════════════════════════════╣
-║ ID ║ Stop                       ║ Operational meaning                        ║
-╠════╬════════════════════════════╬════════════════════════════════════════════╣
-║ 00 ║ Regional Bio-Hub           ║ start and closure                          ║
-║ 02 ║ Children's Clinic          ║ pediatric vaccine delivery                 ║
-║ 03 ║ Oncology Center            ║ immunocompromised-patient supply           ║
-║ 05 ║ Infection Ward             ║ high-urgency isolation ward                ║
-║ 07 ║ Airport Medical Cargo      ║ temperature-controlled air cargo node      ║
-║ 09 ║ South Mobile Unit          ║ mobile emergency storage                   ║
-║ 08 ║ North Mobile Unit          ║ mobile emergency storage                   ║
-║ 04 ║ Emergency Depot            ║ contingency resupply stop                  ║
-║ 01 ║ University Hospital        ║ major receiving hospital                   ║
-║ 06 ║ Community Pavilion         ║ final community distribution point         ║
-╚════╩════════════════════════════╩════════════════════════════════════════════╝
+Regional Bio-Hub (0)
+     | 34 min
+     v
+Metropolitan Infection Ward (4)
+     | 16 min
+     v
+Oncology Treatment Center (2)
+     | 20 min
+     v
+Emergency Red Cross Depot (3)
+     | 12 min
+     v
+Children's Clinical Hospital (1)
+     | 14 min
+     v
+Community Health Pavilion (5)
+     | 18 min
+     v
+Regional Bio-Hub (0)
 
-Published route from the documented matrix:
-
-  ┌──────────┐  28  ┌──────────┐  29  ┌──────────┐  17  ┌──────────┐  27  ┌──────────┐
-  │ 00       ├──────┤ 02       ├──────┤ 03       ├──────┤ 05       ├──────┤ 07       │
-  │ Bio-Hub  │      │ Children │      │ Oncology │      │ Infection│      │ Airport  │
-  └────┬─────┘      └──────────┘      └──────────┘      └──────────┘      │ Cargo    │
-       │18                                                                └────┬─────┘
-       │                                                                       │19
-       │                                                                       │
-  ┌────┴─────┐      ┌──────────┐      ┌──────────┐      ┌──────────┐      ┌────┴─────┐
-  │ 06       ├──────┤ 01       ├──────┤ 04       ├──────┤ 08       ├──────┤ 09       │
-  │ Community│  14  │ Univ.    │  16  │ Emergency│  15  │ North    │  17  │ South    │
-  │ Pavilion │      │ Hospital │      │ Depot    │      │ Mobile   │      │ Mobile   │
-  └──────────┘      └──────────┘      └──────────┘      └──────────┘      └──────────┘
-
-Traversal order (the exact manifest published by Example 11.8.1):
-
-  00 -> 02 -> 03 -> 05 -> 07 -> 09 -> 08 -> 04 -> 01 -> 06 -> 00
-
-Because the margin is positive, the documented route stays inside the configured
-thermal envelope and the example publishes:
-
-- `closed=true`
-- `minutes=200.0`
-- `thermal-margin=40.0`
-- `status=within-envelope`
-
-Approximation interpretation:
-
-- The example prints `ratio=1.5`.
-- This is the **published Christofides worst-case guarantee** for metric symmetric TSP.
-- It is **not** a measured `tour_cost / optimal_cost` quotient for this concrete instance.
-- The guarantee is valid here because the example uses `Christofides` on a symmetric complete metric-style matrix together with `MatchingAlgo = BlossomMatch`.
-
-Christofides publication pipeline for this same example(11.8.1):
-
-┌────────────────────────────────────────────────────────────────────────────┐
-│ Step 1. Input matrix                                                       │
-│ - 10x10                                                                    │
-│ - symmetric                                                                │
-│ - finite                                                                   │
-│ - start vertex = 00                                                        │
-└─────────────────────────────────────┬──────────────────────────────────────┘
-                                      ▼
-┌────────────────────────────────────────────────────────────────────────────┐
-│ Step 2. Minimum spanning tree (MST)                                        │
-│ - build a low-cost spanning skeleton over all 10 stops                     │
-│ - the MST is not yet a tour                                                │
-│ - some vertices have odd degree                                            │
-└─────────────────────────────────────┬──────────────────────────────────────┘
-                                      ▼
-┌────────────────────────────────────────────────────────────────────────────┐
-│ Step 3. Odd-degree correction                                              │
-│ - collect the odd-degree MST vertices                                      │
-│ - solve minimum-weight perfect matching on that odd set                    │
-│ - because the example selects BlossomMatch, the matching stage is exact    │
-└─────────────────────────────────────┬──────────────────────────────────────┘
-                                      ▼
-┌────────────────────────────────────────────────────────────────────────────┐
-│ Step 4. Eulerian multigraph                                                │
-│ - combine MST edges with matching edges                                    │
-│ - every vertex now has even degree                                         │
-│ - Hierholzer can traverse the multigraph as a closed Eulerian walk         │
-└─────────────────────────────────────┬──────────────────────────────────────┘
-                                      ▼
-┌────────────────────────────────────────────────────────────────────────────┐
-│ Step 5. Shortcut repeated visits                                           │
-│ - traverse the Eulerian walk                                               │
-│ - skip already-visited vertices                                            │
-│ - preserve visit order                                                     │
-│ - publish one Hamiltonian cycle                                            │
-└─────────────────────────────────────┬──────────────────────────────────────┘
-                                      ▼
-┌────────────────────────────────────────────────────────────────────────────┐
-│ Step 6. Published result                                                   │
-│ - Tour  = 00 -> 02 -> 03 -> 05 -> 07 -> 09 -> 08 -> 04 -> 01 -> 06 -> 00   │
-│ - Cost  = 200                                                              │
-│ - Margin= 40                                                               │
-│ - Status= within-envelope                                                  │
-└────────────────────────────────────────────────────────────────────────────┘
-
-Interpretation:
-  200 <= 240, so the route is inside the validated thermal envelope.
-  The 1.5 ratio is publishable because the example explicitly selects BlossomMatch.
+Total: 34+16+20+12+14+18 = 114 minutes.
+Thermal window: 120 minutes; margin: 6 minutes.
 ```
+
+Christofides builds an MST, matches its odd-degree vertices through the
+independent `match.Blossom` engine, adds each reciprocal edge to an undirected
+multigraph, traverses a complete Eulerian circuit and shortcuts repeated
+visits. The `1.5` ratio is the **worst-case theorem for metric instances**, not
+an observed ratio `114 / OPT`. If the caller selects GreedyMatch or violates
+triangle inequality, the theorem is not available.
 
 ### 11.7.2. Christofides algorithm stages over the same matrix
 
@@ -905,307 +845,357 @@ Forbidden model:
   unordered key {03,10} pairing 03->10 with 03->10.
 ```
 
-### 11.7.6. Directed 2-opt* route improvement boundary
-
-Directed local search must not reverse the middle segment as symmetric 2-opt does. ATSP arc directions carry meaning.
+### 11.7.6. Directed 2-opt preserves a single cycle
 
 ```text
-╔══════════════════════════════════════════════════════════════════════════════╗
-║ DIRECTED 2-OPT* MOVE                                                         ║
-╚══════════════════════════════════════════════════════════════════════════════╝
+Original directed tour:
+  ... -> a -> b -> [ internal b -> ... -> c ] -> d -> ...
 
-Before accepted move:
+Selected reversal:
+  ... -> a -> c -> [ internal c -> ... -> b ] -> d -> ...
 
-┌────┐    a->b    ┌────┐──────────── directed segment ────────────┌────┐    c->d    ┌────┐
-│ a  ├────────────┤ b  │  ... internal orientation preserved ...  │ c  ├────────────┤ d  │
-└────┘            └────┘                                          └────┘            └────┘
+Boundary changes: (a,b),(c,d) -> (a,c),(b,d)
+Internal change:   each u->v becomes v->u in the reversed segment
 
-After 2-opt* rewiring:
-
-┌────┐    a->d    ┌────┐
-│ a  ├────────────┤ d  │
-└────┘            └────┘
-
-┌────┐    c->b    ┌────┐──────────── same directed segment ───────┌────┐
-│ c  ├────────────┤ b  │  ... no segment reversal inside ATSP ... │ ...│
-└────┘            └────┘                                          └────┘
-
-Contract:
-  Symmetric 2-opt may reverse a segment.
-  Directed 2-opt* rewires successors and preserves arc orientation.
+Delta = new boundary - old boundary + sum(internal reverse - forward)
 ```
+
+Both the boundary and the internal direction changes must be charged. The
+algorithm rejects moves with `delta >= -Eps`, never reconstructs a tour by
+following a pair of tail-swapped successors, and retains the actual directed
+orientation on publication. The final result cost is recomputed from its
+published tour to avoid floating-point delta accumulation drift.
+
 
 ---
 
-## 11.8. Go Example Scenarios
+## 11.8. Executable operational scenarios
 
-The examples below use static matrices with 8 to 10 vertices. They show realistic build, execute, and consume pipelines with explicit setup and solver error handling.
+All three listings below come directly from the tested `tsp/example_test.go`.
+They are deterministic fixtures, **not live routing, security or manufacturing
+measurements**. They are written as `package tsp_test` Go examples, so `go test
+./tsp -run '^ExampleSolveMatrix_' -count=1` checks the `// Output:` contracts.
+Use a real graph-derived or measured matrix after independent source validation.
 
-### 11.8.1. Biopharmaceutical cold-chain dispatch
+| Fixture | Physical units and operational release | Algorithmic certificate |
+|:--|:--|:--|
+| Cold-chain hospitals, six sites | 114 min; 120 min thermal envelope, 6 min margin | Christofides + exact Blossom; formal 1.5 only because matrix is metric |
+| Armored transport, five directed stops | Risk cost 34; direction-dependent return arcs | Directed 2-opt local optimum, no exactness |
+| Semiconductor drilling, five sites | 16.8 ms per board; 840 s per 50,000 boards | Completed exact Branch-and-Bound using one-tree lower bound |
 
-A vaccine distribution hub must deliver to hospitals, emergency depots, and mobile units before validated cold-chain containment expires. The matrix stores peak-window travel minutes, not physical distance. The example selects Christofides with Blossom matching because the matrix is symmetric and the caller wants the published `1.5` approximation certificate.
+### 11.8.1–11.8.3. Full working Go examples
 
-The resulting route uses `200` minutes inside a `240` minute envelope. That is a valid dispatch with `40` minutes of operational margin. If the margin were negative, the correct operational response would be split routing, additional vehicle capacity, or a different matrix policy, not ignoring the result.
+The functions are shown verbatim from the package's executable examples,
+including checked matrix construction, full finite data and the exact expected
+output. Import order and error handling follow the actual source.
 
 ```go
-package main
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2025-2026 katalvlaran
+
+// Package tsp_test demonstrates canonical lvlath/tsp usage through production-shaped
+// operational scenarios.
+//
+// The examples use static matrices instead of generated toy graphs. Each matrix
+// represents a business cost model: minutes, directed security risk, or mechanical
+// positioning latency. The static fixtures are intentionally embedded in the
+// examples so readers can audit the exact optimization problem without chasing helpers.
+package tsp_test
 
 import (
-    "fmt"
-    "log"
-    "strings"
+	"fmt"
 
-    "github.com/lvlath/go/matrix"
-    "github.com/lvlath/go/tsp"
+	"github.com/lvlath/go/matrix"
+	"github.com/lvlath/go/tsp"
 )
 
-func main() {
-    const startVertex = 0
-    const thermalEnvelopeMinutes = 240.0
+const (
+	exampleStartVertex = 0
+	exampleEps         = 1e-12
+)
 
-    locations := []string{
-        "Regional Bio-Hub",
-        "University Hospital",
-        "Children's Clinic",
-        "Oncology Center",
-        "Emergency Depot",
-        "Infection Ward",
-        "Community Pavilion",
-        "Airport Medical Cargo",
-        "North Mobile Unit",
-        "South Mobile Unit",
-    }
+// ExampleSolveMatrix_coldChainLogistics demonstrates symmetric metric TSP for
+// biopharmaceutical cold-chain distribution.
+//
+// Business story:
+// A regional bio-hub must deliver temperature-sensitive mRNA vaccine containers
+// across a hospital network and return to the hub. The containers remain inside
+// the validated thermal envelope for 120 minutes. A route beyond that window
+// risks product degradation and emergency rescheduling.
+//
+// Algorithm choice:
+// Christofides with BlossomMatch is selected because the instance is symmetric,
+// complete, and metric. The exact Blossom MWPM stage is required to publish the
+// formal 1.5 approximation ratio.
+//
+// This example intentionally keeps the dispatch matrix static. In production,
+// these values would come from a traffic-time service, but the solver contract is
+// identical: matrix rows and columns define the stop order.
+func ExampleSolveMatrix_coldChainLogistics() {
+	const thermalEnvelopeMinutes = 120.0
 
-    transitMinutes := []float64{
-        0, 22, 28, 44, 31, 52, 18, 36, 27, 30,
-        22, 0, 12, 25, 16, 38, 14, 30, 20, 24,
-        28, 12, 0, 29, 19, 42, 16, 34, 18, 26,
-        44, 25, 29, 0, 21, 17, 35, 28, 33, 23,
-        31, 16, 19, 21, 0, 30, 22, 24, 15, 18,
-        52, 38, 42, 17, 30, 0, 46, 27, 40, 22,
-        18, 14, 16, 35, 22, 46, 0, 32, 21, 28,
-        36, 30, 34, 28, 24, 27, 32, 0, 26, 19,
-        27, 20, 18, 33, 15, 40, 21, 26, 0, 17,
-        30, 24, 26, 23, 18, 22, 28, 19, 17, 0,
-    }
+	locationNames := []string{
+		"Regional Bio-Hub",
+		"Children's Clinical Hospital",
+		"Oncology Treatment Center",
+		"Emergency Red Cross Depot",
+		"Metropolitan Infection Ward",
+		"Community Health Pavilion",
+	}
 
-    dist, err := matrix.NewDense(len(locations), len(locations))
-    if err != nil {
-        log.Fatalf("build cold-chain matrix: %v", err)
-    }
-    _ = dist.Fill(transitMinutes)
+	// Static symmetric metric transit-time matrix, measured in minutes.
+	//
+	// The values model a weighted urban road network after travel-time smoothing.
+	// Row/column order follows locationNames. The intended interpretation is time,
+	// not geographic distance.
+	coldChainTransitMinutes := []float64{
+		0, 32, 50, 44, 34, 18,
+		32, 0, 32, 12, 48, 14,
+		50, 32, 0, 20, 16, 46,
+		44, 12, 20, 0, 36, 26,
+		34, 48, 16, 36, 0, 48,
+		18, 14, 46, 26, 48, 0,
+	}
 
-    opts := tsp.DefaultOptions()
-    opts.Algo = tsp.Christofides
-    opts.Symmetric = true
-    opts.StartVertex = startVertex
-    opts.MatchingAlgo = tsp.BlossomMatch
-    opts.EnableLocalSearch = false
+	dist, err := matrix.NewDense(len(locationNames), len(locationNames))
+	if err != nil {
+		fmt.Println("cold-chain matrix allocation failed:", err)
+		return
+	}
+	if err = dist.Fill(coldChainTransitMinutes); err != nil {
+		fmt.Println("cold-chain matrix initialization failed:", err)
+		return
+	}
 
-    result, err := tsp.SolveMatrix(dist, locations, opts)
-    if err != nil {
-        log.Fatalf("solve cold-chain route: %v", err)
-    }
+	opts := tsp.DefaultOptions()
+	opts.Algo = tsp.Christofides
+	opts.Symmetric = true
+	opts.StartVertex = exampleStartVertex
+	opts.MatchingAlgo = tsp.BlossomMatch
+	opts.EnableLocalSearch = false
+	opts.Eps = exampleEps
 
-    vertexTour, err := result.VertexTour()
-    if err != nil {
-        log.Fatalf("project route IDs: %v", err)
-    }
+	result, err := tsp.SolveMatrix(dist, nil, opts)
+	if err != nil {
+		fmt.Printf("cold-chain route failed: %v\n", err)
+		return
+	}
+	if result == nil {
+		fmt.Println("unexpected nil route result")
+		return
+	}
 
-    margin := thermalEnvelopeMinutes - result.Cost
-    status := "within-envelope"
-    if margin < 0 {
-        status = "split-route-required"
-    }
+	fmt.Println("Cold-chain vaccine dispatch")
+	fmt.Printf("closed-loop=%v\n", len(result.Tour) == len(locationNames)+1 &&
+		result.Tour[0] == exampleStartVertex &&
+		result.Tour[len(locationNames)] == exampleStartVertex)
+	fmt.Printf("route-minutes=%.1f\n", result.Cost)
+	fmt.Printf("formal-ratio=%.1f\n", result.ApproximationRatio)
+	fmt.Printf("thermal-margin=%.1f minutes\n", thermalEnvelopeMinutes-result.Cost)
 
-    fmt.Printf("closed=%v\n", len(result.Tour) == len(locations)+1)
-    fmt.Printf("minutes=%.1f\n", result.Cost)
-    fmt.Printf("thermal-margin=%.1f\n", margin)
-    fmt.Printf("status=%s\n", status)
-    fmt.Printf("ratio=%.1f\n", result.ApproximationRatio)
-    fmt.Printf("manifest=%s\n", strings.Join(vertexTour, " -> "))
-	
+	fmt.Print("manifest=")
+	for step, vertex := range result.Tour {
+		if step > 0 {
+			fmt.Print(" -> ")
+		}
+		fmt.Print(locationNames[vertex])
+	}
+	fmt.Println()
+
 	// Output:
-	// closed=true
-	// minutes=200.0
-	// thermal-margin=40.0
-	// status=within-envelope
-	// ratio=1.5
-	// manifest=Regional Bio-Hub -> Children's Clinic -> Oncology Center -> Infection Ward -> Airport Medical Cargo -> South Mobile Unit -> North Mobile Unit -> Emergency Depot -> University Hospital -> Community Pavilion -> Regional Bio-Hub
-
+	// Cold-chain vaccine dispatch
+	// closed-loop=true
+	// route-minutes=114.0
+	// formal-ratio=1.5
+	// thermal-margin=6.0 minutes
+	// manifest=Regional Bio-Hub -> Metropolitan Infection Ward -> Oncology Treatment Center -> Emergency Red Cross Depot -> Children's Clinical Hospital -> Community Health Pavilion -> Regional Bio-Hub
 }
-```
 
-[![Go Playground](https://img.shields.io/badge/Go_Playground-TSP_Biopharmaceutical_cold_chain_dispatch-blue?logo=go)](https://go.dev/play/p/DY2hMz_yK5_V)
+// ExampleSolveMatrix_cashInTransitAsymmetric demonstrates directed local-search
+// routing for armored cash-in-transit operations.
+//
+// Business story:
+// An armored vehicle replenishes high-value ATM and cash-depot sites. One-way
+// streets, turn restrictions, timed security escorts, and high-risk intersections
+// make A->B different from B->A. The matrix therefore stores directed composite
+// risk/fuel costs, not symmetric distance.
+//
+// Algorithm choice:
+// TwoOptOnly with Symmetric=false evaluates the costs of every reversed directed arc.
+// This is a scalable local-search mode, not an exact ATSP certificate. It is
+// useful when dispatch must react quickly and the cost model is directional.
+func ExampleSolveMatrix_cashInTransitAsymmetric() {
+	stopNames := []string{
+		"Secure Bank Vault",
+		"Downtown Retail Mega-Mall",
+		"Financial District Transit Terminal",
+		"Westside Casino Hub",
+		"Central Airport Cash-Vault",
+	}
 
-### 11.8.2. High-value cash-in-transit ATSP risk routing
+	// Static asymmetric risk matrix.
+	//
+	// Each value combines transit time, fuel burn, guard exposure, and predictable
+	// interception risk. The asymmetry is intentional: for example, Mall->Casino
+	// can use a guarded arterial route, while Casino->Mall crosses a slower
+	// exposure-heavy corridor.
+	directedRiskCost := []float64{
+		0, 8, 19, 21, 17,
+		14, 0, 5, 9, 18,
+		18, 11, 0, 6, 20,
+		16, 8, 12, 0, 4,
+		11, 15, 13, 10, 0,
+	}
 
-This example models a directed security route. The matrix combines travel time, fuel burn, escort availability, and exposure risk. Direction matters: returning through the same corridor may have a different risk score because of one-way streets, turn restrictions, and predictable attack surfaces.
+	dist, err := matrix.NewDense(len(stopNames), len(stopNames))
+	if err != nil {
+		fmt.Println("directed-security matrix allocation failed:", err)
+		return
+	}
+	if err = dist.Fill(directedRiskCost); err != nil {
+		fmt.Println("directed-security matrix initialization failed:", err)
+		return
+	}
 
-The example uses `TwoOptSearch` rather than the `SolveMatrix` dispatcher because the operation starts from a manually approved security corridor. Local search may improve that corridor, but it never claims exactness or global optimality.
+	opts := tsp.DefaultOptions()
+	opts.Algo = tsp.TwoOptOnly
+	opts.Symmetric = false
+	opts.StartVertex = exampleStartVertex
+	opts.EnableLocalSearch = true
+	opts.Eps = exampleEps
 
-```go
-package main
+	result, err := tsp.SolveMatrix(dist, nil, opts)
+	if err != nil {
+		fmt.Printf("cash-in-transit route failed: %v\n", err)
+		return
+	}
+	if result == nil {
+		fmt.Println("unexpected nil route result")
+		return
+	}
 
-import (
-    "fmt"
-    "log"
-    "strings"
+	fmt.Println("Cash-in-transit directed route")
+	fmt.Printf("closed-loop=%v\n", len(result.Tour) == len(stopNames)+1 &&
+		result.Tour[0] == exampleStartVertex &&
+		result.Tour[len(stopNames)] == exampleStartVertex)
+	fmt.Printf("directed-risk-cost=%.1f\n", result.Cost)
+	fmt.Printf("exact=%v optimal=%v\n", result.Exact, result.Optimal)
 
-    "github.com/lvlath/go/matrix"
-    "github.com/lvlath/go/tsp"
-)
-
-func main() {
-    const startVertex = 0
-
-    stops := []string{
-        "Secure Vault HQ",
-        "Downtown ATM Cluster",
-        "Transit Terminal Depot",
-        "Casino Cash Office",
-        "Airport Cash Vault",
-        "Retail Megastore",
-        "Stadium Event Office",
-        "Harbor Customs Cash Desk",
-        "University Payroll Office",
-    }
-
-    directedRiskCost := []float64{
-        0, 8, 30, 31, 28, 34, 36, 39, 26,
-        22, 0, 5, 27, 29, 23, 34, 36, 25,
-        24, 21, 0, 6, 31, 29, 25, 35, 27,
-        29, 24, 23, 0, 4, 32, 28, 36, 30,
-        28, 26, 25, 22, 0, 6, 29, 30, 31,
-        35, 24, 28, 30, 27, 0, 5, 29, 26,
-        38, 34, 25, 29, 27, 24, 0, 6, 28,
-        36, 35, 32, 30, 28, 27, 25, 0, 4,
-        7, 25, 27, 29, 31, 26, 28, 24, 0,
-    }
-
-    approvedCorridor := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 0}
-
-    dist, err := matrix.NewDense(len(stops), len(stops))
-    if err != nil {
-        log.Fatalf("build risk matrix: %v", err)
-    }
-    _ = dist.Fill(directedRiskCost)
-
-    opts := tsp.DefaultOptions()
-    opts.Algo = tsp.TwoOptOnly
-    opts.Symmetric = false
-    opts.StartVertex = startVertex
-    opts.EnableLocalSearch = true
-    opts.TwoOptMaxIters = 0
-
-    result, err := tsp.TwoOptSearch(dist, approvedCorridor, opts)
-    if err != nil {
-        log.Fatalf("improve directed cash route: %v", err)
-    }
-
-    routeNames := make([]string, 0, len(result.Tour))
-    for _, vertex := range result.Tour {
-        routeNames = append(routeNames, stops[vertex])
-    }
-
-    fmt.Printf("closed=%v\n", len(result.Tour) == len(stops)+1)
-    fmt.Printf("risk-cost=%.1f\n", result.Cost)
-    fmt.Printf("exact=%v optimal=%v\n", result.Exact, result.Optimal)
-    fmt.Printf("accepted-moves=%d\n", result.Iterations)
-    fmt.Printf("route=%s\n", strings.Join(routeNames, " -> "))
+	fmt.Print("route=")
+	for step, vertex := range result.Tour {
+		if step > 0 {
+			fmt.Print(" -> ")
+		}
+		fmt.Print(stopNames[vertex])
+	}
+	fmt.Println()
 
 	// Output:
-	// closed=true
-	// risk-cost=51.0
+	// Cash-in-transit directed route
+	// closed-loop=true
+	// directed-risk-cost=34.0
 	// exact=false optimal=false
-	// accepted-moves=0
-	// route=Secure Vault HQ -> Downtown ATM Cluster -> Transit Terminal Depot -> Casino Cash Office -> Airport Cash Vault -> Retail Megastore -> Stadium Event Office -> Harbor Customs Cash Desk -> University Payroll Office -> Secure Vault HQ
-
+	// route=Secure Bank Vault -> Downtown Retail Mega-Mall -> Financial District Transit Terminal -> Westside Casino Hub -> Central Airport Cash-Vault -> Secure Bank Vault
 }
-```
 
-[![Go Playground](https://img.shields.io/badge/Go_Playground-TSP_High_value_cash_in_transit_ATSP_risk_routing-blue?logo=go)](https://go.dev/play/p/w6OSSYWt9lG)
+// ExampleSolveMatrix_semiconductorLaserDrilling demonstrates exact matrix TSP
+// for high-precision semiconductor manufacturing.
+//
+// Business story:
+// A CNC-guided laser drilling workstation must visit microscopic via-hole
+// positions on each board. A few saved milliseconds per board can become hours
+// of recovered production time across large daily batches. In this offline
+// programming stage, near-optimal is not enough: the route must be globally
+// optimal for the provided latency matrix.
+//
+// Algorithm choice:
+// BranchAndBound with OneTreeBound performs exact search with an admissible
+// lower bound. The result is exact and optimal when the search completes.
+func ExampleSolveMatrix_semiconductorLaserDrilling() {
+	const dailyBoardVolume = 50000
 
-### 11.8.3. Semiconductor laser-drilling exact optimization
+	siteNames := []string{
+		"Servo Home Anchor",
+		"Pin A1",
+		"Bus Gate X7",
+		"Core Array",
+		"I/O Bridge",
+	}
 
-An industrial laser-drilling workstation visits microscopic via-hole positions on each board. The matrix stores servo motion and stabilization latency in milliseconds. At 100,000 boards per production batch, a few milliseconds per board become minutes of machine occupancy.
+	// Static symmetric mechanical latency matrix, measured in milliseconds.
+	//
+	// The values include servo-axis travel, deceleration, settling latency, and
+	// laser stabilization overhead between drilling sites.
+	servoLatencyMilliseconds := []float64{
+		0, 3.6, 9.5, 10.0, 4.5,
+		3.6, 0, 1.2, 8.0, 9.0,
+		9.5, 1.2, 0, 2.8, 7.5,
+		10.0, 8.0, 2.8, 0, 4.7,
+		4.5, 9.0, 7.5, 4.7, 0,
+	}
 
-This example uses exact Branch-and-Bound with `OneTreeBound`. The output is exact and optimal because the search completes.
+	dist, err := matrix.NewDense(len(siteNames), len(siteNames))
+	if err != nil {
+		fmt.Println("laser-drilling matrix allocation failed:", err)
+		return
+	}
+	if err = dist.Fill(servoLatencyMilliseconds); err != nil {
+		fmt.Println("laser-drilling matrix initialization failed:", err)
+		return
+	}
 
-```go
-package main
+	opts := tsp.DefaultOptions()
+	opts.Algo = tsp.BranchAndBound
+	opts.Symmetric = true
+	opts.StartVertex = exampleStartVertex
+	opts.BoundAlgo = tsp.OneTreeBound
+	opts.EnableLocalSearch = false
+	opts.Eps = exampleEps
 
-import (
-    "fmt"
-    "log"
+	result, err := tsp.SolveMatrix(dist, nil, opts)
+	if err != nil {
+		fmt.Printf("laser drilling optimization failed: %v\n", err)
+		return
+	}
+	if result == nil {
+		fmt.Println("unexpected nil route result")
+		return
+	}
 
-    "github.com/lvlath/go/matrix"
-    "github.com/lvlath/go/tsp"
-)
+	dailyRuntimeSeconds := result.Cost * float64(dailyBoardVolume) / 1000.0
 
-func main() {
-    const startVertex = 0
-    const dailyBoardVolume = 100000
+	fmt.Println("Semiconductor laser-drilling route")
+	fmt.Printf("closed-loop=%v\n", len(result.Tour) == len(siteNames)+1 &&
+		result.Tour[0] == exampleStartVertex &&
+		result.Tour[len(siteNames)] == exampleStartVertex)
+	fmt.Printf("single-board-latency=%.1f ms\n", result.Cost)
+	fmt.Printf("daily-laser-motion=%.1f seconds\n", dailyRuntimeSeconds)
+	fmt.Printf("exact=%v optimal=%v\n", result.Exact, result.Optimal)
 
-    sites := []string{
-        "Servo Home",
-        "Pin A1",
-        "Bus Gate X7",
-        "Core Array",
-        "I/O Bridge",
-        "Memory Lane",
-        "Power Island",
-        "Clock Mesh",
-    }
-
-    latencyMilliseconds := []float64{
-        0, 3.6, 9.5, 10.0, 4.5, 8.4, 7.6, 6.8,
-        3.6, 0, 1.2, 8.0, 9.0, 7.2, 6.5, 5.9,
-        9.5, 1.2, 0, 2.8, 7.5, 5.8, 6.1, 4.4,
-        10.0, 8.0, 2.8, 0, 4.7, 3.6, 5.2, 4.0,
-        4.5, 9.0, 7.5, 4.7, 0, 2.9, 3.3, 5.5,
-        8.4, 7.2, 5.8, 3.6, 2.9, 0, 1.7, 2.4,
-        7.6, 6.5, 6.1, 5.2, 3.3, 1.7, 0, 2.1,
-        6.8, 5.9, 4.4, 4.0, 5.5, 2.4, 2.1, 0,
-    }
-
-    dist, err := matrix.NewDense(len(sites), len(sites))
-    if err != nil {
-        log.Fatalf("build latency matrix: %v", err)
-    }
-    _ = dist.Fill(latencyMilliseconds)
-
-    opts := tsp.DefaultOptions()
-    opts.Algo = tsp.BranchAndBound
-    opts.Symmetric = true
-    opts.StartVertex = startVertex
-    opts.BoundAlgo = tsp.OneTreeBound
-    opts.EnableLocalSearch = false
-
-    result, err := tsp.BranchAndBoundSolve(dist, opts)
-    if err != nil {
-        log.Fatalf("solve exact drilling path: %v", err)
-    }
-
-    clone := result.Clone()
-    dailySeconds := clone.Cost * float64(dailyBoardVolume) / 1000.0
-
-    fmt.Printf("closed=%v\n", len(clone.Tour) == len(sites)+1)
-    fmt.Printf("single-board-ms=%.1f\n", clone.Cost)
-    fmt.Printf("daily-motion-seconds=%.1f\n", dailySeconds)
-    fmt.Printf("exact=%v optimal=%v\n", clone.Exact, clone.Optimal)
-    fmt.Printf("nodes-expanded=%d\n", clone.NodesExpanded)
+	fmt.Print("path=")
+	for step, vertex := range result.Tour {
+		if step > 0 {
+			fmt.Print(" -> ")
+		}
+		fmt.Print(siteNames[vertex])
+	}
+	fmt.Println()
 
 	// Output:
-	// closed=true
-	// single-board-ms=22.8
-	// daily-motion-seconds=2280.0
+	// Semiconductor laser-drilling route
+	// closed-loop=true
+	// single-board-latency=16.8 ms
+	// daily-laser-motion=840.0 seconds
 	// exact=true optimal=true
-	// nodes-expanded=218
+	// path=Servo Home Anchor -> Pin A1 -> Bus Gate X7 -> Core Array -> I/O Bridge -> Servo Home Anchor
 }
 ```
 
-[![Go Playground](https://img.shields.io/badge/Go_Playground-TSP_Semiconductor_laser_drilling_exact_optimization-blue?logo=go)](https://go.dev/play/p/AUO4v86uEzU)
+**Operational interpretation.** A thermal window is a separate release policy,
+not a parameter magically enforced by Christofides. Similarly, a directed
+risk score must be calibrated by the caller; a low score does not certify
+physical security. The drilling example establishes the optimum for the
+provided static machine-latency model, not for an unmodeled industrial plant.
 
 ---
 
@@ -1279,9 +1269,9 @@ errors.Is(err, tsp.ErrTimeLimit)
 >
 >    Use `errors.Is`; wrapped context is for diagnostics.
 
-> **Do not assume `DefaultOptions()` publishes Christofides `1.5`.**
+> **Do not confuse default Blossom selection with verified metric input.**
 >
->    The current default matching policy is explicit Greedy matching. Set `MatchingAlgo = BlossomMatch` when exact MWPM and the formal ratio are required.
+>    `DefaultOptions()` already selects `BlossomMatch`; the 1.5 theorem additionally requires a complete symmetric **metric** matrix. Selecting GreedyMatch deliberately forfeits the formal bound.
 
 > **Do not run Christofides on asymmetric input.**
 >
@@ -1327,9 +1317,9 @@ errors.Is(err, tsp.ErrTimeLimit)
 >
 >    `BranchAndBoundSolve`, `ChristofidesSolve`, `TwoOptSearch`, and `ThreeOptSearch` avoid accidental dispatcher ambiguity.
 
-> **Set `MatchingAlgo = BlossomMatch` explicitly for Christofides guarantees.**
+> **Use `BlossomMatch` with a verified metric matrix for Christofides guarantees.**
 >
->    The ratio is a proof artifact, not a general Christofides label.
+>    It is the default matching policy. The 1.5 ratio is a conditional theorem, not an empirical certificate of a particular tour.
 
 > **Use `OneTreeBound` for symmetric exact Branch-and-Bound pruning.**
 >

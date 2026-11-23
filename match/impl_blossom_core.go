@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2025-2026 katalvlaran
 
-// Package tsp defines dense weighted Blossom engine state.
+// Package match defines dense weighted Blossom engine state.
 // This file owns the local maximum-profit transformation, engine allocation,
 // solver entrypoint, result export, and structural verification helpers.
 //
@@ -12,17 +12,17 @@
 //   - Export only original-vertex perfect matchings.
 //
 // Boundaries:
-//   - Alternating-forest search lives in blossom_forest.go.
-//   - Dual/slack movement lives in blossom_dual.go.
-//   - Contraction/expansion lives in blossom_contract.go.
-//   - Path lifting lives in blossom_path.go.
-//   - mate[] mutation lives in blossom_augment.go.
+//   - Alternating-forest search lives in impl_blossom_forest.go.
+//   - Dual/slack movement lives in impl_blossom_dual.go.
+//   - Contraction/expansion lives in impl_blossom_contract.go.
+//   - Path lifting lives in impl_blossom_path.go.
+//   - mate[] mutation lives in impl_blossom_augment.go.
 //
 // AI-Hints:
-//   - Do not expose blossomEngine through public TSP API.
-//   - Do not store original TSP matrix vertex IDs in mate[].
+//   - Do not expose blossomEngine through public match API.
+//   - Do not store original matrix vertex IDs in mate[].
 //   - Do not compute published matching cost from transformed profits.
-package tsp
+package match
 
 import "math"
 
@@ -38,7 +38,7 @@ import "math"
 //   - Options are private to the matching engine.
 //
 // Inputs:
-//   - Built from Options.Eps by blossomMatch.
+//   - Built from Options.Eps by Perfect.
 //
 // Returns:
 //   - Consumed by solveMinimumWeightPerfectMatching.
@@ -61,7 +61,7 @@ type blossomOptions struct {
 }
 
 // blossomStats records deterministic internal telemetry produced by the dense Blossom engine.
-// It is intentionally private: public TSP results must not expose Blossom implementation counters
+// It is intentionally private: public match results must not expose Blossom implementation counters
 // until those counters become stable API semantics.
 //
 // Implementation:
@@ -174,12 +174,12 @@ type blossomEdge struct {
 
 	// u is the smaller local endpoint in [0, problem.n).
 	// Dense construction guarantees u<v and never creates self-loops.
-	// It is an index into matchingProblem, not the original TSP matrix.
+	// It is an index into matchingProblem, not the original matrix.
 	u int
 
 	// v is the larger local endpoint in [0, problem.n).
 	// Dense construction guarantees v>u and stores the undirected edge once.
-	// It is an index into matchingProblem, not the original TSP matrix.
+	// It is an index into matchingProblem, not the original matrix.
 	v int
 
 	// cost is the original local minimization weight.
@@ -337,10 +337,10 @@ const blossomDeltaSelectionToleranceMultiplier = 16.0
 //   - Engine node storage O(k).
 //
 // AI-Hints:
-//   - Do not expose this engine outside package tsp.
-//   - Do not store original TSP matrix indices in mate[]; use local indices.
+//   - Do not expose this engine outside package match.
+//   - Do not store original matrix indices in mate[]; use local indices.
 type blossomEngine struct {
-	// problem is the detached local MWPM instance over odd-degree vertices.
+	// problem is the detached local MWPM instance over selected vertices.
 	// All engine vertex indices are local positions in this problem.
 	problem matchingProblem
 
@@ -1178,7 +1178,7 @@ func buildBlossomEdges(problem matchingProblem) ([]blossomEdge, [][]int, float64
 //
 // Returns:
 //   - []int: local match array match[i]=j.
-//   - float64: rounded original matching cost.
+//   - float64: checked unrounded original matching cost.
 //   - blossomStats: internal deterministic search telemetry.
 //   - error: nil on success or sentinel-classified failure.
 //

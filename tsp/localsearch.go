@@ -6,7 +6,10 @@
 // metadata, and canonical facade publication consistent.
 package tsp
 
-import "time"
+import (
+	"math"
+	"time"
+)
 
 const (
 	// twoOptDeadlineCheckMask checks the 2-opt deadline every 2048 candidate events.
@@ -23,8 +26,8 @@ const (
 //
 // Implementation:
 //   - Stage 1: Default to time.Now in production.
-//   - Stage 2: Tests in package tsp may replace it temporarily for deterministic timeout checks.
-//   - Stage 3: Kernels call localSearchNow only through deadline helpers.
+//   - Stage 2: Kernels call localSearchNow only through deadline helpers.
+//   - Stage 3: TimeLimit==0 bypasses deadline evaluation during search.
 //
 // Behavior highlights:
 //   - Unexported.
@@ -42,7 +45,7 @@ const (
 //
 // Determinism:
 //   - TimeLimit==0 avoids clock reads after setup.
-//   - Tests can pin this source for deterministic timeout assertions.
+//   - Deadline-triggered partial results still require a valid tour and cost.
 //
 // Complexity:
 //   - Time O(1), Space O(1).
@@ -53,7 +56,7 @@ const (
 //
 // AI-Hints:
 //   - Do not call time.Now directly inside local-search kernels.
-//   - Do not use wall-clock timeout tests without controlling this source.
+//   - Wall-clock timeout tests require controlled scheduling, not elapsed-time guesses.
 var localSearchNow = time.Now
 
 // localSearchResult carries the internal result of a local-search kernel.
@@ -144,27 +147,86 @@ func (r localSearchResult) hasTour() bool {
 	return len(r.tour) > 0
 }
 
+// costClosedTourFromWeights sums the arcs of a validated closed tour snapshot.
+// Local-search delta computations select moves, but repeated additions of their
+// differences lose low bits when the objective has a large common baseline.
+//
+// Implementation:
+//   - Stage 1: Read every directed arc of the final tour from detached weights.
+//   - Stage 2: Accumulate with a pre-addition overflow check.
+//   - Stage 3: Apply the established nine-decimal TSP presentation policy.
+//
+// Behavior highlights:
+//   - Does not read the caller's mutable Matrix again.
+//   - Uses directed weights even when the requested policy is symmetric.
+//
+// Inputs:
+//   - weights: complete validated row-major snapshot built before local search.
+//   - tour: validated Hamiltonian cycle with indices in [0,weights.n).
+//
+// Returns:
+//   - float64: finite cost of exactly the published directed arc order.
+//
+// Errors:
+//   - ErrNaNInf, ErrIncompleteGraph, ErrNegativeWeight on corrupted internal weights.
+//   - ErrNumericOverflow if the sum cannot be represented as float64.
+//
+// Determinism:
+//   - Adds arcs in tour order with no parallel or unordered reduction.
+//
+// Complexity:
+//   - Time O(n), Space O(1) after the existing O(n^2) weight preparation.
+//
+// Notes:
+//   - Caller validates the tour before invoking this private numerical helper.
+//   - The result can differ from a cost reconstructed by accumulating move deltas.
+//
+// AI-Hints:
+//   - Re-evaluate only during result publication, not for every 2-opt candidate.
+//   - Do not use the symmetric boundary-edge shortcut to price an ATSP reversal.
+func costClosedTourFromWeights(weights weightBuffer, tour []int) (float64, error) {
+	total := 0.0
+	for position := 0; position+1 < len(tour); position++ {
+		weight := weights.at(tour[position], tour[position+1])
+		switch {
+		case math.IsNaN(weight) || math.IsInf(weight, -1):
+			return 0, ErrNaNInf
+		case math.IsInf(weight, 1):
+			return 0, ErrIncompleteGraph
+		case weight < 0:
+			return 0, ErrNegativeWeight
+		case total > math.MaxFloat64-weight:
+			return 0, ErrNumericOverflow
+		}
+		total += weight
+	}
+	return round1e9(total), nil
+}
+
 // finishLocalSearchCurrent canonicalizes, validates, and detaches the current local-search tour.
 // It is used by both success and timeout paths so partial results obey the same invariant
 // as fully successful local-search results.
 //
 // Implementation:
-//   - Stage 1: Canonicalize orientation under the fixed start vertex.
+//   - Stage 1: Canonicalize orientation only when reversed arcs have identical costs.
 //   - Stage 2: Validate Hamiltonian cycle invariants.
-//   - Stage 3: Copy the tour and stabilize cost before publication.
+//   - Stage 3: Recalculate the objective from detached validated arc weights.
+//   - Stage 4: Copy the tour and publish its cost, iterations, and timeout state.
 //
 // Behavior highlights:
 //   - Mutates the working tour only for canonical orientation.
 //   - Returns a detached tour snapshot.
 //   - Uses the same validation for success and partial timeout.
+//   - Recomputes cost from the published arc order instead of accumulating deltas.
 //
 // Inputs:
 //   - tour: current closed Hamiltonian tour owned by the kernel.
-//   - cost: current accumulated tour cost.
+//   - weights: validated detached n-by-n directed arc costs.
 //   - iterations: accepted move count.
 //   - timedOut: true when publishing a partial timeout result.
 //   - n: vertex count.
 //   - start: required start/end vertex.
+//   - symmetric: whether reversal preserves the direction-sensitive cost objective.
 //
 // Returns:
 //   - localSearchResult: finalized detached local result.
@@ -174,9 +236,10 @@ func (r localSearchResult) hasTour() bool {
 //   - ErrDimensionMismatch from canonicalization shape failures.
 //   - ErrInvalidTour from ValidateTour structural failures.
 //   - ErrStartOutOfRange from invalid start.
+//   - ErrNumericOverflow if the selected finite arc costs exceed float64 range.
 //
 // Determinism:
-//   - Canonicalization uses fixed orientation comparison around start.
+//   - Symmetric orientation uses the fixed neighbor comparison; directed order is unchanged.
 //   - Validation scans left-to-right.
 //
 // Complexity:
@@ -185,28 +248,39 @@ func (r localSearchResult) hasTour() bool {
 // Notes:
 //   - Run this only after a valid current tour exists.
 //   - Candidate-level rejected moves must not call this helper.
+//   - The complete input was already checked by copyCompleteWeights.
 //
 // AI-Hints:
+//   - Do not reverse ATSP results just to choose a lexicographic orientation.
 //   - Do not skip this helper on timeout; partial results still need invariants.
 //   - Do not publish the working slice directly.
+//   - Never publish an incremental cost that can drift from the final arc order.
 func finishLocalSearchCurrent(
 	tour []int,
-	cost float64,
+	weights weightBuffer,
 	iterations int,
 	timedOut bool,
 	n int,
 	start int,
+	symmetric bool,
 ) (localSearchResult, error) {
-	if err := CanonicalizeOrientationInPlace(tour); err != nil {
+	if n != weights.n {
+		return localSearchResult{}, ErrDimensionMismatch
+	}
+	if err := canonicalizeTourIfSymmetric(tour, symmetric); err != nil {
 		return localSearchResult{}, err
 	}
 	if err := ValidateTour(tour, n, start); err != nil {
 		return localSearchResult{}, err
 	}
+	cost, err := costClosedTourFromWeights(weights, tour)
+	if err != nil {
+		return localSearchResult{}, err
+	}
 
 	return localSearchResult{
 		tour:       append([]int(nil), tour...),
-		cost:       round1e9(cost),
+		cost:       cost,
 		iterations: iterations,
 		timedOut:   timedOut,
 	}, nil

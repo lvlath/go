@@ -556,7 +556,7 @@ func (e *bbEngine) trySeedWithChristofides(dist matrix.Matrix, opts Options) boo
 
 // trySeedWithTrivialRing records the canonical ring and optionally improves it.
 // This path works for symmetric and asymmetric complete matrices because 2-opt uses
-// symmetric reversal or ATSP 2-opt* according to opts.Symmetric.
+// symmetric or directed 2-opt reversal with its proper arc-cost model.
 //
 // Implementation:
 //   - Stage 1: Build the deterministic closed ring from e.start.
@@ -900,6 +900,142 @@ func (e *bbEngine) result(optimal bool, timedOut bool) *Result {
 	}
 }
 
+// publishCandidate validates the incumbent before exposing a completed or timed-out tour.
+// Every exit path uses the same orientation and Hamiltonian-cycle admission rules.
+//
+// Implementation:
+//   - Stage 1: Canonicalize the cycle only when reverse traversal preserves cost.
+//   - Stage 2: Validate its complete permutation and fixed start/return vertex.
+//   - Stage 3: Copy the incumbent into a detached Result with truthful search flags.
+//
+// Behavior highlights:
+//   - The directed ATSP orientation remains untouched; reversing it would change cost.
+//   - Validation errors suppress publication, even if the search retained an incumbent.
+//
+// Inputs:
+//   - optimal: true only after proof by completed search or admissible root bound.
+//   - timedOut: true only when the caller has detected an expired deadline.
+//
+// Returns:
+//   - *Result: detached validated incumbent, or nil when validation fails.
+//   - error: ErrTimeLimit for a valid timed-out incumbent, or validation error.
+//
+// Errors:
+//   - ErrInvalidTour and other tour validation sentinels on invalid incumbent.
+//   - ErrTimeLimit on successful publication of a deadline-limited incumbent.
+//
+// Determinism:
+//   - This method never chooses another route; it preserves the stored incumbent.
+//
+// Complexity:
+//   - Time O(n) for orientation and validation; Space O(n) for the detached tour.
+//
+// Notes:
+//   - The engine owns bestTour; Result.Tour must never alias its backing buffer.
+//
+// AI-Hints:
+//   - An incumbent on timeout is feasible, not a proof of global optimality.
+//   - Do not reverse an asymmetric cycle merely to obtain a canonical appearance.
+func (e *bbEngine) publishCandidate(optimal, timedOut bool) (*Result, error) {
+	if err := canonicalizeTourIfSymmetric(e.bestTour, e.symmetric); err != nil {
+		return nil, err
+	}
+	if err := ValidateTour(e.bestTour, e.n, e.start); err != nil {
+		return nil, err
+	}
+	result := e.result(optimal, timedOut)
+	if timedOut {
+		return result, ErrTimeLimit
+	}
+	return result, nil
+}
+
+// publishTimeout marks the deadline state and publishes an incumbent only when feasible.
+// It centralizes the two deadline exits without altering the search's incumbent.
+//
+// Implementation:
+//   - Stage 1: Mark the engine as stopped so further DFS cannot resume.
+//   - Stage 2: Distinguish a recorded finite incumbent from no feasible tour.
+//   - Stage 3: Publish a validated nonoptimal result or return only ErrTimeLimit.
+//
+// Behavior highlights:
+//   - Never creates a fictional result when all complete candidate tours failed.
+//
+// Inputs:
+//   - The receiver carries the search flags and previously committed bestTour.
+//
+// Returns:
+//   - *Result: feasible incumbent, if one was recorded; otherwise nil.
+//
+// Errors:
+//   - ErrTimeLimit with or without a result, or a publication validation error.
+//
+// Determinism:
+//   - The incumbent is the search's existing deterministic best candidate.
+//
+// Complexity:
+//   - Time O(n) with an incumbent, otherwise O(1); Space O(n) or O(1).
+//
+// Notes:
+//   - Does not rerun seed selection, a lower bound or recursive search.
+//
+// AI-Hints:
+//   - Never set Optimal on this path, even when the incumbent looks excellent.
+func (e *bbEngine) publishTimeout() (*Result, error) {
+	e.stopped = true
+	if !e.foundAny || math.IsInf(e.bestCost, 0) {
+		return nil, ErrTimeLimit
+	}
+	return e.publishCandidate(false, true)
+}
+
+// rootOneTreeCertifiesOptimal tests one admissible completion bound against the incumbent.
+// It does not alter branching, pruning, or the underlying weighted one-tree kernel.
+//
+// Implementation:
+//   - Stage 1: Reject policies that do not select symmetric OneTreeBound.
+//   - Stage 2: Pass a finite positive incumbent to the existing bound step policy.
+//   - Stage 3: Accept early completion only if a successful lower bound meets the UB.
+//
+// Behavior highlights:
+//   - A lower-bound error merely declines an optimization; DFS still runs.
+//   - The epsilon threshold is identical to the engine's original root check.
+//
+// Inputs:
+//   - dist: final symmetric matrix used by the existing one-tree helper.
+//   - opts: validated bound and symmetry policy; no mutation.
+//
+// Returns:
+//   - bool: true only when the established incumbent is certified by the root bound.
+//
+// Errors:
+//   - None; optional bound failure leaves the exact DFS path available.
+//
+// Determinism:
+//   - Uses the existing bound's deterministic option and iteration policy.
+//
+// Complexity:
+//   - One invocation of OneTreeLowerBound, or O(1) if the policy skips it.
+//   - Additional space follows that helper's implementation.
+//
+// Notes:
+//   - Root certification is optional and does not change exactness of a completed DFS.
+//
+// AI-Hints:
+//   - Do not return true on a failed bound computation or an infinite incumbent.
+//   - One-tree lower bounds are valid only for the selected symmetric regime.
+func (e *bbEngine) rootOneTreeCertifiesOptimal(dist matrix.Matrix, opts Options) bool {
+	if opts.BoundAlgo != OneTreeBound || !opts.Symmetric {
+		return false
+	}
+	cfg := DefaultOneTreeConfig()
+	if !math.IsInf(e.bestCost, 0) && e.bestCost > 0 {
+		cfg.UB = e.bestCost
+	}
+	lowerBound, _, err := OneTreeLowerBound(dist, e.start, true, cfg)
+	return err == nil && !math.IsInf(e.bestCost, 0) && lowerBound >= e.bestCost-e.eps
+}
+
 // branchAndBound executes exact Branch-and-Bound and can publish partial timeout results.
 // Implementation:
 //   - Stage 1: Validate options, matrix, and start vertex.
@@ -987,69 +1123,31 @@ func branchAndBound(dist matrix.Matrix, opts Options) (*Result, error) {
 		return nil, ErrTimeLimit
 	}
 
-	// Optional UB seeding (greatly helps pruning, correctness unaffected).
+	// Seed the incumbent exactly once. The candidate selection and search state
+	// remain owned by bbEngine; only the repeated publication paths are shared.
 	engine.seedUB(dist, opts)
 
 	if engine.deadlineExpired() {
-		engine.stopped = true
-		if engine.foundAny && !math.IsInf(engine.bestCost, 0) {
-			_ = CanonicalizeOrientationInPlace(engine.bestTour)
-			if err = ValidateTour(engine.bestTour, n, engine.start); err != nil {
-				return nil, err
-			}
-			return engine.result(false, true), ErrTimeLimit
-		}
-		return nil, ErrTimeLimit
+		return engine.publishTimeout()
 	}
 
-	// Optional: root-only 1-tree (Held–Karp) lower bound to tighten pruning
-	// before entering DFS. Safe for symmetric instances; correctness unaffected.
-	if opts.BoundAlgo == OneTreeBound && opts.Symmetric {
-		cfg := DefaultOneTreeConfig()
-		// If we already have a finite incumbent, pass it to the step schedule.
-		if !math.IsInf(engine.bestCost, 0) && engine.bestCost > 0 {
-			cfg.UB = engine.bestCost
-		}
-
-		if lowerBound, _, boundErr := OneTreeLowerBound(dist, engine.start, true, cfg); boundErr == nil {
-			// If LB >= UB−eps at the root, the incumbent is optimal; return it.
-			if !math.IsInf(engine.bestCost, 0) && lowerBound >= engine.bestCost-engine.eps {
-				_ = CanonicalizeOrientationInPlace(engine.bestTour)
-				if err = ValidateTour(engine.bestTour, n, engine.start); err != nil {
-					return nil, err
-				}
-
-				return engine.result(true, false), nil
-			}
-		}
+	// An admissible symmetric root bound may certify the seeded tour without DFS.
+	// A failed optional bound never changes which paths exact search can explore.
+	if engine.rootOneTreeCertifiesOptimal(dist, opts) {
+		return engine.publishCandidate(true, false)
 	}
 
-	// Run DFS.
 	engine.dfs(engine.start, 1, 0)
 
-	// Finalization.
+	// On timeout, preserve the valid incumbent without claiming optimality.
 	if engine.stopped || engine.deadlineExpired() {
-		engine.stopped = true
-		if engine.foundAny && !math.IsInf(engine.bestCost, 0) {
-			_ = CanonicalizeOrientationInPlace(engine.bestTour)
-			if err = ValidateTour(engine.bestTour, n, engine.start); err != nil {
-				return nil, err
-			}
-
-			return engine.result(false, true), ErrTimeLimit
-		}
-
-		return nil, ErrTimeLimit
+		return engine.publishTimeout()
 	}
 
 	if !engine.foundAny && math.IsInf(engine.bestCost, 0) {
 		return nil, ErrIncompleteGraph
 	}
 
-	_ = CanonicalizeOrientationInPlace(engine.bestTour)
-	if err = ValidateTour(engine.bestTour, n, engine.start); err != nil {
-		return nil, err
-	}
-
-	return engine.result(true, false), nil
+	// A completed search has established the minimum under the selected bounds.
+	return engine.publishCandidate(true, false)
 }

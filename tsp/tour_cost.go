@@ -309,7 +309,7 @@ func RotateTourToStart(tour []int, start int) ([]int, error) {
 //   - Mutates the supplied tour in place.
 //   - Keeps tour[0] and tour[n] fixed.
 //   - Produces stable output for the same cyclic order.
-//   - Does not recompute cost.
+//   - Does not recompute cost or preserve asymmetric directed arc weights.
 //
 // Inputs:
 //   - tour: closed tour with len n+1 and tour[0]==tour[n].
@@ -328,9 +328,12 @@ func RotateTourToStart(tour []int, start int) ([]int, error) {
 //
 // Notes:
 //   - The permutation part is assumed already valid.
+//   - Use only for cost-symmetric routes or for a purely structural orientation
+//     choice where the resulting directed objective is recomputed separately.
 //
 // AI-Hints:
 //   - Do not reverse the duplicated closing vertex.
+//   - Never apply this helper to ATSP output while retaining its old Cost.
 func CanonicalizeOrientationInPlace(tour []int) error {
 	if len(tour) < 3 {
 		return ErrDimensionMismatch
@@ -547,6 +550,11 @@ func tourCostDense(d *matrix.Dense, tour []int) (float64, error) {
 			return 0, ErrNegativeWeight
 		}
 
+		// Finite non-negative inputs may still overflow the float64 accumulator.
+		// Report arithmetic failure before display rounding; +Inf is not a route cost.
+		if sum > math.MaxFloat64-w {
+			return 0, ErrNumericOverflow
+		}
 		sum += w
 	}
 
@@ -639,90 +647,92 @@ func tourCostGeneric(m matrix.Matrix, tour []int) (float64, error) {
 			return 0, ErrNegativeWeight
 		}
 
+		// Finite non-negative inputs may still overflow the float64 accumulator.
+		// Report arithmetic failure before display rounding; +Inf is not a route cost.
+		if sum > math.MaxFloat64-w {
+			return 0, ErrNumericOverflow
+		}
 		sum += w
 	}
 
 	return round1e9(sum), nil
 }
 
-// edgeCost fetches and validates one directed edge weight u->v through matrix.Matrix.
-// Local-search deltas use this helper so sentinel error behavior remains centralized
-// across 2-opt, 3-opt, and candidate move evaluation.
+// canonicalizeTourIfSymmetric changes orientation only for undirected costs.
+// A reversed ATSP tour uses different directed arcs, so canonical reversal could
+// change the objective while the Result.Cost still describes the original path.
 //
 // Implementation:
-//   - Stage 1: Validate endpoint bounds against matrix dimensions.
-//   - Stage 2: Fetch weight through At(u,v).
-//   - Stage 3: Reject NaN, infinity, and negative weights.
-//   - Stage 4: Return the validated finite cost.
+//   - Stage 1: Leave an asymmetric tour untouched.
+//   - Stage 2: For a symmetric tour, select the established deterministic direction.
 //
 // Behavior highlights:
-//   - Does not mutate the matrix.
-//   - Works for symmetric and asymmetric matrices.
-//   - Preserves strict validation even in local-search fast paths.
+//   - Does not reorder any vertex in asymmetric mode.
+//   - Preserves the existing orientation rule for symmetric modes.
 //
 // Inputs:
-//   - m: matrix backend.
-//   - u: source local vertex.
-//   - v: target local vertex.
+//   - tour: caller-owned closed tour, modified only in symmetric mode.
+//   - symmetric: true when the configured TSP cost relation is undirected.
 //
 // Returns:
-//   - float64: finite non-negative directed edge weight.
-//   - error: nil when the edge is valid.
+//   - error: nil on success or the underlying orientation-validation error.
 //
 // Errors:
-//   - ErrDimensionMismatch for nil or malformed matrix.
-//   - ErrInvalidVertex for out-of-range endpoints.
-//   - ErrIncompleteGraph for infinite weights.
-//   - ErrNaNWeight for NaN weights.
-//   - ErrNegativeWeight for negative weights.
+//   - ErrInvalidTour or ErrDimensionMismatch from CanonicalizeOrientationInPlace.
 //
 // Determinism:
-//   - Pure indexed edge lookup.
+//   - Fixed first/last neighbor comparison in symmetric mode; identity otherwise.
+//
+// Complexity:
+//   - Time O(n) in symmetric mode, O(1) otherwise; Space O(1).
+//
+// Notes:
+//   - This helper does not validate a full Hamiltonian tour; callers must do so.
+//
+// AI-Hints:
+//   - Never infer symmetry from the numeric appearance of a single tour's cost.
+func canonicalizeTourIfSymmetric(tour []int, symmetric bool) error {
+	if !symmetric {
+		return nil
+	}
+	return CanonicalizeOrientationInPlace(tour)
+}
+
+// round1e9 preserves the legacy nine-decimal presentation for ordinary costs.
+// Finite values whose scaled magnitude is unrepresentable are returned unchanged:
+// rounding at 1e-9 absolute precision cannot change their float64 representation.
+// Implementation:
+//   - Stage 1: Keep special values unchanged for callers that handle them separately.
+//   - Stage 2: Avoid an overflowing intermediate x*roundScale.
+//   - Stage 3: Apply the historical math.Round arithmetic on representable scales.
+//
+// Behavior highlights:
+//   - No matching decision uses this display helper.
+//
+// Inputs:
+//   - x: previously accumulated float64 cost.
+//
+// Returns:
+//   - float64: finite display-rounded value when x is finite.
+//
+// Errors:
+//   - None; cost accumulators must check genuine sum overflow before calling.
+//
+// Determinism:
+//   - Fixed IEEE-754 arithmetic in the original rounding branch.
 //
 // Complexity:
 //   - Time O(1), Space O(1).
 //
 // Notes:
-//   - This helper intentionally does not check u==v; algorithm-level validation owns that policy.
+//   - This is a compatibility boundary; the match.Result.Cost remains raw.
 //
 // AI-Hints:
-//   - Do not duplicate weight validation in local-search code; call this helper.
-func edgeCost(m matrix.Matrix, u, v int) (float64, error) {
-	if err := matrix.ValidateNotNil(m); err != nil {
-		return 0, errors.Join(ErrNilDistanceMatrix, err)
-	}
-
-	nr := m.Rows()
-	nc := m.Cols()
-
-	if nr != nc || nr <= 0 {
-		return 0, ErrNonSquare
-	}
-	if u < 0 || u >= nr || v < 0 || v >= nr {
-		return 0, ErrInvalidTour
-	}
-
-	w, err := m.At(u, v)
-	if err != nil {
-		return 0, errors.Join(ErrDimensionMismatch, err)
-	}
-	if math.IsNaN(w) || math.IsInf(w, -1) {
-		return 0, errors.Join(ErrNaNInf, matrix.ErrNaNInf)
-	}
-	if math.IsInf(w, 1) {
-		return 0, ErrIncompleteGraph
-	}
-	if w < 0 {
-		return 0, ErrNegativeWeight
-	}
-
-	return w, nil
-}
-
-// round1e9 returns x rounded to 1e-9 absolute precision.
-// This keeps costs stable across platforms without affecting algorithmic correctness.
-//
-// Complexity: O(1).
+//   - Guard multiplication, not the divided result; +Inf/scale stays +Inf.
 func round1e9(x float64) float64 {
+	if math.IsNaN(x) || math.IsInf(x, 0) || math.Abs(x) > math.MaxFloat64/roundScale {
+		return x
+	}
+
 	return math.Round(x*roundScale) / roundScale
 }

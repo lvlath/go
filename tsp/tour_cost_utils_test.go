@@ -8,7 +8,7 @@ package tsp_test
 import (
 	"errors"
 	"math"
-	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/lvlath/go/matrix"
@@ -174,7 +174,7 @@ func TestCanonicalizeOrientationInPlace(t *testing.T) {
 		if err := tsp.CanonicalizeOrientationInPlace(tour); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if !reflect.DeepEqual(tour, want) {
+		if !slices.Equal(tour, want) {
 			t.Fatalf("canonicalize mismatch:\n got:  %v\n want: %v", tour, want)
 		}
 	})
@@ -186,7 +186,7 @@ func TestCanonicalizeOrientationInPlace(t *testing.T) {
 		if err := tsp.CanonicalizeOrientationInPlace(tour); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if !reflect.DeepEqual(tour, want) {
+		if !slices.Equal(tour, want) {
 			t.Fatalf("unexpected change:\n got:  %v\n want: %v", tour, want)
 		}
 	})
@@ -210,7 +210,7 @@ func TestShortcutEulerianToHamiltonian(t *testing.T) {
 	wantA := []int{0, 1, 2, 3, 0}
 	wantB := []int{0, 3, 2, 1, 0}
 
-	if !reflect.DeepEqual(h, wantA) && !reflect.DeepEqual(h, wantB) {
+	if !slices.Equal(h, wantA) && !slices.Equal(h, wantB) {
 		t.Fatalf("shortcut result mismatch:\n got:  %v\n want: %v or %v", h, wantA, wantB)
 	}
 }

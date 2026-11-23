@@ -65,10 +65,15 @@ func ExampleSolveMatrix_coldChainLogistics() {
 		18, 14, 46, 26, 48, 0,
 	}
 
-	dist, _ := matrix.NewDense(len(locationNames), len(locationNames))
-	// Static example data is fixed and auditable. Do not ignore setup errors for
-	// dynamic data in production code.
-	_ = dist.Fill(coldChainTransitMinutes)
+	dist, err := matrix.NewDense(len(locationNames), len(locationNames))
+	if err != nil {
+		fmt.Println("cold-chain matrix allocation failed:", err)
+		return
+	}
+	if err = dist.Fill(coldChainTransitMinutes); err != nil {
+		fmt.Println("cold-chain matrix initialization failed:", err)
+		return
+	}
 
 	opts := tsp.DefaultOptions()
 	opts.Algo = tsp.Christofides
@@ -81,6 +86,10 @@ func ExampleSolveMatrix_coldChainLogistics() {
 	result, err := tsp.SolveMatrix(dist, nil, opts)
 	if err != nil {
 		fmt.Printf("cold-chain route failed: %v\n", err)
+		return
+	}
+	if result == nil {
+		fmt.Println("unexpected nil route result")
 		return
 	}
 
@@ -120,7 +129,7 @@ func ExampleSolveMatrix_coldChainLogistics() {
 // risk/fuel costs, not symmetric distance.
 //
 // Algorithm choice:
-// TwoOptOnly with Symmetric=false uses the package's directed 2-opt* behavior.
+// TwoOptOnly with Symmetric=false evaluates the costs of every reversed directed arc.
 // This is a scalable local-search mode, not an exact ATSP certificate. It is
 // useful when dispatch must react quickly and the cost model is directional.
 func ExampleSolveMatrix_cashInTransitAsymmetric() {
@@ -146,10 +155,15 @@ func ExampleSolveMatrix_cashInTransitAsymmetric() {
 		11, 15, 13, 10, 0,
 	}
 
-	dist, _ := matrix.NewDense(len(stopNames), len(stopNames))
-	// Static example data is fixed and auditable. Do not ignore setup errors for
-	// dynamic data in production code.
-	_ = dist.Fill(directedRiskCost)
+	dist, err := matrix.NewDense(len(stopNames), len(stopNames))
+	if err != nil {
+		fmt.Println("directed-security matrix allocation failed:", err)
+		return
+	}
+	if err = dist.Fill(directedRiskCost); err != nil {
+		fmt.Println("directed-security matrix initialization failed:", err)
+		return
+	}
 
 	opts := tsp.DefaultOptions()
 	opts.Algo = tsp.TwoOptOnly
@@ -161,6 +175,10 @@ func ExampleSolveMatrix_cashInTransitAsymmetric() {
 	result, err := tsp.SolveMatrix(dist, nil, opts)
 	if err != nil {
 		fmt.Printf("cash-in-transit route failed: %v\n", err)
+		return
+	}
+	if result == nil {
+		fmt.Println("unexpected nil route result")
 		return
 	}
 
@@ -224,10 +242,15 @@ func ExampleSolveMatrix_semiconductorLaserDrilling() {
 		4.5, 9.0, 7.5, 4.7, 0,
 	}
 
-	dist, _ := matrix.NewDense(len(siteNames), len(siteNames))
-	// Static example data is fixed and auditable. Do not ignore setup errors for
-	// dynamic data in production code.
-	_ = dist.Fill(servoLatencyMilliseconds)
+	dist, err := matrix.NewDense(len(siteNames), len(siteNames))
+	if err != nil {
+		fmt.Println("laser-drilling matrix allocation failed:", err)
+		return
+	}
+	if err = dist.Fill(servoLatencyMilliseconds); err != nil {
+		fmt.Println("laser-drilling matrix initialization failed:", err)
+		return
+	}
 
 	opts := tsp.DefaultOptions()
 	opts.Algo = tsp.BranchAndBound
@@ -240,6 +263,10 @@ func ExampleSolveMatrix_semiconductorLaserDrilling() {
 	result, err := tsp.SolveMatrix(dist, nil, opts)
 	if err != nil {
 		fmt.Printf("laser drilling optimization failed: %v\n", err)
+		return
+	}
+	if result == nil {
+		fmt.Println("unexpected nil route result")
 		return
 	}
 

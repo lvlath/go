@@ -65,14 +65,14 @@ func (m testDense) Cols() int {
 }
 func (m testDense) At(i, j int) (float64, error) {
 	if i < 0 || i >= m.Rows() || j < 0 || j >= m.Cols() {
-		return 0, matrix.ErrIndexOutOfBounds
+		return 0, matrix.ErrOutOfRange
 	}
 
 	return m.a[i][j], nil
 }
 func (m testDense) Set(i, j int, v float64) error {
 	if i < 0 || i >= m.Rows() || j < 0 || j >= m.Cols() {
-		return matrix.ErrIndexOutOfBounds
+		return matrix.ErrOutOfRange
 	}
 	m.a[i][j] = v
 
@@ -103,14 +103,14 @@ func (m altDense) Cols() int {
 }
 func (m altDense) At(i, j int) (float64, error) {
 	if i < 0 || i >= m.Rows() || j < 0 || j >= m.Cols() {
-		return 0, matrix.ErrIndexOutOfBounds
+		return 0, matrix.ErrOutOfRange
 	}
 
 	return m.a[i][j], nil
 }
 func (m altDense) Set(i, j int, v float64) error {
 	if i < 0 || i >= m.Rows() || j < 0 || j >= m.Cols() {
-		return matrix.ErrIndexOutOfBounds
+		return matrix.ErrOutOfRange
 	}
 	m.a[i][j] = v
 
@@ -124,57 +124,6 @@ func (m altDense) Clone() matrix.Matrix {
 	}
 
 	return altDense{a: cp}
-}
-
-func denseFromRows(rows [][]float64) matrix.Matrix {
-	cp := make([][]float64, len(rows))
-	for i := range rows {
-		cp[i] = append([]float64(nil), rows[i]...)
-	}
-	return testDense{a: cp}
-}
-
-func denseWithNaN(n int) matrix.Matrix {
-	rows := completeUnitRows(n)
-	if n > 1 {
-		rows[0][1] = math.NaN()
-		rows[1][0] = math.NaN()
-	}
-	return testDense{a: rows}
-}
-
-func denseWithInf(n int, i int, j int) matrix.Matrix {
-	rows := completeUnitRows(n)
-	rows[i][j] = math.Inf(1)
-	rows[j][i] = math.Inf(1)
-	return testDense{a: rows}
-}
-
-func denseWithNegative(n int, i int, j int) matrix.Matrix {
-	rows := completeUnitRows(n)
-	rows[i][j] = -1
-	rows[j][i] = -1
-	return testDense{a: rows}
-}
-
-func denseNonZeroDiagonal(n int) matrix.Matrix {
-	rows := completeUnitRows(n)
-	rows[0][0] = 1
-	return testDense{a: rows}
-}
-
-func completeUnitRows(n int) [][]float64 {
-	rows := make([][]float64, n)
-	for i := 0; i < n; i++ {
-		rows[i] = make([]float64, n)
-		for j := 0; j < n; j++ {
-			if i == j {
-				continue
-			}
-			rows[i][j] = 1
-		}
-	}
-	return rows
 }
 
 // -----------------------------------------------------------------------------
@@ -203,13 +152,6 @@ func mustErrIs(t *testing.T, err, target error) {
 	t.Helper()
 	if !errors.Is(err, target) {
 		t.Fatalf("want %v, got %v", target, err)
-	}
-}
-
-func mustEqualInt(t *testing.T, got int, want int, op string) {
-	t.Helper()
-	if got != want {
-		t.Fatalf("%s: got %d, want %d", op, got, want)
 	}
 }
 
@@ -257,37 +199,6 @@ func mustEqualFloat(t *testing.T, got float64, want float64, eps float64, op str
 	}
 	if math.Abs(got-want) > eps {
 		t.Fatalf("%s: got %.17g, want %.17g, eps %.3g", op, got, want, eps)
-	}
-}
-
-// mustEqualStrings asserts exact equality of two string slices with a domain-specific
-// operation label. It avoids reflect.DeepEqual so result-projection failures are easier
-// to diagnose.
-func mustEqualStrings(t *testing.T, got []string, want []string, op string) {
-	t.Helper()
-
-	if len(got) != len(want) {
-		t.Fatalf("%s: len mismatch: got=%d want=%d; got=%v want=%v", op, len(got), len(want), got, want)
-	}
-
-	var index int
-	for index = 0; index < len(got); index++ {
-		if got[index] != want[index] {
-			t.Fatalf("%s: value mismatch at %d: got=%q want=%q; got=%v want=%v",
-				op, index, got[index], want[index], got, want)
-		}
-	}
-}
-
-func mustAdjEqual(t *testing.T, got [][]int, want [][]int) {
-	t.Helper()
-	if len(got) != len(want) {
-		t.Fatalf("adj rows: got %d, want %d", len(got), len(want))
-	}
-	for row := range got {
-		if !slices.Equal(got[row], want[row]) {
-			t.Fatalf("adj[%d]: got %v, want %v", row, got[row], want[row])
-		}
 	}
 }
 
@@ -486,14 +397,6 @@ func doubleAdj(adj [][]int) [][]int {
 	}
 
 	// Return the multigraph adjacency.
-	return cp
-}
-
-func cloneAdj(adj [][]int) [][]int {
-	cp := make([][]int, len(adj))
-	for i := range adj {
-		cp[i] = append([]int(nil), adj[i]...)
-	}
 	return cp
 }
 

@@ -239,6 +239,14 @@ func copyWeightsWithMode(dist matrix.Matrix, symmetric bool, complete bool) (wei
 		return weightBuffer{}, err
 	}
 
+	// Reject integer and float64 byte-length overflow before allocating dense weights.
+	// This is representability, not an artificial upper bound on the graph order.
+	if n > 0 {
+		maxInt := math.MaxInt
+		if n > maxInt/n || n*n > maxInt/8 {
+			return weightBuffer{}, ErrSizeOverflow
+		}
+	}
 	buffer := weightBuffer{
 		n: n,
 		w: make([]float64, n*n),

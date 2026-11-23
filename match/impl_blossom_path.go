@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2025-2026 katalvlaran
 
-// Package tsp realizes endpoint-aware augmenting paths for dense Blossom search.
+// Package match realizes endpoint-aware augmenting paths for dense Blossom search.
 // Search events identify top-level nodes, but matching mutation requires original
 // dense edge IDs. This file lifts contracted-blossom paths back into original edges.
 //
@@ -20,7 +20,7 @@
 //   - Do not reduce path steps to bare edge IDs before lifting.
 //   - Do not choose internal blossom direction by shortest path; parity decides validity.
 //   - Do not infer endpoint ownership from edge IDs alone.
-package tsp
+package match
 
 // blossomPathStep stores one oriented edge traversal between top-level nodes.
 // It is the unit consumed by augmenting-path lifting before mate[] is mutated.

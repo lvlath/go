@@ -247,9 +247,8 @@ func threeOptKernel(dist matrix.Matrix, initTour []int, opts Options, bestImprov
 
 	// Working copy and baseline tour cost (strict validation of current edges).
 	cur := make([]int, n+1)
-	copy(cur, initTour)              // keep caller’s slice immutable
-	cost, err := TourCost(dist, cur) // verifies no NaN/+Inf on existing arcs
-	if err != nil {
+	copy(cur, initTour) // keep caller’s slice immutable
+	if _, err = TourCost(dist, cur); err != nil {
 		return localSearchResult{}, err
 	}
 
@@ -340,7 +339,7 @@ func threeOptKernel(dist matrix.Matrix, initTour []int, opts Options, bestImprov
 					if opts.Symmetric {
 						for moveIndex = 0; moveIndex < len(symmetricThreeOptMoves); moveIndex++ {
 							if checkDeadline() {
-								local, finishErr := finishLocalSearchCurrent(cur, cost, accepted, true, n, opts.StartVertex)
+								local, finishErr := finishLocalSearchCurrent(cur, weights, accepted, true, n, opts.StartVertex, opts.Symmetric)
 								if finishErr != nil {
 									return localSearchResult{}, finishErr
 								}
@@ -365,7 +364,7 @@ func threeOptKernel(dist matrix.Matrix, initTour []int, opts Options, bestImprov
 								}
 
 								cur = next
-								cost += delta
+								// Final cost is recomputed from the published tour, not move deltas.
 								accepted++
 								found = true
 							} else if delta < bestDelta {
@@ -382,7 +381,7 @@ func threeOptKernel(dist matrix.Matrix, initTour []int, opts Options, bestImprov
 						}
 					} else {
 						if checkDeadline() {
-							local, finishErr := finishLocalSearchCurrent(cur, cost, accepted, true, n, opts.StartVertex)
+							local, finishErr := finishLocalSearchCurrent(cur, weights, accepted, true, n, opts.StartVertex, opts.Symmetric)
 							if finishErr != nil {
 								return localSearchResult{}, finishErr
 							}
@@ -402,7 +401,7 @@ func threeOptKernel(dist matrix.Matrix, initTour []int, opts Options, bestImprov
 							}
 
 							cur = next
-							cost += delta
+							// Final cost is recomputed from the published tour, not move deltas.
 							accepted++
 							found = true
 						} else if delta < bestDelta {
@@ -439,7 +438,7 @@ func threeOptKernel(dist matrix.Matrix, initTour []int, opts Options, bestImprov
 				return localSearchResult{}, err
 			}
 			cur = next
-			cost += bestDelta
+			// Final cost is recomputed from the selected arc order.
 			accepted++
 		}
 
@@ -452,7 +451,7 @@ func threeOptKernel(dist matrix.Matrix, initTour []int, opts Options, bestImprov
 		}
 	}
 
-	return finishLocalSearchCurrent(cur, cost, accepted, false, n, opts.StartVertex)
+	return finishLocalSearchCurrent(cur, weights, accepted, false, n, opts.StartVertex, opts.Symmetric)
 }
 
 // validateThreeOptMove verifies that a symmetric 3-opt move uses S1 and S2 exactly once.

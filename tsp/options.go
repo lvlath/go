@@ -151,12 +151,14 @@ type Options struct {
 //
 // Notes:
 //   - GreedyMatch is a selected algorithmic mode, not a side-channel downgrade.
-//   - BlossomMatch remains an explicit caller-selected policy for exact MWPM semantics.
+//   - The default already selects BlossomMatch; explicitly selecting it is useful
+//     when callers make the approximation contract visible at the call site.
 //
 // AI-Hints:
 //   - Do not add hidden heuristic substitution here.
 //   - Do not set Algo=Auto by default in a patch release.
-//   - Do not publish a 1.5 approximation ratio from the default GreedyMatch mode.
+//   - A 1.5 ratio also requires metric input; this constructor does not check
+//     the triangle inequality, so the caller must establish that hypothesis.
 func DefaultOptions() Options {
 	return Options{
 		StartVertex:         0,

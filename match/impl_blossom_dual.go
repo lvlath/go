@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2025-2026 katalvlaran
 
-// Package tsp implements the dual/slack subsystem for weighted Blossom search.
+// Package match implements the dual/slack subsystem for weighted Blossom search.
 // Dual movement exposes new tight edges when the current alternating forest has
 // no immediately applicable grow, shrink, augment, or expand event.
 //
@@ -20,7 +20,7 @@
 //   - Do not compute final matching cost from dual values.
 //   - Do not silently clamp large negative duals.
 //   - Do not change tie-breaking without updating deterministic tests.
-package tsp
+package match
 
 import "math"
 

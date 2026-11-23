@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2025-2026 katalvlaran
 
-// Package tsp mutates the committed matching during Blossom augmentation.
+// Package match mutates the committed matching during Blossom augmentation.
 // This file is the only Blossom layer allowed to change mate[] and mateEdge[].
 // All path composition and lifting must succeed before mutation begins.
 //
@@ -12,15 +12,15 @@
 //   - Reject non-alternating paths before any mutation.
 //
 // Boundaries:
-//   - Path lifting lives in blossom_path.go.
-//   - Forest discovery lives in blossom_forest.go.
-//   - Cycle contraction/expansion lives in blossom_contract.go.
+//   - Path lifting lives in impl_blossom_path.go.
+//   - Forest discovery lives in impl_blossom_forest.go.
+//   - Cycle contraction/expansion lives in impl_blossom_contract.go.
 //
 // AI-Hints:
 //   - Do not mutate mate[] before verifyAugmentingEdgeSequence succeeds.
 //   - Do not allow duplicate edges in an augmenting path.
 //   - Do not combine matching mutation with forest scanning.
-package tsp
+package match
 
 import "fmt"
 

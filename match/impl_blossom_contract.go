@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2025-2026 katalvlaran
 
-// Package tsp contracts and expands odd blossoms in dense weighted matching.
+// Package match contracts and expands odd blossoms in dense weighted matching.
 // Contraction turns a same-tree outer/outer odd cycle into one active top-level node;
 // expansion restores cycle children when weighted search requires reopening a blossom.
 //
@@ -13,15 +13,15 @@
 //   - Provide structural cleanup for non-search restoration paths.
 //
 // Boundaries:
-//   - Path lifting through contracted cycles lives in blossom_path.go.
-//   - mate[] mutation lives in blossom_augment.go.
-//   - Tight-edge discovery lives in blossom_forest.go.
+//   - Path lifting through contracted cycles lives in impl_blossom_path.go.
+//   - mate[] mutation lives in impl_blossom_augment.go.
+//   - Tight-edge discovery lives in impl_blossom_forest.go.
 //
 // AI-Hints:
 //   - Do not store only the closing shrink edge.
 //   - Do not clear forest labels during search expansion.
 //   - Do not use a separate children slice; cycles are the child-order source of truth.
-package tsp
+package match
 
 // shrink contracts an odd alternating cycle into one active top-level blossom node.
 // The new blossom replaces the cycle base node in the alternating forest, so root
@@ -466,11 +466,10 @@ func (e *blossomEngine) contractCycleIntoBlossom(node int) error {
 //   - Time O(c + members), Space O(1).
 //
 // Notes:
-//   - Structural cleanup remains in restoreChildrenAsTopLevel.
+//   - Contracted node storage is cleared only after forest-aware expansion succeeds.
 //   - Search expansion must preserve enough labels for continued alternating-tree processing.
 //
 // AI-Hints:
-//   - Do not call restoreChildrenAsTopLevel directly from weighted search expansion.
 //   - Do not reset all child labels to blossomUnlabeled here.
 func (e *blossomEngine) expand(node int) error {
 	if node < e.problem.n || node >= len(e.active) {
@@ -681,85 +680,6 @@ func (e *blossomEngine) expandInnerBlossomInForest(node int) error {
 	e.parent[node] = noNode
 	e.label[node] = blossomUnlabeled
 	e.labelEdge[node] = noEdge
-	e.treeRoot[node] = noNode
-
-	return nil
-}
-
-// restoreChildrenAsTopLevel reverses one blossom contraction outside the weighted search
-// expansion path. It reactivates child nodes, restores original-vertex ownership, clears
-// child forest labels, and releases the contracted node storage.
-//
-// Implementation:
-//   - Stage 1: Validate and read stored cycle metadata.
-//   - Stage 2: Reactivate every child node.
-//   - Stage 3: Restore inBlossom ownership for every original member of each child.
-//   - Stage 4: Clear child label, parent, labelEdge, and treeRoot state.
-//   - Stage 5: Clear contracted node members, cycle metadata, base, dual, activity, and forest state.
-//
-// Behavior highlights:
-//   - Does not mutate mate[] or mateEdge[].
-//   - Intended for structural cleanup, not inner-blossom search expansion.
-//   - Leaves children active but outside the alternating forest.
-//
-// Inputs:
-//   - node: allocated contracted blossom node.
-//
-// Returns:
-//   - error: nil after restoration and cleanup.
-//
-// Errors:
-//   - ErrInvalidMatching for malformed cycle metadata, invalid child nodes,
-//     or invalid original member IDs.
-//
-// Determinism:
-//   - Restores children in stored cycle order.
-//
-// Complexity:
-//   - Time O(k), Space O(1), where k is total restored member count.
-//
-// Notes:
-//   - Search expansion should use expandInnerBlossomInForest instead.
-//
-// AI-Hints:
-//   - Do not use this as a replacement for zero-dual inner expansion.
-//   - Do not mutate matching state here.
-func (e *blossomEngine) restoreChildrenAsTopLevel(node int) error {
-	steps, err := e.cycleSteps(node)
-	if err != nil {
-		return err
-	}
-
-	for _, step := range steps {
-		child := step.node
-		if child < 0 || child >= len(e.active) {
-			return ErrInvalidMatching
-		}
-
-		e.active[child] = true
-
-		for _, vertex := range e.members[child] {
-			if vertex < 0 || vertex >= e.problem.n {
-				return ErrInvalidMatching
-			}
-
-			e.inBlossom[vertex] = child
-		}
-
-		e.label[child] = blossomUnlabeled
-		e.labelEdge[child] = noEdge
-		e.parent[child] = noNode
-		e.treeRoot[child] = noNode
-	}
-
-	e.members[node] = nil
-	e.cycles[node] = nil
-	e.base[node] = noVertex
-	e.dual[node] = 0
-	e.active[node] = false
-	e.label[node] = blossomUnlabeled
-	e.labelEdge[node] = noEdge
-	e.parent[node] = noNode
 	e.treeRoot[node] = noNode
 
 	return nil

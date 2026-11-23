@@ -262,6 +262,7 @@ Read these files as a learning path. `doc.go` files define implemented package c
 | 9    | [`DTW.md`](DTW.md)                         | `Align`, `AlignCostMatrix`, `AlignMatrix`, `AlignBounded`, exact `Search`, numeric and path artifacts.                         |
 | 9a   | [`DTW_SEARCH.md`](DTW_SEARCH.md)           | Fixed-length exact top-K, certified LB_Keogh, workers, budgets, and partial-result law.                                        |
 | 10   | [`TSP.md`](TSP.md)                         | Matrix-backed tours, exact regimes, Christofides, Blossom matching, local search, timeouts.                                    |
+| 10a  | [`MATCH.md`](MATCH.md)                     | Ordered subset mapping, weighted Blossom, explicit Greedy, raw costs, nilable results and TSP separation.                      |
 | 11   | [`GRID_GRAPH.md`](GRID_GRAPH.md)           | Lattice topology for traversal/routing demos and pathfinding fixtures.                                                         |
 | 12   | [`FAQ_&_TIPS.md`](FAQ_%26_TIPS.md)         | Troubleshooting, package selection, testing/benchmark/documentation pitfalls.                                                  |
 | 13   | [`lvlath_UES.md`](lvlath_UES.md)           | Universal engineering standard for package quality and contribution discipline.                                                |
@@ -274,7 +275,7 @@ New to lvlath:
   CORE -> BFS -> DFS -> DIJKSTRA -> MATRICES
 
 Working on optimization:
-  DIJKSTRA -> MST -> FLOW -> TSP
+  DIJKSTRA -> MST -> FLOW -> MATRICES -> MATCH -> TSP
 
 Working on numeric/time-series workflows:
   SERIES -> PAA -> SAX -> approximate candidate ranking -> DTW refinement
@@ -306,7 +307,8 @@ Working on numeric/time-series workflows:
   SERIES -> frozen raw splits -> tfsax.ValidateWindowRecords -> exact DTW oracle vs SAX ranking (research only)
   SAX (Euclidean screening) != DTW (nonlinear alignment)
   TFSAX research gate != production encoder or certified DTW pruning
-  MATRICES -> TSP
+  MATRICES -> MATCH.Perfect -> detached original-index pair selection
+  MATRICES -> TSP (which consumes MATCH inside metric Christofides)
 
 Contributing:
   lvlath_UES -> CONTRIBUTING -> package doc.go -> docs/{PACKAGE}.md
@@ -478,7 +480,7 @@ rng.Factory.Stream(Seed,pathID)      application Sampler
 
 2. **Different algorithms answer different questions**
 
-   BFS minimizes hops. Dijkstra minimizes non-negative route cost. MST minimizes selected backbone cost. Flow maximizes feasible throughput. DTW minimizes temporal alignment cost. TSP minimizes closed-tour cost.
+   BFS minimizes hops. Dijkstra minimizes non-negative route cost. MST minimizes selected backbone cost. Flow maximizes feasible throughput. MATCH partitions selected matrix vertices into disjoint pairs. DTW minimizes temporal alignment cost. TSP minimizes closed-tour cost.
 
 3. **Result artifacts carry meaning**
 
@@ -825,6 +827,56 @@ Good questions:
 * “Which cut limits throughput?”
 * “What residual capacity remains after routing maximum flow?”
 
+### Match: independent assignment of disjoint pairs, not a traveling route
+
+Use `match` when each selected vertex must participate in **exactly one** pair:
+for example, pairing 20 handoff appointments, backup radio stations or redundant
+control modules. `match.Perfect` accepts an even ordered subset of original
+`matrix.Matrix` indices and returns global-index `[]match.Pair` plus raw cost.
+It does not output a path or mutate a graph.
+
+```go
+// The matrix encodes the costs of three possible pairings of four tasks.
+// The example prints an exact optimum; the input order is intentional.
+weights, err := matrix.NewDense(4, 4)
+if err != nil {
+    return err
+}
+if err := weights.Fill([]float64{
+    0, 2, 2, 1,
+    2, 0, 100, 2,
+    2, 100, 0, 3,
+    1, 2, 3, 0,
+}); err != nil {
+    return err
+}
+result, err := match.Perfect(weights, []int{0, 1, 2, 3})
+if err != nil {
+    return err
+}
+fmt.Println(result.Pairs, result.Cost) // [{0 2} {1 3}] 4
+```
+
+The above fragment belongs inside a function that returns `error`; it assumes
+imports `fmt`, `github.com/lvlath/go/matrix` and `github.com/lvlath/go/match`.
+For a ready-to-run program see [`MATCH.md`](MATCH.md) and
+[`match/example_test.go`](../match/example_test.go). By explicit choice,
+`match.GreedyPerfect` would instead produce cost **101** for this fixture.
+The three possible perfect-matching costs are **5**, **4**, and **101**.
+
+Do not sort a caller-supplied subset before solving: original order controls
+local Blossom indices and Greedy tie selection. `Result.Pairs` are normalized
+for publication *after* solving, and each index refers to the source matrix,
+not an index in the selected subset. A nonempty call validates the **whole**
+input matrix; empty selections succeed without matrix reads. Neither mode
+checks triangle inequality, and Greedy cannot support a Christofides 1.5
+approximation proof.
+
+The direction of dependencies is `tsp -> match -> matrix -> core`. In the
+Christofides pipeline, TSP owns MST, adjacency and Eulerian traversal, while
+`match` owns only the detached numerical pair selection. The TSP adapter
+checks completeness of all pairs before adding any undirected edge.
+
 ### TSP: closed tour over a complete cost model
 
 Use TSP when the result must visit every required stop exactly once and return to start.
@@ -1142,7 +1194,8 @@ the three required tall/wide/square SVD benchmarks are in
 `matrix` is not isolated from graph algorithms:
 
 * Dijkstra-style route outputs can become dense distance surfaces.
-* TSP consumes matrix-backed complete cost models.
+* `match` consumes validated complete matrix weights to pair an even ordered subset; it publishes original indices, not routes.
+* TSP consumes matrix-backed complete cost models; Christofides calls `match` to repair odd MST degrees.
 * Spectral analysis starts from adjacency or symmetrized adjacency.
 * Flow/cut analysis can use incidence-style structural thinking.
 * DTW can align matrix rows as multivariate time steps through `dtw.AlignMatrix`.
@@ -5424,7 +5477,7 @@ Use this tutorial as the entry point, then move into package-specific material:
 
 > If you are doing routing/optimization:
 >
->   [`DIJKSTRA.md`](DIJKSTRA.md) -> [`MST.md`](MST.md) -> [`FLOW.md`](FLOW.md) -> [`TSP.md`](TSP.md)
+>   [`DIJKSTRA.md`](DIJKSTRA.md) -> [`MST.md`](MST.md) -> [`FLOW.md`](FLOW.md) -> [`MATCH.md`](MATCH.md) -> [`TSP.md`](TSP.md)
 
 > If you are validating telemetry or preparing causal features:
 >

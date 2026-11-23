@@ -212,6 +212,11 @@ func SolveGraph(g *core.Graph, opts Options) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The matrix facade must never report success without a publishable result.
+	// Guard this boundary before attaching graph-specific metadata to the result.
+	if result == nil {
+		return nil, ErrNilResult
+	}
 
 	if opts.RunMetricClosure {
 		result.MetricClosureApplied = true
@@ -404,7 +409,7 @@ func BranchAndBoundSolve(dist matrix.Matrix, opts Options) (*Result, error) {
 //   - Neighborhood scan order is fixed unless ShuffleNeighborhood is explicitly enabled.
 //
 // Complexity:
-//   - Time O(iterations*n^2), Space O(n).
+//   - Time O(iterations*n^2) symmetric or O(iterations*n^3) directed; Space O(n).
 //
 // Notes:
 //   - This direct wrapper does not attach IDs.

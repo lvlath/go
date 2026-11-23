@@ -328,8 +328,9 @@ func heldKarpDP(weights weightBuffer, opts Options) ([]int, float64, error) {
 		cur = prev
 	}
 
-	// Canonicalize direction (fixed start) and enforce final tour invariants.
-	err := CanonicalizeOrientationInPlace(tour)
+	// Only undirected cycles admit a cost-preserving reversal. For ATSP,
+	// preserve the directed optimum reconstructed from the DP predecessor table.
+	err := canonicalizeTourIfSymmetric(tour, opts.Symmetric)
 	if err != nil {
 		return nil, 0, err
 	}

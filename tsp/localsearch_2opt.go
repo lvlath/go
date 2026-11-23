@@ -1,30 +1,30 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2025-2026 katalvlaran
 
-// Package tsp - 2-opt local search engine (symmetric 2-opt and asymmetric 2-opt*).
+// Package tsp implements deterministic 2-opt search on directed and undirected tours.
+// Both modes reverse the selected segment; directed costs additionally account for
+// every reversed internal arc, preserving the Hamiltonian-cycle invariant.
 //
-// TwoOpt performs deterministic first-improvement 2-opt on a closed tour.
-//   - Symmetric case (opts.Symmetric == true): classic 2-opt reverses segment [i..k].
-//     Δ = w(a,c) + w(b,d) − w(a,b) − w(c,d), with a=T[i−1], b=T[i], c=T[k], d=T[k+1].
-//   - Asymmetric case (opts.Symmetric == false): 2-opt* “tail swap”, no reversal.
-//     Replace arcs (a→b),(c→d) with (a→d),(c→b); Δ = w(a,d) + w(c,b) − w(a,b) − w(c,d).
+// For cuts a=T[i-1], b=T[i], c=T[k], d=T[k+1], the new boundary arcs
+// are a→c and b→d. The asymmetric delta also includes the reversal cost
+// of every original arc T[t]→T[t+1] for i<=t<k.
 //
 // Design:
 //   - Deterministic scanning order; no RNG usage (seed reserved for future shuffles).
 //   - Strict sentinel errors only (see types.go). No fmt.Errorf in hot paths.
-//   - Defensive but allocation-conscious: O(1) per-check; O(n) only on accepted move.
+//   - Symmetric candidate checks are O(1); directed checks inspect reversed arcs.
 //   - Soft time budget via periodic deadline checks.
 //   - Cost stabilized to 1e−9 via round1e9.
 //
 // Contracts:
 //   - dist is a complete n×n final solver matrix validated through copyCompleteWeights.
 //   - tour is a *closed* Hamiltonian cycle (len==n+1, tour[0]==tour[n]==opts.StartVertex).
-//   - For asymmetric instances, the solver uses 2-opt* (does not reverse segments).
+//   - Directed input retains the original start and validates all reversed arcs.
 //
 // Complexity:
-//   - One pass: O(n²) candidate checks; first-improvement restarts after each accepted move.
-//   - Each accepted move costs O(1) (symmetric) or O(n) (asymmetric, rebuild successor list).
-//   - Overall: O(iter*n²) time typical; O(n) extra space on improvements only.
+//   - One pass: O(n²) symmetric or O(n³) directed candidate work.
+//   - Every accepted reversal costs O(n) worst-case, using O(1) extra space.
+//   - First-improvement restarts after each accepted move.
 package tsp
 
 import (
@@ -67,7 +67,7 @@ import (
 //   - Fixed candidate scan order unless the kernel explicitly supports shuffled neighborhoods.
 //
 // Complexity:
-//   - Time O(iterations*n^2), Space O(n).
+//   - Time O(iterations*n^2) symmetric, O(iterations*n^3) directed; Space O(n).
 //
 // Notes:
 //   - IDs and metric closure metadata are attached only by SolveMatrix.
@@ -95,18 +95,18 @@ func twoOptSearch(dist matrix.Matrix, initTour []int, opts Options) (*Result, er
 	return publishLocalSearchResult(local, nil, solverOptions, TwoOptOnly, false), nil
 }
 
-// twoOptKernel runs deterministic first-improvement 2-opt / 2-opt* and returns
+// twoOptKernel runs deterministic first-improvement 2-opt and returns
 // structured local-search metadata for canonical facades.
 //
 // Implementation:
 //   - Stage 1: Validate options, tour shape, complete weights, and tour invariants.
 //   - Stage 2: Copy the input tour and compute baseline cost.
 //   - Stage 3: Scan candidate pairs in deterministic order and apply first improvements.
-//   - Stage 4: Publish a valid localSearchResult on success, move cap, or timeout.
+//   - Stage 4: Verify the selected tour and compute its cost from stored arc weights.
 //
 // Behavior highlights:
 //   - Symmetric mode reverses one segment.
-//   - ATSP mode uses orientation-preserving 2-opt* tail rewiring.
+//   - ATSP mode also reverses the segment, but pays for reversed directed internal arcs.
 //   - Timeout with a current valid tour returns localSearchResult plus ErrTimeLimit.
 //
 // Inputs:
@@ -128,8 +128,9 @@ func twoOptSearch(dist matrix.Matrix, initTour []int, opts Options) (*Result, er
 //   - First-improvement restarts scanning after every accepted move.
 //
 // Complexity:
-//   - Time O(iter*n^2), Space O(n).
-//   - Symmetric accepted moves reverse O(k-i); ATSP accepted moves rebuild O(n).
+//   - Time O(iter*n^2) for symmetric input or O(iter*n^3) for directed input.
+//   - Space O(n); directed candidate work includes O(k-i) reversed arcs.
+//   - Accepted moves reverse O(k-i) vertices in place.
 //
 // Notes:
 //   - iterations counts accepted moves, not candidate evaluations.
@@ -138,8 +139,8 @@ func twoOptSearch(dist matrix.Matrix, initTour []int, opts Options) (*Result, er
 // AI-Hints:
 //   - Do not return nil tour on ErrTimeLimit after a valid current tour exists.
 //   - Do not let +Inf into final local-search kernels.
-//   - High complexity is required to maintain the ultra-tight inner loop execution speed.
-//   - Function calls inside this kernel would severely degrade TSP optimization performance.
+//   - Directed reversals must include the full internal arc-difference sum.
+//   - Two disconnected subtours cannot be published as a Hamiltonian cycle.
 //
 // nolint:gocyclo
 func twoOptKernel(dist matrix.Matrix, initTour []int, opts Options) (localSearchResult, error) {
@@ -174,8 +175,7 @@ func twoOptKernel(dist matrix.Matrix, initTour []int, opts Options) (localSearch
 	copy(cur, initTour)
 
 	// Baseline cost with strict checks (rejects +Inf/NaN on existing edges).
-	cost, err := TourCost(dist, cur)
-	if err != nil {
+	if _, err = TourCost(dist, cur); err != nil {
 		return localSearchResult{}, err
 	}
 
@@ -209,29 +209,24 @@ func twoOptKernel(dist matrix.Matrix, initTour []int, opts Options) (localSearch
 
 		// Variables reused in inner loops to avoid re-declarations in hot path.
 		var (
-			a, b, c, d    int     // boundary endpoints around (i,k)
-			delta         float64 // candidate improvement (negative is good)
-			wab, wad, wcb float64 // baseline / new arcs (ATSP)
-			wcd, wac, wbd float64 // baseline / new arcs (symmetric)
-			i, k          int     // candidate cut indices, 1 ≤ i < k ≤ n−1
+			a, b, c, d int     // boundary endpoints around (i,k)
+			delta      float64 // candidate improvement (negative is good)
+			wab, wcd   float64 // removed boundary arc weights
+			wac, wbd   float64 // replacement boundary arc weights
+			i, k       int     // candidate cut indices, 1 ≤ i < k ≤ n−1
 		)
 
 		// Scan all candidate pairs (i,k) with 1 ≤ i < k ≤ n−1.
-		// In 2-opt* (ATSP) we skip (i==1 && k==n−1) to avoid creating start→start directly.
+		// The fixed start is outside the reversed segment in either mode.
 		for i = 1; i <= n-2; i++ {
 			for k = i + 1; k <= n-1; k++ {
 				if checkDeadline() {
-					local, finishErr := finishLocalSearchCurrent(cur, cost, accepted, true, n, opts.StartVertex)
+					local, finishErr := finishLocalSearchCurrent(cur, weights, accepted, true, n, opts.StartVertex, opts.Symmetric)
 					if finishErr != nil {
 						return localSearchResult{}, finishErr
 					}
 					return local, ErrTimeLimit
 				}
-				if !opts.Symmetric && i == 1 && k == n-1 {
-					// Would connect start→start in the middle of the tour; skip.
-					continue
-				}
-
 				// a=T[i−1], b=T[i], c=T[k], d=T[k+1]
 				a = cur[i-1]
 				b = cur[i]
@@ -260,32 +255,43 @@ func twoOptKernel(dist matrix.Matrix, initTour []int, opts Options) (localSearch
 						continue // not improving
 					}
 				} else {
-					// ATSP - 2-opt* (no reversal). Replace (a→b),(c→d) with (a→d),(c→b).
+					// A two-cut tail-swap of a single directed cycle would split it
+					// into disjoint subtours. Instead, reverse [i..k] as a genuine
+					// Hamiltonian 2-opt move. Unlike the symmetric case, each
+					// internal directed arc changes direction and contributes to Δ.
 					wab = weights.at(a, b)
 					wcd = weights.at(c, d)
-					wad = weights.at(a, d)
-					wcb = weights.at(c, b)
-
-					if math.IsInf(wad, 0) || math.IsInf(wcb, 0) {
-						continue // candidate would introduce missing arcs
+					wac = weights.at(a, c)
+					wbd = weights.at(b, d)
+					if math.IsInf(wac, 0) || math.IsInf(wbd, 0) {
+						continue
 					}
-					delta = (wad + wcb) - (wab + wcd)
-					if delta < -eps {
-						// Apply by rewiring successors and rebuilding the sequence (O(n)).
-						cur = applyTwoOptStar(cur, opts.StartVertex, i, k)
-					} else {
-						continue // not improving
+					delta = (wac + wbd) - (wab + wcd)
+					for arc := i; arc < k; arc++ {
+						forward := weights.at(cur[arc], cur[arc+1])
+						reverse := weights.at(cur[arc+1], cur[arc])
+						if math.IsInf(reverse, 0) {
+							delta = math.Inf(1)
+							break
+						}
+						delta += reverse - forward
+					}
+					if delta >= -eps {
+						continue
+					}
+					if err = reverseArcInPlace(cur, i, k); err != nil {
+						return localSearchResult{}, err
 					}
 				}
 
-				// Update cost and bookkeeping after an accepted move.
-				cost += delta
+				// Record the committed improvement. Final cost is recomputed
+				// from the published tour to avoid accumulating numerical drift.
 				accepted++
 				improved = true
 
 				// Guards.
 				if maxIters > 0 && accepted >= maxIters {
-					return finishLocalSearchCurrent(cur, cost, accepted, false, n, opts.StartVertex)
+					return finishLocalSearchCurrent(cur, weights, accepted, false, n, opts.StartVertex, opts.Symmetric)
 				}
 
 				// First-improvement policy: restart scanning from the beginning.
@@ -302,83 +308,5 @@ func twoOptKernel(dist matrix.Matrix, initTour []int, opts Options) (localSearch
 		}
 	}
 
-	return finishLocalSearchCurrent(cur, cost, accepted, false, n, opts.StartVertex)
-}
-
-// applyTwoOptStar applies an asymmetric 2-opt* move to a closed tour without reversing
-// the middle segment. It rewires two outgoing arcs and reconstructs the resulting cycle
-// from a successor representation.
-//
-// Notation for closed tour T of length n+1:
-//   - 1 <= i < k <= n-1.
-//   - a=T[i-1], b=T[i], c=T[k], d=T[k+1].
-//   - Remove arcs a->b and c->d.
-//   - Add arcs a->d and c->b.
-//
-// Implementation:
-//   - Stage 1: Build succ[v] from the current closed tour.
-//   - Stage 2: Rewire succ[a]=d and succ[c]=b.
-//   - Stage 3: Follow successors from start for n steps.
-//   - Stage 4: Append start as the closing vertex.
-//
-// Behavior highlights:
-//   - Allocates a fresh tour.
-//   - Does not reverse tour[i:k].
-//   - Intended for ATSP-compatible local search.
-//   - Executed only after a move has been accepted by delta evaluation.
-//
-// Inputs:
-//   - tour: closed tour.
-//   - start: fixed start vertex.
-//   - i: first cut index.
-//   - k: second cut index.
-//
-// Returns:
-//   - []int: fresh closed tour after the 2-opt* move.
-//
-// Errors:
-//   - None. Caller must pass a validated accepted move.
-//
-// Determinism:
-//   - Pure successor rewiring and deterministic reconstruction.
-//
-// Complexity:
-//   - Time O(n), Space O(n).
-//
-// Notes:
-//   - Symmetric 2-opt uses segment reversal instead.
-//
-// AI-Hints:
-//   - Do not use reverseArcInPlace for 2-opt*; it changes the wrong arcs for ATSP.
-func applyTwoOptStar(tour []int, start, i, k int) []int {
-	n := len(tour) - 1
-
-	// Build succ[v] from tour - one pass over n arcs of the cycle.
-	succ := make([]int, n)
-	var p, u, v int
-	for p = 0; p < n; p++ {
-		u = tour[p]
-		v = tour[p+1]
-		succ[u] = v
-	}
-	a := tour[i-1]
-	b := tour[i]
-	c := tour[k]
-	d := tour[k+1]
-
-	// Rewire successors to encode the 2-opt* swap: (a→d) and (c→b).
-	succ[a] = d
-	succ[c] = b
-
-	// Rebuild the sequence by chasing successors from the fixed start vertex.
-	out := make([]int, n+1)
-	cur := start
-	var idx int
-	for idx = 0; idx < n; idx++ {
-		out[idx] = cur
-		cur = succ[cur]
-	}
-	out[n] = start // close the cycle
-
-	return out
+	return finishLocalSearchCurrent(cur, weights, accepted, false, n, opts.StartVertex, opts.Symmetric)
 }

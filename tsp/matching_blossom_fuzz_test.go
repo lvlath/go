@@ -1,4 +1,9 @@
-package tsp
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2025-2026 katalvlaran
+
+// Package tsp_test verifies the public Christofides and Eulerian routing contracts.
+// Deterministic fuzz seeds reproduce metric and parallel-edge input regimes.
+package tsp_test
 
 import (
 	"fmt"
@@ -8,60 +13,18 @@ import (
 	"testing"
 
 	"github.com/lvlath/go/matrix"
+	"github.com/lvlath/go/tsp"
 )
 
-/*func FuzzBlossomMatchesOracleSmall(f *testing.F) {
-	for _, seed := range []int64{1, 2, 3, 5, 8, 13, 21, 34, 55, 89} {
-		f.Add(uint64(seed), 2)
-		f.Add(uint64(seed), 4)
-		f.Add(uint64(seed), 6)
-		f.Add(uint64(seed), 8)
-		f.Add(uint64(seed), 10)
-	}
-
-	f.Fuzz(func(t *testing.T, rawSeed uint64, rawK int) {
-		k := rawK
-		if k < 2 {
-			k = 2
-		}
-		if k > 10 {
-			k = 10
-		}
-		if (k & 1) == 1 {
-			k++
-		}
-
-		seed := int64(rawSeed)
-		problem := internalSeededMatchingProblem(k, seed)
-
-		_, wantCost, err := exactMatchingOracleForTest(problem)
-		if err != nil {
-			t.Fatalf("oracle: %v", err)
-		}
-
-		match, gotCost, stats, err := solveMinimumWeightPerfectMatching(problem, blossomOptions{Eps: DefaultEps})
-		if err != nil {
-			t.Fatalf("blossom: %v k=%d seed=%d stats=%+v", err, k, seed, stats)
-		}
-		if err = verifyPerfectMatching(match); err != nil {
-			t.Fatalf("verify: %v k=%d seed=%d match=%v stats=%+v", err, k, seed, match, stats)
-		}
-		if math.Abs(gotCost-wantCost) > DefaultEps {
-			t.Fatalf("cost got %.12f want %.12f k=%d seed=%d match=%v stats=%+v",
-				gotCost, wantCost, k, seed, match, stats)
-		}
-	})
-}*/
-
 func FuzzChristofidesBlossomMetricComplete(f *testing.F) {
-	seeds := []uint64{1, 2, 3, 5, 8, 13, 21, 34, 55, 80, 86, 89, 1001, 9001}
+	seeds := []int{1, 2, 3, 5, 8, 13, 21, 34, 55, 80, 86, 89, 1001, 9001}
 	for _, seed := range seeds {
 		for _, n := range []int{4, 8, 16, 32, 48} {
 			f.Add(seed, n)
 		}
 	}
 
-	f.Fuzz(func(t *testing.T, rawSeed uint64, rawN int) {
+	f.Fuzz(func(t *testing.T, rawSeed int, rawN int) {
 		n := rawN
 		if n < 4 {
 			n = 4
@@ -70,24 +33,24 @@ func FuzzChristofidesBlossomMetricComplete(f *testing.F) {
 			n = 64
 		}
 
-		dist := seededMetricCompleteForTest(n, int64(rawSeed))
+		dist := seededMetricCompleteForTest(t, n, int64(rawSeed))
 
-		opts := DefaultOptions()
-		opts.Algo = Christofides
+		opts := tsp.DefaultOptions()
+		opts.Algo = tsp.Christofides
 		opts.Symmetric = true
-		opts.MatchingAlgo = BlossomMatch
+		opts.MatchingAlgo = tsp.BlossomMatch
 		opts.EnableLocalSearch = false
-		opts.StartVertex = int(rawSeed % uint64(n))
+		opts.StartVertex = (rawSeed%n + n) % n
 
-		first, err := ChristofidesSolve(dist, opts)
+		first, err := tsp.ChristofidesSolve(dist, opts)
 		if err != nil {
 			t.Fatalf("first Christofides: %v n=%d seed=%d", err, n, rawSeed)
 		}
-		if err = validateResultForTest(first, n, opts.StartVertex, Christofides); err != nil {
+		if err = validateResultForTest(first, n, opts.StartVertex, tsp.Christofides); err != nil {
 			t.Fatalf("first result: %v result=%+v", err, first)
 		}
 
-		second, err := ChristofidesSolve(dist, opts)
+		second, err := tsp.ChristofidesSolve(dist, opts)
 		if err != nil {
 			t.Fatalf("second Christofides: %v n=%d seed=%d", err, n, rawSeed)
 		}
@@ -100,7 +63,8 @@ func FuzzChristofidesBlossomMetricComplete(f *testing.F) {
 	})
 }
 
-func seededMetricCompleteForTest(n int, seed int64) *matrix.Dense {
+func seededMetricCompleteForTest(t testing.TB, n int, seed int64) *matrix.Dense {
+	t.Helper()
 	rng := rand.New(rand.NewSource(seed))
 
 	type point struct {
@@ -128,111 +92,17 @@ func seededMetricCompleteForTest(n int, seed int64) *matrix.Dense {
 		}
 	}
 
-	dence, _ := matrix.NewDense(n, n)
-	dence.Fill(data)
-
-	return dence
+	dense, err := matrix.NewDense(n, n)
+	if err != nil {
+		t.Fatalf("create deterministic matrix: %v", err)
+	}
+	if err := dense.Fill(data); err != nil {
+		t.Fatalf("populate deterministic matrix: %v", err)
+	}
+	return dense
 }
 
-func FuzzBlossomMatchesOracleMixedSmall(f *testing.F) {
-	seeds := []uint64{1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 1001, 9001}
-	for _, seed := range seeds {
-		for _, k := range []int{2, 4, 6, 8, 10, 12} {
-			for mode := 0; mode < 4; mode++ {
-				f.Add(seed, k, mode)
-			}
-		}
-	}
-
-	f.Fuzz(func(t *testing.T, rawSeed uint64, rawK int, rawMode int) {
-		k := rawK
-		if k < 2 {
-			k = 2
-		}
-		if k > 12 {
-			k = 12
-		}
-		if (k & 1) == 1 {
-			k++
-		}
-
-		mode := rawMode % 4
-		if mode < 0 {
-			mode += 4
-		}
-
-		var problem matchingProblem
-		switch mode {
-		case 0:
-			problem = internalSeededMatchingProblem(k, int64(rawSeed))
-		case 1:
-			problem = internalConstantMatchingProblem(k, 1)
-		case 2:
-			problem = internalWideRangeMatchingProblem(k, int64(rawSeed))
-		case 3:
-			problem = internalNearTieMatchingProblem(k, int64(rawSeed))
-		}
-
-		_, wantCost, err := exactMatchingOracleForTest(problem)
-		if err != nil {
-			t.Fatalf("oracle: %v", err)
-		}
-
-		first, firstCost, firstStats, err := solveMinimumWeightPerfectMatching(problem, blossomOptions{Eps: DefaultEps})
-		if err != nil {
-			t.Fatalf("first blossom: %v k=%d seed=%d mode=%d stats=%+v", err, k, rawSeed, mode, firstStats)
-		}
-		if err = verifyPerfectMatching(first); err != nil {
-			t.Fatalf("first verify: %v match=%v stats=%+v", err, first, firstStats)
-		}
-		if math.Abs(firstCost-wantCost) > 1e-7*math.Max(1, math.Abs(wantCost)) {
-			t.Fatalf("cost got %.12f want %.12f k=%d seed=%d mode=%d match=%v stats=%+v",
-				firstCost, wantCost, k, rawSeed, mode, first, firstStats)
-		}
-
-		second, secondCost, secondStats, err := solveMinimumWeightPerfectMatching(problem, blossomOptions{Eps: DefaultEps})
-		if err != nil {
-			t.Fatalf("second blossom: %v k=%d seed=%d mode=%d stats=%+v", err, k, rawSeed, mode, secondStats)
-		}
-		if secondCost != firstCost {
-			t.Fatalf("nondeterministic cost got %.12f want %.12f k=%d seed=%d mode=%d first=%v second=%v",
-				secondCost, firstCost, k, rawSeed, mode, first, second)
-		}
-		for vertex := range first {
-			if second[vertex] != first[vertex] {
-				t.Fatalf("nondeterministic match[%d] got %d want %d k=%d seed=%d mode=%d",
-					vertex, second[vertex], first[vertex], k, rawSeed, mode)
-			}
-		}
-	})
-}
-
-func internalNearTieMatchingProblem(k int, seed int64) matchingProblem {
-	rng := rand.New(rand.NewSource(seed))
-
-	odd := make([]int, k)
-	w := make([]float64, k*k)
-
-	for vertex := 0; vertex < k; vertex++ {
-		odd[vertex] = vertex
-	}
-
-	for row := 0; row < k; row++ {
-		for col := row + 1; col < k; col++ {
-			value := 1000 + float64(rng.Intn(5)) + rng.Float64()*1e-6
-			w[row*k+col] = value
-			w[col*k+row] = value
-		}
-	}
-
-	return matchingProblem{
-		odd: odd,
-		w:   w,
-		n:   k,
-	}
-}
-
-func validateResultForTest(result *Result, n int, start int, algo Algorithm) error {
+func validateResultForTest(result *tsp.Result, n int, start int, algo tsp.Algorithm) error {
 	if result.Algorithm != algo {
 		return fmt.Errorf("algorithm got %v want %v", result.Algorithm, algo)
 	}
@@ -246,7 +116,7 @@ func validateResultForTest(result *Result, n int, start int, algo Algorithm) err
 		return fmt.Errorf("tour closure got %d want %d", result.Tour[n], start)
 	}
 
-	if err := ValidatePermutation(result.Tour[:n], n); err != nil {
+	if err := tsp.ValidatePermutation(result.Tour[:n], n); err != nil {
 		return err
 	}
 
@@ -258,13 +128,13 @@ func validateResultForTest(result *Result, n int, start int, algo Algorithm) err
 }
 
 func FuzzEulerianCircuitParallelMultigraph(f *testing.F) {
-	for _, seed := range []uint64{1, 2, 3, 7, 42, 128, 1001} {
+	for _, seed := range []int{1, 2, 3, 7, 42, 128, 1001} {
 		for _, n := range []int{2, 3, 4, 8, 16} {
 			f.Add(seed, n)
 		}
 	}
 
-	f.Fuzz(func(t *testing.T, rawSeed uint64, rawN int) {
+	f.Fuzz(func(t *testing.T, rawSeed int, rawN int) {
 		n := rawN
 		if n < 2 {
 			n = 2
@@ -275,8 +145,8 @@ func FuzzEulerianCircuitParallelMultigraph(f *testing.F) {
 
 		adj := seededEulerianMultigraphForTest(n, int64(rawSeed))
 
-		start := int(rawSeed % uint64(n))
-		walk, err := EulerianCircuit(adj, start)
+		start := (rawSeed%n + n) % n
+		walk, err := tsp.EulerianCircuit(adj, start)
 		if err != nil {
 			t.Fatalf("EulerianCircuit: %v n=%d seed=%d adj=%v", err, n, rawSeed, adj)
 		}
@@ -325,7 +195,7 @@ func verifyEulerianWalkUsesEveryEdgeForTest(adj [][]int, walk []int, start int) 
 		return fmt.Errorf("walk is not closed at start=%d: %v", start, walk)
 	}
 
-	want := make(map[uint64]int)
+	want := make(map[[2]int]int)
 	edgeCount := 0
 
 	for from := range adj {
@@ -333,7 +203,7 @@ func verifyEulerianWalkUsesEveryEdgeForTest(adj [][]int, walk []int, start int) 
 			return fmt.Errorf("odd degree vertex=%d degree=%d", from, len(adj[from]))
 		}
 		for _, to := range adj[from] {
-			key := packUndirectedKey(from, to)
+			key := testUndirectedKey(from, to)
 			want[key]++
 			edgeCount++
 		}
@@ -341,7 +211,7 @@ func verifyEulerianWalkUsesEveryEdgeForTest(adj [][]int, walk []int, start int) 
 
 	for key, count := range want {
 		if count&1 == 1 {
-			return fmt.Errorf("non-reciprocal edge key=%d count=%d", key, count)
+			return fmt.Errorf("non-reciprocal edge key=%v count=%d", key, count)
 		}
 		want[key] = count / 2
 	}
@@ -357,7 +227,7 @@ func verifyEulerianWalkUsesEveryEdgeForTest(adj [][]int, walk []int, start int) 
 			return fmt.Errorf("walk edge %d has OOB endpoint %d->%d", i, u, v)
 		}
 
-		key := packUndirectedKey(u, v)
+		key := testUndirectedKey(u, v)
 		if want[key] == 0 {
 			return fmt.Errorf("walk uses missing/excess edge %d->%d at index %d", u, v, i)
 		}
@@ -366,21 +236,18 @@ func verifyEulerianWalkUsesEveryEdgeForTest(adj [][]int, walk []int, start int) 
 
 	for key, remaining := range want {
 		if remaining != 0 {
-			return fmt.Errorf("unused edge key=%d remaining=%d", key, remaining)
+			return fmt.Errorf("unused edge key=%v remaining=%d", key, remaining)
 		}
 	}
 
 	return nil
 }
-func packUndirectedKey(u, v int) uint64 {
-	var (
-		a = uint64(u)
-		b = uint64(v)
-	)
-	// Order the endpoints to make the key direction-agnostic.
-	if a < b {
-		return (a << 32) | b
-	}
 
-	return (b << 32) | a
+// testUndirectedKey is an overflow-safe test-only identity for an undirected edge.
+// It avoids numeric packing assumptions about int or vertex-ID width.
+func testUndirectedKey(u, v int) [2]int {
+	if u > v {
+		u, v = v, u
+	}
+	return [2]int{u, v}
 }

@@ -70,6 +70,7 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
 8. [DTW FAQ](#8-dtw-faq)
 9. [MST FAQ](#9-mst-faq)
 10. [TSP FAQ](#10-tsp-faq)
+    10a. [Match FAQ](#10a-match-faq)
 11. [Series FAQ](#11-series-faq)
 12. [Stats FAQ](#12-stats-faq)
 13. [PAA FAQ](#13-paa-faq)
@@ -150,6 +151,7 @@ Start with the question, not the algorithm name.
 | “How do I build dependent-data bootstrap index ensembles?”                                                    | `bootstrap.SampleIndices`             | Moving/Circular/Stationary blocks, replay ID and only complete rows.                                  |
 | “How do I infer a hidden operating regime from time-ordered observations?”                                    | `hmm`                                 | Typed causal filtering, smoothing, Viterbi, and independent-sequence EM.                              |
 | “How do I reduce multivariate dimensions without a response variable?”                                        | `pca`                                 | Validated covariance spectrum and a frozen loadings model for holdout inference.                      |
+| “How do I pair an ordered even subset at minimum total cost?”                                                 | `match.Perfect`                       | Exact weighted Blossom, detached original-index pairs; explicit Greedy is weaker.                     |
 | “How do I visit all cities in a route?”                                                                       | `tsp`                                 | Tour construction/improvement/exact-small-instance routing.                                           |
 
 ### Q1.2. How do I avoid using the wrong algorithm?
@@ -1369,13 +1371,13 @@ Do not send `core.Graph` into internal solver thinking. TSP kernels solve over m
 
 Choose by contract strength and runtime regime.
 
-| Algorithm        | Use when                                                                  | Result meaning                                                               |
-|:-----------------|:--------------------------------------------------------------------------|:-----------------------------------------------------------------------------|
-| `ExactHeldKarp`  | Small guarded instances where proof of optimality matters.                | Exact optimal result if accepted and completed.                              |
-| `BranchAndBound` | Exact search with pruning, good incumbents, and optional time budget.     | Exact only when completed; time limit may return incumbent + `ErrTimeLimit`. |
-| `Christofides`   | Symmetric complete metric TSP where an approximation certificate matters. | `1.5` ratio only with exact `BlossomMatch`.                                  |
-| `TwoOptOnly`     | You have a feasible tour and want deterministic local improvement.        | Heuristic local optimum in 2-opt/2-opt* neighborhood.                        |
-| `ThreeOptOnly`   | Symmetric local search where deeper neighborhood is worth more time.      | Heuristic local optimum; no global certificate.                              |
+| Algorithm        | Use when                                                                  | Result meaning                                                                     |
+|:-----------------|:--------------------------------------------------------------------------|:-----------------------------------------------------------------------------------|
+| `ExactHeldKarp`  | Small guarded instances where proof of optimality matters.                | Exact optimal result if accepted and completed.                                    |
+| `BranchAndBound` | Exact search with pruning, good incumbents, and optional time budget.     | Exact only when completed; time limit may return incumbent + `ErrTimeLimit`.       |
+| `Christofides`   | Symmetric complete metric TSP where an approximation certificate matters. | `1.5` ratio only with exact `BlossomMatch`.                                        |
+| `TwoOptOnly`     | You have a feasible tour and want deterministic local improvement.        | Heuristic local optimum via segment reversal, charging all reversed arcs for ATSP. |
+| `ThreeOptOnly`   | Symmetric local search where deeper neighborhood is worth more time.      | Heuristic local optimum; no global certificate.                                    |
 
 Mental model:
 
@@ -1414,6 +1416,10 @@ GreedyMatch:
 ```
 
 Never describe Greedy matching as preserving the Christofides proof. It may be useful engineering policy, but it is not the same theorem.
+
+`DefaultOptions()` selects **BlossomMatch**, not GreedyMatch. The caller must
+still establish triangle inequality for a formal metric approximation bound;
+selecting Blossom is not itself a test of the metric law.
 
 ### Q10.5. Why does TSP need a complete distance matrix?
 
@@ -1508,7 +1514,9 @@ In ATSP, direction matters:
 
 $$ c(u,v) \ne c(v,u) $$
 
-That changes what local moves are legal. Symmetric 2-opt can reverse a segment. Directed 2-opt* preserves orientation by swapping tails. ATSP 3-opt in the package is restricted 3-opt*, not full arbitrary directed 3-opt.
+That changes the legal move cost. Symmetric 2-opt reverses a segment and only its two boundary connections contribute to the delta. **Directed 2-opt also reverses the segment**, but explicitly charges every internal reversed arc. This preserves one Hamiltonian cycle. The former two-arc directed tail swap would split one cycle into two subtours and is not the implemented method. Directed 3-opt is separately restricted and does not implement full arbitrary ATSP 3-opt.
+
+With large finite weights, the final local-search cost is recomputed on the published tour; it must not be inferred solely from accumulated approximate `cost += delta` updates. An asymmetric tour must not be mirrored merely for visually canonical orientation.
 
 Do not document ATSP local search as if it were the symmetric TSP move set.
 
@@ -1517,6 +1525,70 @@ Do not document ATSP local search as if it were the symmetric TSP move set.
 TSP compares many candidate tours and local-search moves. Tiny floating-point drift can create meaningless observable differences.
 
 The package stabilizes published costs so deterministic output does not depend on irrelevant last-bit noise. This does not mean invalid numeric input is tolerated: `NaN`, `-Inf`, negative finite weights, and unresolved final `+Inf` remain validation failures.
+
+---
+
+## 10a. Match FAQ
+
+### Q10a.1. When should I call `match.Perfect` rather than `tsp.SolveMatrix`?
+
+Use `match` to partition an even explicitly selected set of vertices into
+**disjoint pairs**: fleet handoff assignments, redundancy pairing or radio
+relay maintenance. Use `tsp` to construct a **closed cycle visiting every
+vertex**. Neither result is interchangeable. The TSP Christofides adapter
+uses `match` internally only after selecting odd MST degrees.
+
+### Q10a.2. Does Blossom ever run Greedy when its numerical search fails?
+
+**No.** The selected `match.Blossom` policy either returns a verified complete
+minimum-weight pairing or an `errors.Is`-classified failure. No time-budget,
+graph-size or dual-failure fallback exists. `match.Greedy` is a separate,
+explicitly chosen last-remaining-pivot heuristic and always publishes
+`Result.Optimal=false`, even when it happens to find the optimum.
+
+### Q10a.3. Does `vertices` contain local positions or original matrix indices?
+
+**Original matrix indices.** Do not sort the supplied list before calling
+`Perfect`: the order controls the local Blossom problem and Greedy's scan and
+tie policy. Every output `Pair` contains original indices, with `U<V`, and
+the final pair slice is sorted by ascending U for consumers. The publication
+sort never changes the numerical search order.
+
+### Q10a.4. How are empty and malformed subsets handled?
+
+An empty selection is a valid zero-cost matching and does not read the matrix.
+It is not an alias for all vertices. An odd-size subset returns
+`match.ErrOddVertices` before matrix access. A nonempty even subset requires a
+valid complete finite symmetric source matrix, including **unselected rows**;
+duplicate or out-of-range selected indices fail validation. A failed request
+publishes no half matching and no partially initialized Result.
+
+### Q10a.5. Are matching cost, TSP cost and approximation ratio equivalent?
+
+No. `match.Result.Cost` is a checked **unrounded** sum of selected source-edge
+weights. `tsp.Result.Cost` is a published **closed-tour** cost and applies its
+own rounding convention. A successful exact Blossom pairing can support the
+Christofides 1.5 theorem *only if the TSP input is also metric*. Greedy pairs
+have no general such ratio, even if the graph is symmetric and complete.
+
+### Q10a.6. Are large finite penalties the same as prohibited assignments?
+
+No. The package accepts finite nonnegative weights only; large penalties still
+represent allowed pairs. A `+Inf` value is invalid for this complete matching
+contract. The application must independently validate real-world safety,
+radio range, regulatory eligibility and scheduling constraints instead of
+interpreting a low matching score as an authorization.
+
+### Q10a.7. Can I reuse `match.Result` or share the matrix across goroutines?
+
+The Result owns detached pairs and supports `IsNil` and `Clone`; changing
+caller-owned `Pairs` can make them inconsistent with the already published
+`Cost`. Independent solver calls may read stable shared data, but concurrent
+mutation of the source matrix is unsupported. The public facade is not a
+multi-pass atomic snapshot of arbitrary mutable matrix backends.
+
+Read [`MATCH.md`](MATCH.md), [`../match/doc.go`](../match/doc.go), and executable
+[`../match/example_test.go`](../match/example_test.go) for the exact API.
 
 ---
 
