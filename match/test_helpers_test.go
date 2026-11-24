@@ -123,3 +123,133 @@ func pairCoverage(t *testing.T, vertices []int, pairs []match.Pair) {
 		t.Fatalf("missing vertices: selected=%v pairs=%v", vertices, pairs)
 	}
 }
+
+// newInvariantEngine creates one independent engine and its live test-only view.
+// It uses the real constructor so every fault is introduced into an otherwise valid shape.
+// Implementation:
+//   - Stage 1: Build a deterministic finite symmetric local problem.
+//   - Stage 2: Construct the actual weighted engine and obtain its state view.
+//
+// Behavior highlights:
+//   - Each case owns all mutable engine data.
+//
+// Inputs:
+//   - t: external test harness; n: small even matching order.
+//
+// Returns:
+//   - A valid engine and its live state view.
+//
+// Errors:
+//   - Fixture construction failures stop the current test.
+//
+// Determinism:
+//   - Fixed seed and local vertex ordering.
+//
+// Complexity:
+//   - Time and Space O(n^2), including dense edges and local weights.
+//
+// Notes:
+//   - Never reuse a corrupted fixture in another subtest.
+//
+// AI-Hints:
+//   - Test rejection of one invariant at a time; do not fabricate invalid pointers.
+func newInvariantEngine(t *testing.T, n int) (*match.BlossomEngineForTest, match.BlossomStateForTest) {
+	t.Helper()
+	e, err := match.NewBlossomEngineForTest(invariantSeededProblem(n, 23), match.DefaultEpsilon)
+	if err != nil || e == nil {
+		t.Fatalf("construct engine: %v", err)
+	}
+	return e, match.InspectBlossomStateForTest(e)
+}
+
+// requireInvariantOK stops a test at the first failed setup operation.
+// Subsequent assertions must never depend on partially constructed state.
+func requireInvariantOK(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// contractedTriangle creates a real contracted outer blossom over vertices 0,1,2.
+// The alternating forest uses matched edge 1-2, grow edge 0-2 and closing edge 0-1.
+// Implementation:
+//   - Stage 1: Seed the reciprocal internal match and exposed root.
+//   - Stage 2: Apply the production grow and shrink operations.
+//   - Stage 3: Return the actual contracted node with its live state.
+//
+// Behavior highlights:
+//   - No fabricated cycle or duplicate contraction implementation.
+//
+// Inputs:
+//   - t: external test harness.
+//
+// Returns:
+//   - Six-vertex engine, live state, allocated triangle node.
+//
+// Errors:
+//   - Any rejected setup event fails the test immediately.
+//
+// Determinism:
+//   - The same three original vertices and edge IDs are used on every invocation.
+//
+// Complexity:
+//   - O(1) for the fixed fixture; construction uses the ordinary dense engine.
+//
+// Notes:
+//   - The fixture exercises structural event semantics, not tightness selection.
+//
+// AI-Hints:
+//   - Use actual grow/shrink to obtain valid cycle metadata before corrupting one field.
+func contractedTriangle(t *testing.T) (*match.BlossomEngineForTest, match.BlossomStateForTest, int) {
+	t.Helper()
+	e, s := newInvariantEngine(t, 6)
+	requireInvariantOK(t, match.SetMatchedEdgeForTest(e, invariantEdgeID(t, e, 1, 2)))
+	match.ResetForestForTest(e)
+	match.AssignOuterRootForTest(e, 0)
+	grow := match.NewBlossomEventForTest(match.EventGrowForTest, invariantEdgeID(t, e, 0, 2), 0, 2, 0, 2)
+	requireInvariantOK(t, match.GrowForTest(e, grow))
+	node := *s.NextNode
+	shrink := match.NewBlossomEventForTest(match.EventShrinkForTest, invariantEdgeID(t, e, 0, 1), 0, 1, 0, 1)
+	requireInvariantOK(t, match.ShrinkForTest(e, shrink))
+	if !s.Active[node] || s.Base[node] != 0 || len(s.Cycles[node]) != 3 {
+		t.Fatalf("invalid contracted triangle: node=%d base=%d cycle=%v", node, s.Base[node], s.Cycles[node])
+	}
+	return e, s, node
+}
+
+// invariantProblem converts the existing deterministic square fixture into local coordinates.
+// It allocates an identity subset and row-major storage; time and space are O(k^2).
+func invariantProblem(rows [][]float64) match.MatchingProblemForTest {
+	k := len(rows)
+	vertices := make([]int, k)
+	weights := make([]float64, 0, k*k)
+	for i := range rows {
+		vertices[i] = i
+		weights = append(weights, rows[i]...)
+	}
+	return match.NewMatchingProblemForTest(k, vertices, weights)
+}
+
+// invariantSeededProblem reuses the historical integer-cent fixture generator.
+// The identity map makes forest node assertions independent of public pair sorting.
+func invariantSeededProblem(k int, seed int64) match.MatchingProblemForTest {
+	return invariantProblem(legacySeededWeights(k, seed))
+}
+
+// invariantNearTieProblem reuses the historical near-tie fixture without rescaling.
+// Its wide and narrow dual tolerances are intentionally distinguishable.
+func invariantNearTieProblem(k int, seed int64) match.MatchingProblemForTest {
+	return invariantProblem(legacyNearTieWeights(k, seed))
+}
+
+// invariantEdgeID locates a real edge and fails the external test if absent.
+// It avoids independently reimplementing the dense engine's edge-numbering formula.
+func invariantEdgeID(t *testing.T, e *match.BlossomEngineForTest, u, v int) int {
+	t.Helper()
+	id, ok := match.FindBlossomEdgeForTest(e, u, v)
+	if !ok {
+		t.Fatalf("missing engine edge %d-%d", u, v)
+	}
+	return id
+}

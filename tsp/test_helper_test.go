@@ -44,6 +44,31 @@ const (
 	radiusN120 = 120
 )
 
+// lateTSPRead models a backend that fails or returns an invalid value on one read.
+// It is a deliberately nonconforming source used only to verify defensive copying.
+// All other operations delegate to the ordinary test matrix.
+type lateTSPRead struct {
+	testDense
+	reads, failAt int
+	value         float64
+	cause         error
+}
+
+// At counts deterministic row-major and symmetry reads before injecting one fault.
+// Inputs: original row/column indices. Returns: delegated scalar or selected fault.
+// Errors: the injected cause or the delegated matrix error.
+// Determinism: a fresh fixture has a zero read counter.
+// Complexity: O(1) time and space per call.
+// Notes: this mutable fixture belongs to one serial solver invocation.
+// AI-Hints: never use changing data as a supported production matrix backend.
+func (m *lateTSPRead) At(i, j int) (float64, error) {
+	m.reads++
+	if m.reads == m.failAt {
+		return m.value, m.cause
+	}
+	return m.testDense.At(i, j)
+}
+
 // -----------------------------------------------------------------------------
 // Minimal matrix implementations for tests (square, bounds-checked, with Clone).
 // Both types satisfy matrix.Matrix. testDense is the default; altDense is used
