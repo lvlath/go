@@ -241,13 +241,13 @@ func addExactBinary64(sum, term *big.Int, value float64) {
 }
 
 // centered subtracts the frozen composite prepared-space covariance center.
-// The ordinary path performs direct anchor-relative subtraction; a rare exact
-// rational rescue handles intermediate overflow with a representable final delta.
+// Compensated subtraction preserves small observations even when a large
+// anchor and displacement cancel; exact rescue resolves sensitive sums.
 //
 // Implementation:
-//   - Stage 1: subtract the first-row anchor before the mean displacement.
-//   - Stage 2: subtract the high and low exact-mean displacement parts.
-//   - Stage 3: use exact binary arithmetic only if intermediate overflow occurs.
+//   - Stage 1: order the observation and negated center terms.
+//   - Stage 2: compensate the first two subtractions before applying the low part.
+//   - Stage 3: use exact binary arithmetic when compensation is not sufficient.
 //
 // Behavior highlights:
 //   - For adjacent input floats separated by g, the symmetric two-row scores
@@ -274,15 +274,9 @@ func addExactBinary64(sum, term *big.Int, value float64) {
 // AI-Hints:
 //   - Do not combine anchor and offset into one rounded float64 first.
 //   - Do not classify a finite final difference as overflow from a partial sum.
+//   - Do not discard the rounding error of value-anchor when anchor and offset cancel.
 func (c fittedCenter) centered(value float64) (float64, error) {
-	shifted := (value - c.anchor) - c.offset
-	if finite(shifted) {
-		result := shifted - c.low
-		if finite(result) {
-			return result, nil
-		}
-	}
-	return centerRational(value, -c.anchor, -c.offset, -c.low)
+	return centerAffine(value, -c.anchor, -c.offset, -c.low)
 }
 
 // restore adds the frozen composite covariance origin to one prepared score.
@@ -292,7 +286,7 @@ func (c fittedCenter) centered(value float64) (float64, error) {
 // Implementation:
 //   - Stage 1: add score and high mean displacement, retaining sum roundoff.
 //   - Stage 2: add the anchor and combine low-order corrections.
-//   - Stage 3: use exact binary-rational addition on intermediate overflow.
+//   - Stage 3: use exact binary-rational addition on sensitive cancellation or overflow.
 //
 // Behavior highlights:
 //   - A reconstructed training input regains original prepared coordinates;
@@ -305,13 +299,13 @@ func (c fittedCenter) centered(value float64) (float64, error) {
 //   - float64: reconstructed prepared observation, or zero on failure.
 //
 // Errors:
-//   - ErrOverflow: the final prepared observation is unrepresentable.
+//   - ErrOverflow: a nonfinite projection or unrepresentable final prepared observation.
 //
 // Determinism:
 //   - Exactly two error-free additions and a fixed low-component correction.
 //
 // Complexity:
-//   - O(1) fast path; bounded exact-rational rescue on early overflow.
+//   - O(1) fast path; bounded exact-rational rescue when compensation is unsafe.
 //
 // Notes:
 //   - This does not recover discarded principal components.
@@ -320,17 +314,71 @@ func (c fittedCenter) centered(value float64) (float64, error) {
 //   - Undo the covariance center BEFORE undoing population standardization.
 //   - Do not compute a rounded single mean and add that directly to scores.
 func (c fittedCenter) restore(value float64) (float64, error) {
-	first, firstErr := twoSum(value, c.offset)
+	return centerAffine(value, c.offset, c.anchor, c.low)
+}
+
+// centerAffine evaluates the four signed terms of a frozen affine center.
+// It preserves addition roundoff before accepting a well-conditioned result;
+// near cancellation or intermediate overflow is resolved over exact rationals.
+//
+// Implementation:
+//   - Stage 1: use TwoSum twice to retain the roundoff of the first three terms.
+//   - Stage 2: apply the final term and recovered roundoff in fixed order.
+//   - Stage 3: accept only a finite safe result, otherwise use exact rescue.
+//
+// Behavior highlights:
+//   - The allocation-free path does not silently drop a small heldout coordinate.
+//   - If both additions are exact, only one final rounding remains.
+//
+// Inputs:
+//   - a,b,c,d: signed affine terms in prepared feature units.
+//
+// Returns:
+//   - A finite prepared coordinate, or zero on failure.
+//
+// Errors:
+//   - ErrOverflow: a nonfinite operand or unrepresentable final sum.
+//
+// Determinism:
+//   - A fixed compensated order, followed by deterministic exact arithmetic.
+//
+// Complexity:
+//   - O(1) float64 work; bounded rational work only on the rescue path.
+//
+// Notes:
+//   - The dominance guard is a conditioning check, not a rank tolerance or
+//     a guarantee of correctly rounded output on the compensated fast path.
+//
+// AI-Hints:
+//   - Reuse this law for forward and inverse centering; do not cache a rounded
+//     single mean or discard TwoSum corrections before subtracting the offset.
+func centerAffine(a, b, c, d float64) (float64, error) {
+	// Three correction terms can oppose the rounded main sum. Requiring the
+	// latter to exceed four times their largest magnitude leaves a positive
+	// margin even if all three corrections have the same opposing sign.
+	const correctionDominance = 4
+	first, firstErr := twoSum(a, b)
 	if finite(first) {
-		second, secondErr := twoSum(first, c.anchor)
+		second, secondErr := twoSum(first, c)
 		if finite(second) {
-			result := second + ((firstErr + secondErr) + c.low)
-			if finite(result) {
-				return result, nil
+			// Exact partial sums need only the final correctly rounded addition.
+			if firstErr == 0 && secondErr == 0 {
+				if result := second + d; finite(result) {
+					return result, nil
+				}
+			} else {
+				// Check individual magnitudes, not their potentially canceled sum.
+				largest := max(math.Abs(firstErr), math.Abs(secondErr), math.Abs(d))
+				if math.Abs(second)/correctionDominance > largest {
+					if result := second + ((firstErr + secondErr) + d); finite(result) {
+						return result, nil
+					}
+				}
 			}
 		}
 	}
-	return centerRational(value, c.anchor, c.offset, c.low)
+	// The exact path also rejects any nonfinite projected input.
+	return centerRational(a, b, c, d)
 }
 
 // twoSum returns a rounded sum together with the rounding error of two floats.
@@ -371,7 +419,7 @@ func twoSum(a, b float64) (float64, float64) {
 	return sum, (a - (sum - recovered)) + (b - recovered)
 }
 
-// centerRational is a rare exact rescue for affine sums that overflow early.
+// centerRational resolves cancellation-sensitive or overflowing affine sums.
 // It tests the final binary-rational value rather than any partial float64 sum.
 //
 // Implementation:
@@ -389,7 +437,7 @@ func twoSum(a, b float64) (float64, float64) {
 //   - float64: rounded final sum, or zero on failure.
 //
 // Errors:
-//   - ErrOverflow: the exact final result cannot fit float64.
+//   - ErrOverflow: a nonfinite operand or an unrepresentable exact final result.
 //
 // Determinism:
 //   - Four binary-to-rational conversions in fixed argument order.
@@ -405,7 +453,11 @@ func twoSum(a, b float64) (float64, float64) {
 func centerRational(a, b, c, d float64) (float64, error) {
 	var sum, term big.Rat
 	for _, value := range [4]float64{a, b, c, d} {
-		term.SetFloat64(value)
+		// SetFloat64 returns nil for NaN/Inf and does not replace the receiver.
+		// Reject that input instead of accidentally reusing a previous term.
+		if term.SetFloat64(value) == nil {
+			return 0, ErrOverflow
+		}
 		sum.Add(&sum, &term)
 	}
 	result, _ := sum.Float64()

@@ -156,7 +156,7 @@ func (m *Model) Transform(ctx context.Context, x matrix.Matrix) (matrix.Matrix, 
 // missing principal directions are not recovered or estimated from the scores.
 //
 // Implementation:
-//   - Stage 1: validate context, fitted receiver, score width, and finite cells.
+//   - Stage 1: validate context, receiver, score width, output size, and finite cells.
 //   - Stage 2: reconstruct each feature with Vk^T from one buffered score row.
 //   - Stage 3: restore the prepared-space center and population scales, then
 //     publish a detached rows-by-d Dense.
@@ -208,10 +208,12 @@ func (m *Model) InverseTransform(ctx context.Context, scores matrix.Matrix) (mat
 	if cols != m.k {
 		return nil, ErrShape
 	}
-	if err = scanFinite(ctx, scores, rows, cols); err != nil {
+	// The reconstruction can be wider than its input. Reject an impossible
+	// output before reading any score cells, preserving size-before-value precedence.
+	if _, err = checkedFloatElements(rows, m.d); err != nil {
 		return nil, err
 	}
-	if _, err = checkedFloatElements(rows, m.d); err != nil {
+	if err = scanFinite(ctx, scores, rows, cols); err != nil {
 		return nil, err
 	}
 	out, err := matrix.NewDense(rows, m.d)

@@ -111,6 +111,13 @@ physical population scales. Normal floating-point rounding can still change
 non-exactly-representable reconstructions; there is no universal bitwise
 round-trip guarantee for arbitrary inputs.
 
+Both centering directions use compensated four-term sums. When a large anchor
+and its displacement cancel, a small heldout coordinate must not disappear.
+Sensitive cancellation and overflowing partial sums use exact binary-rational
+rescue; a nonfinite projected operand is rejected with `ErrOverflow`, not
+silently omitted. `InverseTransform` checks the expanded `nnew*d` output size
+before scanning score values.
+
 `Transform(ctx,x)` returns `nnew×k` scores. `InverseTransform(ctx,scores)` returns `nnew×d` values in the **original feature units**. `Reconstruct(ctx,x)` calls these two operations in sequence. Every output is detached; valid zero-row inference returns an allocated zero-row matrix with correct width. When `k` is truncated, reconstruction is intentionally lossy.
 
 `Components()` returns an independent `d×k` matrix. Mutating that return value cannot modify subsequent `Transform` results. The method returns nil for nil/unfitted receivers because its signature has no error return.
@@ -369,6 +376,12 @@ For `Fit`, the externally observable validation order is **context → options �
 ## 9. Tests and operational constraints
 
 The external `package pca_test` suite includes independent extreme midpoint (`2^450` and its next float) and finite rank-one (`~1.608e308`) counterexamples, plus tests for truly overflowing leading eigenvalues, small binary-power scaling, and oversized original-unit differences that become finite after population division. It also checks low rank, requested rank errors, holdout leakage, repeated-eigenspace projectors, detached components, typed-nil `core.Nilable`, zero variance, unsupported ThinSVD, exhausted rotations, numerical error on loose-tolerance false convergence, checked allocation sizes and concurrent inference. It also includes a high-precision rational 2×2 covariance oracle and original-space reconstruction checks.
+
+The suite also sweeps observed context cancellation checkpoints and generic
+backend read failures, checks wrapped dependency error identities, protects
+small heldout coordinates from anchor/displacement cancellation, and tests
+subnormal PSD, rank and eigenvalue restoration failures. The inverse must
+reject an unrepresentable prepared projection and an oversized output shape.
 
 **Required acceptance commands in the actual repository**:
 

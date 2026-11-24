@@ -52,6 +52,10 @@
 //   - Transform first applies frozen population scaling (if selected), then
 //     subtracts the separate two-part covariance center in prepared units.
 //     It never fits moments on the new batch.
+//   - Forward and inverse centering use compensated affine sums and exact
+//     rational rescue on sensitive cancellation or overflowing partial sums.
+//     Nonfinite projected values cannot enter rational reconstruction.
+//   - InverseTransform checks the expanded output size before reading scores.
 //   - InverseTransform restores the covariance center BEFORE undoing the
 //     population scaling and returns original units; Reconstruct composes
 //     these operations without refitting.
