@@ -109,7 +109,7 @@ func normalized(value, mean, scale float64) (float64, error) {
 // Implementation:
 //   - Stage 1: initialize zero centers and unit scales for every predictor.
 //   - Stage 2: fit stats scales when requested, copying centers only with intercept.
-//   - Stage 3: otherwise center affine predictors to decouple them from the ones column.
+//   - Stage 3: otherwise center affine predictors with a bounded online mean update.
 //
 // Behavior highlights:
 //   - NoIntercept never subtracts a training mean, including when Standardize=true.
@@ -124,11 +124,13 @@ func normalized(value, mean, scale float64) (float64, error) {
 //
 // Errors:
 //   - ErrOverflow with stats.ErrOverflow on an unrepresentable fitted scale.
-//   - ErrOverflow for a nonfinite manually fitted mean or scale.
+//   - ErrOverflow for a nonfinite computed mean or an invalid fitted scale.
 //   - ctx.Err() or retained stats/Matrix.At errors.
 //
 // Determinism:
 //   - Stats traverses rows/columns in its fixed order; unscaled means scan columns then rows.
+//   - Finite mean differences use a fused update; overflowing differences use
+//     the equivalent weighted form with separately divided operands.
 //
 // Complexity:
 //   - Time O(n*p), Space O(p) excluding the stats fit's temporary storage.
@@ -140,6 +142,9 @@ func normalized(value, mean, scale float64) (float64, error) {
 // AI-Hints:
 //   - Do not invoke Standardizer.Transform with NoIntercept: that would center predictors.
 //   - Do not drop constant columns; positive ridge penalty makes them identifiable.
+//   - Do not always evaluate (1-1/count)*mean + value/count: separately
+//     rounded positive contributions can overflow near MaxFloat64 even though
+//     their exact convex combination is finite.
 func trainingTransform(ctx context.Context, x matrix.Matrix, n, p int, opts Options) ([]float64, []float64, error) {
 	means := make([]float64, p)
 	scales := make([]float64, p)
@@ -175,7 +180,8 @@ func trainingTransform(ctx context.Context, x matrix.Matrix, n, p int, opts Opti
 	} else if !opts.NoIntercept {
 		// Internal centering is legal with an explicit intercept even when
 		// standardization is disabled: the original affine model is recovered
-		// after solving. FMA avoids an unnecessary (value-mean) overflow.
+		// after solving. The difference-first update keeps exact constants fixed;
+		// the weighted form is needed only for overflowing differences.
 		for j := 0; j < p; j++ {
 			mean := 0.0
 			for i := 0; i < n; i++ {
@@ -189,7 +195,19 @@ func trainingTransform(ctx context.Context, x matrix.Matrix, n, p int, opts Opti
 					return nil, nil, err
 				}
 				count := float64(i + 1)
-				mean = math.FMA(-mean, 1/count, mean) + value/count
+				delta := value - mean
+				if finite(delta) {
+					// Fuse the increment and addition so a constant column
+					// remains exactly constant, including at MaxFloat64.
+					mean = math.FMA(delta, 1/count, mean)
+				} else {
+					// Opposite-sign finite operands can have an overflowing
+					// difference. Their divided contributions have opposite
+					// signs, so this equivalent weighted update avoids it.
+					mean = math.FMA(-mean, 1/count, mean) + value/count
+				}
+				// Reject invalid arithmetic instead of constructing an
+				// augmented design from an unrepresentable center.
 				if !finite(mean) {
 					return nil, nil, ErrOverflow
 				}
