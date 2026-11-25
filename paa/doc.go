@@ -23,6 +23,9 @@
 //     returns identical window-local geometry without copying source samples.
 //   - Means(values,w) returns only detached averaged values; its geometry and
 //     source length metadata are deliberately discarded.
+//   - ValidateDimensions(n,w) preflights checked index and output storage sizes
+//     without accessing or allocating source observations; it cannot validate
+//     future data finiteness or guarantee that RAM is available.
 //   - The requested segment count is explicit; there is no Options mode or
 //     default partition size that could change the geometric contract.
 //

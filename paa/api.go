@@ -39,8 +39,8 @@ package paa
 //   - ErrInvalidOption: segments<=0 first; segments>n after nil/empty checks.
 //   - ErrNilInput: values==nil; ErrEmptyInput: non-nil empty values.
 //   - ErrNonFinite: any NaN or infinity, checked before geometry overflow.
-//   - ErrOverflow: n*segments cannot fit int64, or numeric output cannot be
-//     represented by finite float64.
+//   - ErrOverflow: n*segments exceeds int64, Segment output storage exceeds
+//     the platform int byte limit, or the numeric result is not finite.
 //
 // Determinism:
 //   - Scan indices i and j advance monotonically from zero; equal right
@@ -69,6 +69,61 @@ func Transform(values []float64, segments int) (*Result, error) {
 
 	// The single canonical kernel owns all fractional geometry and arithmetic.
 	return transformKernel(values, segments)
+}
+
+// ValidateDimensions checks whether a planned PAA partition has representable
+// segment storage and exact rational coordinates without allocating sample data.
+// It is useful when scheduling large streams before their observations exist.
+//
+// Implementation:
+//   - Stage 1: reject nonpositive dimensions and segments greater than length.
+//   - Stage 2: apply the same checked storage and n*segments bounds as Transform.
+//   - Stage 3: publish the classification without allocating any output buffer.
+//
+// Behavior highlights:
+//   - A successful preflight does not reserve memory or prove input finiteness.
+//   - All valid positive dimensions use exactly Transform's integer-size law.
+//   - Invalid dimensions are options, not nil or empty slices: this function
+//     does not receive an input slice and cannot classify slice presence.
+//
+// Inputs:
+//   - length: planned number n of source observations; must be positive.
+//   - segments: planned number w of equal-duration intervals, 1 <= w <= n.
+//
+// Returns:
+//   - error: nil for a representable partition; a stable sentinel otherwise.
+//
+// Errors:
+//   - ErrInvalidOption: length <= 0, segments <= 0, or segments > length.
+//   - ErrOverflow: exact segment endpoints exceed int64 or the Segment slice
+//     would require a byte count that cannot fit a Go int.
+//
+// Determinism:
+//   - Fixed ordered comparisons on the two input integers; no source reads.
+//
+// Complexity:
+//   - Time O(1), space O(1); no allocations, regardless of length.
+//
+// Notes:
+//   - Transform still performs its canonical options/nil/empty/finiteness
+//     checks before sizing; preflight cannot replace that validation.
+//   - A nil return does not promise physical RAM, concurrency safety for a
+//     future input, or numerical validity of observations not yet supplied.
+//
+// AI-Hints:
+//   - Use this preflight before materializing very large data windows when
+//     representability matters independently of available memory.
+//   - Do not interpret ErrInvalidOption from this dimension-only function as
+//     ErrEmptyInput from Transform: an integer count is not an input slice.
+func ValidateDimensions(length, segments int) error {
+	// The shape is a pair of required positive counts, with no default w.
+	// Bounds are checked before unsigned arithmetic or division is possible.
+	if length <= 0 || segments <= 0 || segments > length {
+		return ErrInvalidOption
+	}
+
+	// Delegate to the canonical size gate shared with the input validator.
+	return validateDimensionBounds(length, segments)
 }
 
 // TransformRange computes PAA over one contiguous half-open sample-index range.

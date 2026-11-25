@@ -13,8 +13,91 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/lvlath/go/core"
 	"github.com/lvlath/go/paa"
 )
+
+// The compiler checks that the public Result pointer satisfies the shared
+// interface without a conversion, reflection, or a test-only production hook.
+var _ core.Nilable = (*paa.Result)(nil)
+
+// TestResult_IsNil checks pointer presence independently of mathematical
+// validity, including the non-nil interface holding a typed-nil PAA pointer.
+func TestResult_IsNil(t *testing.T) {
+	var missing *paa.Result
+	if !missing.IsNil() {
+		t.Fatal("nil PAA result must report nil")
+	}
+
+	// A Go interface holding a typed-nil pointer is not itself a nil interface.
+	var optional core.Nilable = missing
+	if optional == nil {
+		t.Fatal("typed-nil receiver unexpectedly erased its dynamic interface type")
+	}
+	if !optional.IsNil() {
+		t.Fatal("Nilable must recognize typed-nil Result without dereferencing it")
+	}
+
+	// A zero-value object exists even though it was not returned by Transform.
+	var empty paa.Result
+	if empty.IsNil() {
+		t.Fatal("zero-value Result has a non-nil address")
+	}
+	optional = &empty
+	if optional.IsNil() {
+		t.Fatal("non-nil Result must remain non-nil behind Nilable")
+	}
+
+	// Field integrity and pointer presence are separate contracts: even a
+	// deliberately inconsistent caller-constructed Result remains non-nil.
+	modified := &paa.Result{OriginalLength: -1}
+	if modified.IsNil() {
+		t.Fatal("IsNil must not inspect or validate caller-owned result fields")
+	}
+
+	// A fully computed Result must also satisfy the common pointer predicate.
+	computed, err := paa.Transform([]float64{0, 2, 4, 6, 8}, 2)
+	if err != nil {
+		t.Fatalf("valid PAA transformation: %v", err)
+	}
+	if computed.IsNil() {
+		t.Fatal("successful Transform must return a non-nil Result")
+	}
+
+	// The public error contract returns nil Results, and the nil-safe pointer
+	// method must work without a conditional receiver guard at the call site.
+	failed, err := paa.Transform(nil, 2)
+	mustErrorIs(t, err, paa.ErrNilInput)
+	if !failed.IsNil() {
+		t.Fatal("failed Transform must return a typed-nil Result")
+	}
+}
+
+// TestResult_IsNil_NoAllocations protects the interface's O(1), zero-allocation
+// requirement in both nil and non-nil receiver states.
+func TestResult_IsNil_NoAllocations(t *testing.T) {
+	var missing *paa.Result
+	present := &paa.Result{}
+	for _, tc := range []struct {
+		name  string
+		value core.Nilable
+		want  bool
+	}{
+		{name: "typedNil", value: missing, want: true},
+		{name: "existing", value: present, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			allocs := testing.AllocsPerRun(1000, func() {
+				if tc.value.IsNil() != tc.want {
+					t.Fatal("nilability changed between deterministic calls")
+				}
+			})
+			if allocs != 0 {
+				t.Fatalf("IsNil allocated %.1f times per call; want zero", allocs)
+			}
+		})
+	}
+}
 
 // TestTransform_FractionalFiveByTwo The fractional five-to-two fixture proves every source cell participates.
 // It protects exact unsimplified rational boundaries from floor-block changes.

@@ -32,7 +32,7 @@ const (
 // Implementation:
 //   - Stage 1: reject nonpositive w, nil input, empty input, and w>n in order.
 //   - Stage 2: validate all sample values (including both endpoints) as finite.
-//   - Stage 3: ensure n*w fits int64 and w Segment elements fit a Go int byte size.
+//   - Stage 3: delegate the representability checks to the shared size gate.
 //
 // Behavior highlights:
 //   - Earlier failures take precedence even if later data is also invalid.
@@ -99,21 +99,67 @@ func validateTransform(values []float64, segments int) error {
 		}
 	}
 
-	// Every source endpoint i*w and segment endpoint j*n is at most n*w.
-	// Division-based comparison avoids overflowing a product that would have
-	// invalidated all subsequent int64 coordinate operations.
-	// A Go int is at most 64 bits on supported architectures; positive n and w
-	// may be compared safely as uint64 before converting them to int64.
-	if uint64(n) > uint64(math.MaxInt64)/uint64(segments) {
+	// Finiteness is checked before sizing so ErrNonFinite keeps its precedence
+	// over every representability failure. Dimensions are already positive and
+	// ordered, allowing the same O(1) guard to serve independent preflight calls.
+	return validateDimensionBounds(n, segments)
+}
+
+// validateDimensionBounds checks representability of an already validated
+// positive partition shape. It is shared by full input validation and the
+// dimension-only public preflight; it never touches or allocates sample data.
+//
+// Implementation:
+//   - Stage 1: ensure the Segment slice's required bytes fit a Go int.
+//   - Stage 2: prove that every exact endpoint fits int64 without multiplying.
+//   - Stage 3: return nil only when both arithmetic bounds hold.
+//
+// Behavior highlights:
+//   - The storage and geometry overflow cases share the same ErrOverflow class.
+//   - Checking storage first allows either case to be diagnosed independently
+//     through a length-only preflight, even when no input slice is allocatable.
+//
+// Inputs:
+//   - length: prevalidated positive source sample count n.
+//   - segments: prevalidated positive w, at most length.
+//
+// Returns:
+//   - error: ErrOverflow for an unrepresentable size; nil otherwise.
+//
+// Errors:
+//   - ErrOverflow: Go int cannot represent Segment storage bytes or int64
+//     cannot represent the full n*w rational-coordinate span.
+//
+// Determinism:
+//   - Two ordered integer comparisons; no data-dependent traversal.
+//
+// Complexity:
+//   - Time O(1), space O(1), with no allocations.
+//
+// Notes:
+//   - The caller MUST check 1 <= segments <= length before invoking this
+//     private helper. It does not certify physical memory availability.
+//
+// AI-Hints:
+//   - Never compute length*segments before the quotient guard: the product
+//     may already overflow int64 and silently corrupt segment coordinates.
+//   - Keep the storage-byte check for 32-bit Go targets; a representable
+//     n*w does not imply make([]Segment,w) has a representable byte count.
+func validateDimensionBounds(length, segments int) error {
+	// Segment's three int64 fields require 24 bytes per published interval.
+	// The platform int quotient is safe because both operands are positive.
+	if segments > math.MaxInt/segmentStorageBytes {
 		return ErrOverflow
 	}
 
-	// Each Segment uses three int64 values; its byte count is the stricter
-	// output-allocation bound compared with the 8-byte Values slice. The
-	// geometry check runs after the finite scan to preserve error precedence.
-	// An allowed request may still fail if the operating system has no memory.
-	if uint64(segments) > uint64(math.MaxInt)/segmentStorageBytes {
+	// Source and segment endpoints never exceed n*w. Signed int always fits
+	// int64 on Go's 32-bit and 64-bit targets, so these conversions cannot
+	// overflow or change sign. The division guard avoids multiplying n*w.
+	if int64(length) > math.MaxInt64/int64(segments) {
 		return ErrOverflow
 	}
+
+	// Representable address arithmetic is necessary but not sufficient for
+	// actually obtaining memory from the host operating system.
 	return nil
 }
