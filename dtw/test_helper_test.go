@@ -296,3 +296,91 @@ func mustCoverageSearchFailure(t *testing.T, result *dtw.SearchResult, err error
 		mustErrorIs(t, err, target, "Search pre-compute failure")
 	}
 }
+
+// mustMatrixKernelFailure checks that an invalid adapter input publishes no result.
+// It preserves every required sentinel independently, including joined Matrix causes.
+//
+// Implementation:
+//   - Stage 1: reject any nonnil result pointer.
+//   - Stage 2: verify each required error identity using the existing assertion.
+//
+// Inputs:
+//   - t: owning test; result: typed result pointer; err: actual failure.
+//   - targets: required sentinel identities, in diagnostic order.
+//
+// Returns:
+//   - None; a contract violation fails the owning test.
+//
+// Determinism:
+//   - Checks targets in the supplied order.
+//
+// Complexity:
+//   - Time O(k) error identity checks, Space O(1), where k=len(targets).
+//
+// Notes:
+//   - Use for failures whose contract requires nil, not documented partial results.
+//
+// AI-Hints:
+//   - Do not use reflection or error-string matching for typed nil and joined errors.
+func mustMatrixKernelFailure[T any](t *testing.T, result *T, err error, targets ...error) {
+	t.Helper() // Attribute any failed assertion to the calling scenario.
+	if result != nil {
+		t.Fatalf("failed matrix kernel published a result: %+v; error=%v", result, err)
+	}
+	for _, target := range targets {
+		mustErrorIs(t, err, target, "matrix kernel failure") // Check each error family separately.
+	}
+}
+
+// coverageCorruptReadMatrix models a backend that delivers a nonfinite value after
+// a successful validation read. The underlying logical source is never mutated.
+//
+// Behavior highlights:
+//   - This deliberately faulty backend tests defense against corrupted reads,
+//     not the ordinary behavior of a stable, conforming Matrix implementation.
+//
+// Notes:
+//   - Use a fresh one-cell fixture per invocation; do not share it across workers.
+//
+// AI-Hints:
+//   - Never manufacture a concurrent mutation of Dense to exercise this guard.
+type coverageCorruptReadMatrix struct {
+	matrix.Matrix
+	remainingReads int
+	corruptValue   float64
+}
+
+// At returns a valid source value until the read allowance has been consumed.
+// It then delivers a corrupt numeric payload without a transport error.
+//
+// Implementation:
+//   - Stage 1: delegate to the unchanged source while a read allowance remains.
+//   - Stage 2: return the configured nonfinite payload after that allowance.
+//
+// Inputs:
+//   - i, j: zero-based source indices; used only for valid coordinates.
+//
+// Returns:
+//   - Source value and error, or the injected corrupt value with nil error.
+//
+// Errors:
+//   - Any delegated Matrix.At error is preserved.
+//
+// Determinism:
+//   - The fault point follows the explicitly configured sequential read allowance.
+//
+// Complexity:
+//   - Time O(1) plus delegated At; Space O(1).
+//
+// Notes:
+//   - Does not claim to be a stable numeric backend after fault injection.
+//
+// AI-Hints:
+//   - Restrict the fixture to an intentional post-validation corruption test.
+func (m *coverageCorruptReadMatrix) At(i, j int) (float64, error) {
+	if m.remainingReads == 0 {
+		return m.corruptValue, nil // Model a successful transport of an invalid numeric value.
+	}
+	m.remainingReads-- // Consume a read without modifying the underlying matrix.
+	return m.Matrix.At(i, j)
+}
