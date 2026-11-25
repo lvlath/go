@@ -8,72 +8,11 @@ package sax_test
 
 import (
 	"math"
-	"math/big"
 	"math/rand"
 	"testing"
 
 	"github.com/lvlath/go/sax"
 )
-
-// rationalPAA reproduces each half-open segment's exact weighted integral of
-// binary64 input samples, using integer grid coordinates and arbitrary-precision
-// rationals. It is intentionally independent of the package's PAA implementation.
-func rationalPAA(values []float64, segments int) []*big.Rat {
-	length := len(values)
-	out := make([]*big.Rat, segments)
-	for j := range out {
-		sum := new(big.Rat)
-		left, right := j*length, (j+1)*length
-		for i, value := range values {
-			lo := max(left, i*segments)
-			hi := min(right, (i+1)*segments)
-			if hi <= lo {
-				continue
-			}
-			weight := big.NewRat(int64(hi-lo), 1)
-			term := new(big.Rat).SetFloat64(value)
-			term.Mul(term, weight)
-			sum.Add(sum, term)
-		}
-		out[j] = sum.Quo(sum, big.NewRat(int64(length), 1))
-	}
-	return out
-}
-
-// rationalEuclideanSquared treats the supplied binary64 observations as exact
-// rational numbers, then sums their squared differences with no rounding.
-func rationalEuclideanSquared(left, right []float64) *big.Rat {
-	sum := new(big.Rat)
-	for i, x := range left {
-		diff := new(big.Rat).Sub(new(big.Rat).SetFloat64(x), new(big.Rat).SetFloat64(right[i]))
-		sum.Add(sum, diff.Mul(diff, diff))
-	}
-	return sum
-}
-
-// rationalPAASquared integrates exact squared differences of fractional PAA
-// means; the segment duration factor is n/w, NOT floor(n/w).
-func rationalPAASquared(left, right []*big.Rat, originalLength int) *big.Rat {
-	result := new(big.Rat)
-	for i := range left {
-		diff := new(big.Rat).Sub(left[i], right[i])
-		result.Add(result, diff.Mul(diff, diff))
-	}
-	result.Mul(result, big.NewRat(int64(originalLength), int64(len(left))))
-	return result
-}
-
-// rationalSquareRoot converts an exact positive rational into a high-precision
-// float before square-rooting; this avoids an intermediate float64 overflow.
-func rationalSquareRoot(x *big.Rat) float64 {
-	if x.Sign() == 0 {
-		return 0
-	}
-	hi := new(big.Float).SetPrec(256).SetRat(x)
-	hi.Sqrt(hi)
-	value, _ := hi.Float64()
-	return value
-}
 
 func TestPAA_RationalNearestEvenFractionalOracle(t *testing.T) {
 	rng := rand.New(rand.NewSource(20261111))
@@ -140,28 +79,6 @@ func TestMindist_ExactRationalJensenOracle(t *testing.T) {
 				iteration, length, segments, mindist, exactPAA, exactEuclidean)
 		}
 	}
-}
-
-// referenceZ fits in original units using a separate two-pass population
-// calculation. Moderately scaled test inputs avoid its naive extreme-domain
-// limitations; the production scaled kernel is separately tested at extremes.
-func referenceZ(values []float64) ([]float64, float64, float64) {
-	mean := 0.0
-	for _, value := range values {
-		mean += value
-	}
-	mean /= float64(len(values))
-	squared := 0.0
-	for _, value := range values {
-		delta := value - mean
-		squared += delta * delta
-	}
-	sigma := math.Sqrt(squared / float64(len(values)))
-	out := make([]float64, len(values))
-	for i, value := range values {
-		out[i] = (value - mean) / sigma
-	}
-	return out, mean, sigma
 }
 
 func TestMindist_IndependentPopulationZOracle(t *testing.T) {

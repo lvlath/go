@@ -121,7 +121,8 @@ func pinnedBreakpoints(alphabet int) ([]float64, error) {
 }
 
 // loadQuantileTable verifies the entire embedded numerical resource before
-// publishing it. It performs one bounded decompression and two SHA-256 checks;
+// publishing it. It performs one bounded decompression, two SHA-256 checks,
+// and a finite/strict-order check for each alphabet row;
 // a malformed asset is never allowed to leak a partially initialized cache.
 // Called only through sync.Once, so publication does not require another lock.
 func loadQuantileTable() {
@@ -154,8 +155,21 @@ func loadQuantileTable() {
 	// Only fully validated binary64 values can be published. A fixed-width
 	// little-endian decode has no floating conversion or quantile approximation.
 	decoded := make([]float64, quantileCount)
-	for i := range decoded {
-		decoded[i] = math.Float64frombits(binary.LittleEndian.Uint64(raw[i*8:]))
+	offset := 0
+	for alphabet := minAlphabet; alphabet <= maxAlphabet; alphabet++ {
+		// The ordering restarts at each alphabet boundary, not across rows.
+		for column := 0; column < alphabet-1; column++ {
+			position := offset + column
+			value := math.Float64frombits(binary.LittleEndian.Uint64(raw[position*8:]))
+			// Hashes pin bytes, but a regenerated asset with updated checksums must
+			// still satisfy the finite, strictly ordered quantization domain.
+			if !finite(value) || (column > 0 && value <= decoded[position-1]) {
+				quantileError = ErrInvalidOption
+				return
+			}
+			decoded[position] = value
+		}
+		offset += alphabet - 1
 	}
 	quantileData = decoded
 }

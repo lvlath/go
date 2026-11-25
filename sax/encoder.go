@@ -23,7 +23,9 @@ import (
 const (
 	// normalizationVersion pins the arithmetic path for fitted population Z
 	// scores. It participates in EncodingID and is published with every result.
-	normalizationVersion = "zpopulation-scaled-twopass-v1"
+	// The common version also participates in Raw identity; persisted v1 words
+	// in either mode must be rebuilt from source rather than relabeled.
+	normalizationVersion = "zpopulation-anchor-offset-v2"
 
 	// encodingDomain separates the SAX mathematical identifier from hashes of
 	// other contracts. The NUL byte prevents ambiguous domain concatenation.
@@ -73,7 +75,8 @@ const (
 // AI-Hints:
 //   - Do not add BreakpointID to the compatibility key or remove threshold
 //     content from it; equal labels do not imply equal mathematical bins.
-//   - Do not update the table version without reviewing persisted SAX words.
+//   - Do not update the table or normalization version without rebuilding
+//     persisted SAX words under the new mathematical identity.
 func NewEncoder(opts Options) (*Encoder, error) {
 	if err := validateOptions(opts); err != nil {
 		return nil, err
@@ -308,125 +311,4 @@ func quantize(value float64, boundaries []float64) uint16 {
 	// Constructor validation bounds index to [0,255]. The mask makes the
 	// eight-bit bin domain explicit before representing it as a uint16 code.
 	return uint16(index & (maxAlphabet - 1))
-}
-
-// normalizeWindow performs window-local population normalization in scaled units.
-// Centering is performed after scaling to avoid overflow when subtracting large
-// finite observations; corrected squares are accumulated before final Z scores.
-//
-// Implementation:
-//   - Stage 1: detect exact constant windows, and select RejectConstant/ZeroWord.
-//   - Stage 2: scale by the largest absolute value, subtract a fixed origin,
-//     compute incremental centered mean and compensated population variance.
-//   - Stage 3: compute finite metadata and divide normalized residuals by sigma.
-//
-// Behavior highlights:
-//   - ZeroWord yields n exact zero coordinates, with a zero StdDev and flag.
-//   - No numeric epsilon is used to reclassify nonconstant windows as constant.
-//   - A genuinely positive sigma that underflows float64 is ErrOverflow,
-//     NOT an apparently successful non-degenerate result with StdDev=0.
-//
-// Inputs:
-//   - values: validated nonempty finite read-only observations, length n.
-//   - policy: a validated ConstantPolicy, relevant to equal-valued windows.
-//
-// Returns:
-//   - []float64: detached Z coordinates, including normalized constant zeros.
-//   - mean/stddev: fitted in original value units, both finite on success.
-//   - bool: whether the window was constant and ZeroWord was applied.
-//
-// Errors:
-//   - ErrZeroVariance: an exactly constant RejectConstant window.
-//   - ErrOverflow: unrepresentable numerical fit, including lost variation
-//     during scaling or stddev underflow
-//     from a nonconstant input or non-finite derived coordinates.
-//
-// Determinism:
-//   - Fixed first-sample origin, ascending incremental mean updates, ascending
-//     residual scans and compensated summation; no cross-window fitted state.
-//
-// Complexity:
-//   - Time O(n), extra space O(n), one detached coordinate workspace.
-//
-// Notes:
-//   - Numeric metadata is a representable binary64 summary; tiny finite
-//     source deviations can underflow when converted to original sigma units.
-//
-// AI-Hints:
-//   - Do not use an arbitrary variance epsilon, which would erase small but
-//     meaningful changes; only exact identical samples use ZeroWord.
-//   - Do not subtract two unscaled values near MaxFloat64 (possible overflow).
-func normalizeWindow(values []float64, policy ConstantPolicy) ([]float64, float64, float64, bool, error) {
-	length := len(values)
-	constant := true
-	scale := 0.0
-	for _, observation := range values {
-		if observation != values[0] {
-			constant = false
-		}
-		scale = math.Max(scale, math.Abs(observation))
-	}
-	if constant {
-		if policy == RejectConstant {
-			return nil, 0, 0, false, ErrZeroVariance
-		}
-		// Floating +0.0 is the normalized coordinate, not necessarily bin zero.
-		return make([]float64, length), values[0], 0, true, nil
-	}
-
-	// Scale first, then choose a local origin before centered reductions.
-	// This avoids x-origin overflow even when input signs are opposite.
-	centered := make([]float64, length)
-	origin := values[0] / scale
-	centerMean := 0.0
-	for index, observation := range values {
-		shift := observation/scale - origin
-		centered[index] = shift
-		centerMean += (shift - centerMean) / float64(index+1)
-	}
-
-	// Remove the fitted shift and find a stable residual scale. A zero result
-	// after distinct inputs means scale arithmetic lost observable variation;
-	// treating it as an exact constant would manufacture a false ZeroWord.
-	residualScale := 0.0
-	for index := range centered {
-		centered[index] -= centerMean
-		residualScale = math.Max(residualScale, math.Abs(centered[index]))
-	}
-	if residualScale == 0 {
-		return nil, 0, 0, false, ErrOverflow
-	}
-
-	// Compensated squares in residual-scale units prevent squaring overflow.
-	// The fixed-order summation also avoids a platform-dependent parallel tree.
-	squares := 0.0
-	correction := 0.0
-	for _, residual := range centered {
-		ratio := residual / residualScale
-		term := ratio * ratio
-		delta := term - correction
-		next := squares + delta
-		correction = (next - squares) - delta
-		squares = next
-	}
-	populationRatio := math.Sqrt(squares / float64(length))
-	if populationRatio == 0 || !finite(populationRatio) {
-		return nil, 0, 0, false, ErrOverflow
-	}
-
-	// Calculate fitted metadata in input units. Converting a positive sigma
-	// to zero would falsely advertise a nonconstant window as zero-variance.
-	mean := (origin + centerMean) * scale
-	stddev := (residualScale * populationRatio) * scale
-	if !finite(mean) || !finite(stddev) || stddev == 0 {
-		return nil, 0, 0, false, ErrOverflow
-	}
-
-	for index := range centered {
-		centered[index] = (centered[index] / residualScale) / populationRatio
-		if !finite(centered[index]) {
-			return nil, 0, 0, false, ErrOverflow
-		}
-	}
-	return centered, mean, stddev, false, nil
 }

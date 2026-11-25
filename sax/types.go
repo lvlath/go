@@ -29,7 +29,8 @@ type Normalization uint8
 const (
 	// ZPopulation fits one population mean and standard deviation to the
 	// current observation window (divisor n); nonconstant windows are scaled
-	// to Z scores, while constant windows follow ConstantPolicy.
+	// to Z scores in a safe local binary frame, while constant windows follow
+	// ConstantPolicy. A rounded absolute mean is never used to center samples.
 	ZPopulation Normalization = iota
 
 	// Raw leaves every finite input value unchanged before fractional PAA.
@@ -233,15 +234,18 @@ type Result struct {
 	Segments int
 	// Alphabet is a, the number of symbolic quantization bins in [2,256].
 	Alphabet int
-	// Mean is the fitted window mean in ZPopulation, or 0 for Raw.
+	// Mean is the rounded original-unit fitted window mean in ZPopulation, or 0 for Raw.
+	// It is diagnostic metadata, not the unrounded local center used for Z scores.
 	Mean float64
-	// StdDev is the fitted population sigma in ZPopulation, or 1 for Raw.
+	// StdDev is the rounded original-unit population sigma in ZPopulation, or 1 for Raw.
+	// Successful nonconstant windows have positive StdDev; zero means ZeroWord.
 	StdDev float64
 	// BreakpointID is an audit label; comparison ignores its text.
 	BreakpointID string
 	// EncodingID is the deterministic SHA-256 of mathematical configuration.
 	EncodingID string
-	// NormalizationVersion pins the window-normalization numerical algorithm.
+	// NormalizationVersion pins the numerical execution version in both modes.
+	// A version change requires rebuilding saved words from their source windows.
 	NormalizationVersion string
 	// Degenerate identifies a constant ZPopulation window encoded under ZeroWord.
 	Degenerate bool

@@ -34,6 +34,17 @@
 //     publishes zero normalized coordinates, original Mean, StdDev=0, and
 //     Degenerate=true; its symbols belong to the bin containing numeric zero,
 //     which is not necessarily symbol zero.
+//   - The population kernel selects a finite affine frame before accumulating
+//     centered moments. Same-sign samples subtract the minimum before scaling;
+//     crossed signs use a zero anchor, avoiding an overflowing span. Powers of
+//     two bound local offsets, and compensated sums produce a common center
+//     and dispersion. Z coordinates never subtract the rounded public Mean.
+//   - Exactly representable offsets and binary rescalings preserve the local
+//     shape to normal floating-point accuracy. For example [0,2,6] and
+//     [1e16,1e16+2,1e16+6] yield the same Gaussian-8 word [1,3,7] when w=3.
+//     This cannot recover differences lost in the caller's original values.
+//   - A rare extreme-exponent mean diagnostic delegates to the exact binary
+//     mean in paa.Means; it does not change the internal normalization center.
 //   - Raw preserves input coordinates and reports Mean=0, StdDev=1, and
 //     Degenerate=false, including for constant input. Raw custom breakpoints
 //     should be expressed in the same physical units as the observations.
@@ -55,6 +66,7 @@
 //     All wrappers delegate to the same Encoder kernels without changing math.
 //   - Gaussian thresholds for every alphabet in [2,256] are pinned as an
 //     integrity-checked embedded binary64 table, not regenerated at runtime.
+//     Each decoded alphabet row must also be finite and strictly increasing.
 //
 // Compatibility, identity and mutable results:
 //   - EncodingID is a lowercase hex SHA-256 digest of a versioned, canonical
@@ -63,10 +75,16 @@
 //     versions as applicable, and all breakpoint binary64 bits (signed zero
 //     canonicalized to positive zero). BreakpointID is audit-only; ReturnPAA
 //     controls diagnostics only. Neither field changes EncodingID.
+//   - NormalizationVersion is zpopulation-anchor-offset-v2. It replaces
+//     zpopulation-scaled-twopass-v1 and participates in both ZPopulation and
+//     Raw identities. Raw coordinates remain unchanged; old IDs do not.
+//     Re-encode persisted words and rebuild indexes from original windows;
+//     never migrate by merely relabeling stored hashes or versions.
 //   - OriginalLength is NOT part of EncodingID, but Mindist separately requires
 //     matching source lengths, w, a and EncodingID against both results and
 //     the receiver Encoder. It also validates symbol bounds and all exposed
-//     shape/fit metadata; optional PAA values are checked when present.
+//     shape/fit metadata; degenerate words must use the zero bin even without
+//     PAA, and optional PAA values are checked when present.
 //   - Result is caller-owned and publicly mutable. EncodingID proves matching
 //     configuration claims, NOT authenticity or provenance of a manually
 //     constructed or subsequently modified Result. IsNil checks pointer
@@ -93,7 +111,8 @@
 //     ZPopulation and O(w) workspace/output in Raw (plus the model O(a)).
 //     NewEncoder costs O(a) after one process-wide Gaussian table decode.
 //     Mindist is O(w) if PAA is absent and O(w*log(a)) if diagnostic PAA must
-//     be revalidated; its additional workspace is O(1).
+//     be revalidated; a degenerate word also requires one zero-bin lookup.
+//     Its additional workspace is O(1), and the alphabet is bounded to 256.
 //
 // Numerical proof boundary:
 //   - The lower-bound inequalities follow from interval separation and
@@ -120,6 +139,7 @@
 // AI-Hints:
 //   - Never replace fractional PAA with floor(n/w), confuse BreakpointID with
 //     EncodingID, drop upper-tail bins, or interpret ZeroWord as symbol index 0.
+//   - Never reconstruct Z scores by subtracting the rounded Result.Mean.
 //   - Never transfer a bound proven for Euclidean distance to DTW merely
 //     because both compare time-series windows. A positive SAX lower bound
 //     cannot certify DTW rejection; a small SAX score does not prove a match.

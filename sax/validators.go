@@ -142,17 +142,20 @@ func validateResult(result *Result) error {
 //
 // Implementation:
 //   - Stage 1: validate the declared normalization-version contract.
-//   - Stage 2: enforce raw identity or population-Z degeneracy invariants.
+//   - Stage 2: enforce raw identity or population-Z degeneracy invariants,
+//     including every zero-word symbol even when diagnostic PAA is absent.
 //   - Stage 3: enforce exact-zero PAA for degenerate Z windows, then check
 //     every optional PAA coordinate against its published bin symbol.
 //
 // Errors:
 //   - ErrIncompatible: unknown normalization computation version.
 //   - ErrShape: inconsistent mean/sigma/degeneracy or diagnostic symbol relation,
-//     including a nonzero PAA coordinate in a constant ZeroWord window.
+//     including a nonzero PAA coordinate or a nonzero-bin symbol in a
+//     constant ZeroWord window.
 //
 // Complexity:
-//   - Time O(w log a) if PAA exists, otherwise O(1); extra space O(1).
+//   - Time O(w log a) with PAA; O(w+log a) for a degenerate word without
+//     PAA; O(1) otherwise. Extra space O(1).
 //
 // AI-Hints:
 //   - A false Degenerate value is not harmless metadata; it changes how the
@@ -168,6 +171,14 @@ func (e *Encoder) validateResultForEncoder(result *Result) error {
 	} else if result.Degenerate {
 		if e.constantPolicy != ZeroWord || result.StdDev != 0 {
 			return ErrShape
+		}
+		// A constant ZeroWord has exactly one mathematically possible bin.
+		// This invariant is available even when the caller omitted PAA.
+		zeroSymbol := quantize(0, e.breakpoints)
+		for _, symbol := range result.Symbols {
+			if symbol != zeroSymbol {
+				return ErrShape
+			}
 		}
 	} else if result.StdDev <= 0 {
 		// A nonconstant window cannot be published with an underflowed sigma.

@@ -173,7 +173,25 @@ $$ \mu=\frac{1}{n}\sum_i x_i,\qquad
 \sigma=\sqrt{\frac{1}{n}\sum_i(x_i-\mu)^2},\qquad
 z_i=\frac{x_i-\mu}{\sigma}. $$
 
-The implementation uses a scaled, centered two-pass-style calculation with compensated accumulation to reduce avoidable intermediate overflow and cancellation. This is **not** the same API or a shared fitted model from `stats.FitStandardizer`: SAX's fit is window-local, whereas the `stats` model can freeze training statistics for heldout data. Only representable finite public metadata and coordinates may be published.
+### 5.1. Anchor-preserving numerical normalization
+
+The current kernel is `zpopulation-anchor-offset-v2`. It subtracts a safe anchor before scaling, uses a binary exponent rather than an arbitrary divisor, and accumulates the local center and squared residuals with Neumaier compensation. The population divisor remains `n`.
+
+For a nonconstant window, choose an origin `o=min(x)` for same-sign samples and `o=0` when the signs cross. A zero origin prevents overflow even for `[-MaxFloat64,+MaxFloat64]`. The exponent `e` comes from `Frexp` of the finite same-sign span or the maximum magnitude for crossed signs. In exact arithmetic:
+
+$$ u_i=2^{-e}(x_i-o),\qquad c=\frac{1}{n}\sum_i u_i,\qquad s=\sqrt{\frac{1}{n}\sum_i(u_i-c)^2}. $$
+
+$$ z_i=\frac{u_i-c}{s},\qquad \mu=o+2^e c,\qquad \sigma=2^e s. $$
+
+![Anchor-preserving population Z coordinates](https://latex.codecogs.com/svg.image?z_i%3D%5Cfrac%7Bu_i-c%7D%7Bs%7D%2C%5Cquad%20u_i%3D2%5E%7B-e%7D%28x_i-o%29)
+
+Nearby same-sign observations retain their original differences before scaling (Sterbenz's lemma applies when the magnitudes are within a factor of two). Scaled coordinates have magnitude at most one, so centered squares cannot overflow. Restore the finite original-unit diagnostics only after fitting in this local frame. The mathematical bounds `min(x)<=Mean<=max(x)` and `StdDev<=max(abs(x))` also bound rounded diagnostics; neither bound changes the internal Z coordinates.
+
+For `[0,2,6]` and `[1e16,1e16+2,1e16+6]`, `w=3`, Gaussian-8, both words are `[1,3,7]` and both identity-PAA vectors approximate `[-1.0690449676496976,-0.2672612419124244,1.3363062095621221]`. `ReturnPAA=true` exposes these coordinates. The public mean is a rounded summary: do not recompute Z scores by subtracting `Result.Mean` from the original samples.
+
+A rare extreme-exponent diagnostic mean uses `paa.Means(values,1)` when downscaling would expose a nonzero coordinate or the center to subnormal rounding. It does not feed that rounded mean back into normalization. A nonconstant window whose positive sigma rounds to zero returns `ErrOverflow`, not `ZeroWord`. Normalization remains O(n) time and O(n) workspace; the rare diagnostic reduction adds one O(n) pass and O(1) auxiliary storage.
+
+This is a stable binary64 algorithm, not a universal correctly-rounded or directed-rounding theorem. Exact translation and positive power-of-two scaling preserve mathematical Z coordinates; input transformations that already destroy distinctions by binary64 rounding cannot be undone. Very small terms may still round during exponent scaling. This is **not** the same API or a shared fitted model from `stats.FitStandardizer`: SAX's fit is window-local, whereas the `stats` model can freeze training statistics for heldout data. Only representable finite public metadata and coordinates may be published.
 
 | Input and mode                                                          | Outcome                                  | Metadata                                         |
 |:------------------------------------------------------------------------|:-----------------------------------------|:-------------------------------------------------|
@@ -183,7 +201,7 @@ The implementation uses a scaled, centered two-pass-style calculation with compe
 | Distinct values but positive sigma underflows or fit is unrepresentable | `ErrOverflow`, nil Result                | Never mislabeled as constant                     |
 | Constant or varying `Raw`                                               | Original coordinates passed to PAA       | `Mean=0`, `StdDev=1`, `Degenerate=false`         |
 
-**Important:** `ZeroWord` describes the *normalized vector*. Its symbols are whatever bin contains the number zero. For example, a two-symbol Gaussian alphabet has its threshold at zero, and right-bin equality assigns zero to symbol `1`. Two constant sensors at 44°C and 82°C become identical Z-normalized zero vectors under `ZeroWord`; use `Raw` with temperature-specific boundaries if absolute level matters.
+**Important:** `ZeroWord` describes the *normalized vector*. Its symbols are whatever bin contains the number zero. For example, a two-symbol Gaussian alphabet has its threshold at zero, and right-bin equality assigns zero to symbol `1`. Two constant sensors at 44°C and 82°C become identical Z-normalized zero vectors under `ZeroWord`; use `Raw` with temperature-specific boundaries if absolute level matters. `Mindist` checks every degenerate symbol against the bin containing zero even when `PAA` is omitted. A forged degenerate word with another symbol returns `ErrShape`.
 
 In application-level forecasting or monitoring, window-local normalization may remove amplitude shifts that were themselves the anomaly. Choose `Raw` when absolute magnitude matters; choose Z when normalized shape matters. Do not interpret either mode as a statistically trained classifier.
 
@@ -212,7 +230,7 @@ The result uses `uint16` codes, but `Alphabet<=256` means its largest valid nume
 
 ### 6.2. Gaussian mode and reproducibility
 
-`Breakpoints == nil` selects a pinned standard-normal quantile table for every `a in [2,256]`. Its values are not approximated afresh using `erf^{-1}` or downloaded at runtime. The package embeds the compressed `sax/quantiles.bin` asset, verifies the compressed stream's SHA-256 and the decompressed little-endian binary64 table's SHA-256, decodes once via `sync.Once`, then privately copies each requested alphabet row.
+`Breakpoints == nil` selects a pinned standard-normal quantile table for every `a in [2,256]`. Its values are not approximated afresh using `erf^{-1}` or downloaded at runtime. The package embeds the compressed `sax/quantiles.bin` asset, verifies the compressed stream's SHA-256 and the decompressed little-endian binary64 table's SHA-256, limits decompression to the expected size plus one byte, and validates finite, strictly increasing thresholds within every alphabet row. Only the fully admitted table is published via `sync.Once`. The constructor privately copies each requested row; an integrity failure returns `ErrInvalidOption` without publishing an encoder.
 
 The table contains 32,640 thresholds (`sum(a-1), a=2..256`), **261,120 decoded bytes** plus the 161,584-byte compressed embedded asset. Its quantile-table version participates in `EncodingID`. Updating even one binary64 threshold must be treated as versioned mathematical change, not an internal housekeeping refactor. Integrity checks protect the shipped asset; they do not make caller-writable Results authenticated.
 
@@ -245,7 +263,7 @@ An empty-but-non-nil slice means custom mode with incorrect shape, *not* Gaussia
 + 8 bytes Alphabet (little-endian nonnegative integer)
 + 1 byte Normalization enum
 + 1 byte ConstantPolicy enum
-+ "zpopulation-scaled-twopass-v1\0" normalization version
++ "zpopulation-anchor-offset-v2\0" normalization version (both modes)
 + "gauss-ndtri-f64-v1" (Gaussian mode only)
 + "\0"
 + each threshold's float64 IEEE-754 bits, 8 bytes little-endian
@@ -257,6 +275,15 @@ The exact content and ordering are fixed by `encoder.go`; there is no native str
 **Comparison requires three independent checks:** (1) each result is structurally valid (including symbols, finite diagnostics and zero-variance metadata), (2) its geometry matches the other result and the receiver, and (3) `left.EncodingID == right.EncodingID == encoder.EncodingID` internally. `NormalizationVersion` must also match the implementation. `Mindist` never trusts a matching human label.
 
 **Security boundary:** Because `Result` exports `Symbols`, metadata and `EncodingID`, a caller can forge a structurally valid word and copy somebody else's claimed hash. SHA-256 reduces accidental mathematical collisions between configurations; it is **not a MAC or signature** over the Result. If index entries cross a trust boundary, provide application-level authenticated storage and immutable records.
+
+### 7.1. Persisted identity migration from v1
+
+The previous `zpopulation-scaled-twopass-v1` kernel divided observations by their maximum absolute value before subtracting an origin. A large common offset could distort small representable differences and change the Gaussian symbol word. Version `zpopulation-anchor-offset-v2` corrects this arithmetic. The hash serialization format and the Gaussian threshold bytes are unchanged, but the normalization version is part of the hash in **both** `ZPopulation` and `Raw`. Raw coordinates and quantization are unchanged; Raw IDs change as well.
+
+1. Preserve the original windows, sample lengths, cadence provenance and complete encoding options, including custom breakpoint content.
+2. Construct new encoders under the new implementation and re-encode every persisted window in both modes. Rebuild all derived word indexes, pattern counts, transition tables and cached distances that depend on the old words or identity.
+3. Validate the resulting identity and `NormalizationVersion` within each catalog partition before publishing the replacement index. Do not mix old and new entries or update only their ID/version strings. `Mindist` rejects v1 results against a v2 receiver with `ErrIncompatible` even when their shape or human label matches.
+4. If original windows are unavailable, keep the old catalog isolated under its historical implementation or rebuild it from authoritative data. Symbols alone cannot reconstruct their original windows.
 
 Persistence note: persist the original sample length and policy/version provenance with every word. Do not compare serialized words from unknown versions or reconstruction logic based solely on their human labels.
 
@@ -560,7 +587,7 @@ Let `n` be the source length, `w` the number of segments, and `a` the alphabet s
 
 The lazy Gaussian table uses 261,120 bytes of decoded float64 values plus 161,584 bytes of embedded compressed data, excluding allocation and slice overhead. These are implementation characteristics, not a promise that arbitrary memory pressure can never cause a Go allocation failure. No `panic`/`recover`-based OOM handling exists.
 
-Benchmark relevant regimes separately: `n=10^3` and `10^5`, `w=16/64`, `a=4/8/32`; compare one-time construction, repeated encoding, PAA diagnostics on/off, and separated-bin MINDIST. Prepare all inputs and encoders before the timed loop, check nonzero expected gap for comparison fixtures, use `b.ReportAllocs()`, and report Go toolchain, CPU and setup assumptions. Numerical equivalence precedes speed claims.
+Benchmark relevant regimes separately: `n=10^3` and `10^5`, `w=16/64`, `a=4/8/32`; compare one-time construction, repeated encoding, PAA diagnostics on/off, and separated-bin MINDIST. `BenchmarkEncodeOffset` additionally compares exactly representable even-integer increments at offsets `0`, `+1e16`, and `-1e16` at the two source lengths. Prepare all inputs and encoders before the timed loop, check nonzero expected gap for comparison fixtures, use `b.ReportAllocs()`, and report Go toolchain, CPU and setup assumptions. Numerical equivalence precedes speed claims.
 
 ## 16. Operational failure modes and safeguards
 
@@ -590,13 +617,19 @@ ENCODE(encoder, observations):
   validate encoder; reject nil, empty or too-short input in public order
   scan all observations for finite values
   if encoder.Normalization == ZPopulation:
-      fit population mean and sigma using stable scaled arithmetic
+      find minimum and maximum
       if all values identical:
           if RejectConstant: return ErrZeroVariance
-          else set normalized[] = zeros, sigma=0, Degenerate=true
+          else set transformed[] = zeros, Mean=first sample, StdDev=0, Degenerate=true
       else:
-          reject unrepresentable fit with ErrOverflow
-          publish finite normalized[]
+          choose safe anchor and binary exponent from finite extrema
+          u[] = binary_scale(observations[] - anchor)
+          center = compensated_sum(u) / n
+          residual[] = u[] - center
+          sigma = sqrt(compensated_sum(residual^2) / n)
+          restore original-unit Mean and StdDev (exact diagnostic mean if needed)
+          if positive StdDev rounds to zero: return ErrOverflow
+          transformed[] = residual[] / sigma; Degenerate=false
   else:
       transformed[] = read-only observations (identity)
       Mean=0; StdDev=1; Degenerate=false
@@ -615,7 +648,9 @@ MINDIST(encoder, left, right):
   validate encoder and nil arguments
   validate independent Result shape, symbol bounds and finite metadata
   require same n,w,a, EncodingID; match encoder's mathematical policy
-  validate normalized metadata and optional PAA-to-symbol relation
+  validate normalization version and fitted metadata
+  require all degenerate symbols to equal the zero bin
+  validate optional PAA-to-symbol relation and exact-zero degenerate PAA
   norm = 0
   for j in 0..w-1:
       lo,hi = sorted(left.Symbols[j],right.Symbols[j])
@@ -631,23 +666,33 @@ MINDIST(encoder, left, right):
 
 The external `package sax_test` suite validates boundary equality and every bin, all 255 alphabet sizes, Gaussian golden identities, negative-zero policy, zero-variance error and ZeroWord metadata, detached results, parallel use of an immutable encoder, malformed caller-constructed Results, and the mandatory DTW counterexample. Fractional PAA/Jensen property tests compare against independent test oracles rather than duplicating the production numeric kernel. These validations exercise *implemented* contracts, not a future ANN index.
 
+The large-offset regression uses exact binary-input `math/big.Rat` mean and variance and a 256-bit square root/quotient oracle; it first proves the signed translations and binary rescalings of its fixtures are exact. Independent historical and current Gaussian digests protect both Raw and Z identity migration. The public corrupt-asset tests run in separate builds with deliberate resource faults, never mutating the live process cache or weakening production validation. The script reports ordinary statement coverage separately from the union of matching source blocks across isolated builds; this is not a Codecov branch-coverage measurement.
+
 Useful local verification commands (execute at repository root on the declared Go toolchain):
 
 ```bash
-go test ./sax -count=1
-go test -race ./sax -count=1
+go test ./sax -count=1 -coverprofile=/tmp/sax.cover
+go test -race ./sax ./paa -count=1
+go vet ./sax ./paa
+go test -run '^Example' ./sax
+go run ./examples/sax
+go test -run '^$' -bench . -benchmem ./sax
+python3 tools/sax/verify_asset_failures.py --repo . --out /tmp/sax-asset-coverage
 go test ./...
 go vet ./...
 golangci-lint run
+govulncheck ./...
 ```
 
 Report actual PASS/FAIL/SKIP for your environment instead of presenting these commands as a claim of already passing CI. For the full library policy see [`lvlath_UES.md`](lvlath_UES.md). No test belongs in production `package sax`; examples and contract tests are external `package sax_test`.
 
 ## 19. Further reading
 
-- [`sax/doc.go`](../../../../Downloads/sax-phase8-documentation/sax/doc.go): authoritative package charter, error and ownership laws.
+- [`sax/doc.go`](../sax/doc.go): authoritative package charter, error and ownership laws.
 - [`sax/api.go`](../sax/api.go), [`sax/types.go`](../sax/types.go): implemented facades and result model.
-- [`sax/example_test.go`](../sax/example_test.go): five executable application-style scenarios.
+- [`sax/normalization.go`](../sax/normalization.go): safe anchor and compensated population fitting.
+- [`sax/example_test.go`](../sax/example_test.go): five executable application-style scenarios; [`sax/example_repair_test.go`](../sax/example_repair_test.go) demonstrates exact offset removal.
+- [`examples/sax/main.go`](../examples/sax/main.go): synthetic aligned vibration-pattern screening, not a validated fault detector.
 - [`PAA.md`](PAA.md): exact fractional segment geometry and rounding policy.
 - [`SERIES.md`](SERIES.md): cadence checking and complete index windows.
 - [`STATS.md`](STATS.md): stable moments and training-only normalization (a distinct contract).

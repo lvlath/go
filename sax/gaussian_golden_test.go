@@ -15,19 +15,19 @@ import (
 )
 
 func TestGaussian_OriginalBinaryTableIdentityAllAlphabets(t *testing.T) {
-	// Golden digest computed independently from the original offline NDTRI
-	// binary64 table, before moving it from Base64 into an embed asset.
-	const expectedAll = "9eac826bb2dc3ed036bc1166951fd459b9cd95aac057ee0592e3cdf580ec60cc"
+	// Golden digests use the original offline quantile bytes and the v2 version.
+	// They were independently serialized, not captured from NewEncoder output.
+	const expectedAll = "4ea3a319048e111d5e04caf2f6feac60a754c6fd1417bfdcfb0e980d11cb45b5"
 	goldenIDs := map[int]string{
-		2:   "7db0086c581a57e0bb37e559b23ba8520601f5659ba8391a88369c63534dc5df",
-		3:   "b68dd98b9f9a551ec4756c8791965b6a9afd08a8b85c655c85c4b2251f5d5ffe",
-		4:   "5acf22d804cd41393ec8e92b5108baf75f956ef7a5255541d533f99e52f7f3ed",
-		8:   "e29bad5afbed999bef9d2b0a643876767a5b15e9e6555955beef8ed73f7cc1b4",
-		16:  "38e27d71f96cd450ebe5e408fe792e0d075471ad17b6b2d7107600c4e4503bdf",
-		32:  "9e5d708e741fbed3d0eb34697245d9f1c37ec6245324abe1ac0c0c3fd9e33cc8",
-		64:  "3f21edd47f23d593815b0d9ec72cfd8ce15bd4d229672126fa4a4b2ce2ec515f",
-		128: "0d2b097b2300c03ea39daeead41764d10e452e84618446b466b83c42ba6926e6",
-		256: "618cc660c20575e8df5278d76342000cfcfcb6494745506faad1e432fbbc652a",
+		2:   "58d0338ff1522e8e7b78d9933f3f1fd3065900b7d26de7425af48a7e523f0a62",
+		3:   "4ff569dbab019c8e27d84b2dbcb68195f11848e227ee4fd644c71d7adbebe86b",
+		4:   "81d21c1bf08ba39344874c22e7e3935bd576908ab88707bd2a9f415184f0445b",
+		8:   "5f474b57e9b4400911c97ec63452d25dc3daeb98d19ecf04ce85b6de4269a405",
+		16:  "72b6c82514f757327923151e550c95e69cee06b1b9df9648d50df19127a755dd",
+		32:  "4ceeec652817aa5be21ff77139b4316b3cccc25a9bf387162e67e729252dcb13",
+		64:  "34e86e8d5fead870636f2bcc0c183620d15ca735f111f1cf2308c3c0cdbf5700",
+		128: "e930c8f792e958231c782f79d81530948f346a4e1b1434f6d6825bfbdf3ecc96",
+		256: "d242c7638bc68fd045c77ec1813f76db1287017553e5a095a5f6381bc43b14a9",
 	}
 	hasher := sha256.New()
 	for alphabet := 2; alphabet <= 256; alphabet++ {
