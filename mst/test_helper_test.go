@@ -4,8 +4,10 @@
 package mst_test
 
 import (
+	"context"
 	"errors"
 	"math"
+	"sync/atomic"
 	"testing"
 
 	"github.com/lvlath/go/core"
@@ -264,4 +266,126 @@ func maxTreeEdges(vertexCount int) int {
 		return 0
 	}
 	return vertexCount - 1
+}
+
+// steinerCheckpointContext cancels a real context at a chosen Err observation.
+// It makes cooperative cancellation reproducible without sleep, racing graph writes, or wall-clock deadlines.
+// The counter is atomic and the embedded context retains normal Done/Err semantics after cancellation.
+type steinerCheckpointContext struct {
+	context.Context
+	cancel   context.CancelFunc
+	cancelAt int64
+	polls    atomic.Int64
+}
+
+// newSteinerCheckpointContext creates a fresh checkpoint-driven cancellation context.
+// A zero checkpoint records observations without canceling; positive values cancel exactly once.
+// Implementation:
+//   - Stage 1: Derive a real cancellable context from Background.
+//   - Stage 2: Record the desired observation index in test-owned state.
+//   - Stage 3: Return the context and its cleanup callback to the caller.
+//
+// Behavior highlights:
+//   - Done is closed by context.CancelFunc before Err reports context.Canceled.
+//
+// Inputs:
+//   - cancelAt: one-based Err observation index, or zero to record the full successful run.
+//
+// Returns:
+//   - *steinerCheckpointContext and context.CancelFunc; both belong to the calling test.
+//
+// Errors:
+//   - None during construction.
+//
+// Determinism:
+//   - Single synchronous algorithm calls produce an observation sequence independent of the clock.
+//
+// Complexity:
+//   - Time O(1), Space O(1).
+//
+// Notes:
+//   - This is a test context, not a production cancellation policy.
+//
+// AI-Hints:
+//   - Derive the number of checkpoints from a successful run instead of hardcoding private line counts.
+func newSteinerCheckpointContext(cancelAt int64) (*steinerCheckpointContext, context.CancelFunc) {
+	// Use the standard cancellation primitive rather than fabricating inconsistent context errors.
+	ctx, cancel := context.WithCancel(context.Background())
+	return &steinerCheckpointContext{Context: ctx, cancel: cancel, cancelAt: cancelAt}, cancel
+}
+
+// Err observes one cooperative cancellation checkpoint and delegates to the real context.
+// The configured observation closes Done through CancelFunc before returning the first cancellation error.
+// Implementation:
+//   - Stage 1: Increment the observation counter atomically.
+//   - Stage 2: Trigger cancellation at the configured positive checkpoint.
+//   - Stage 3: Return the standard context error unchanged.
+//
+// Behavior highlights:
+//   - Once canceled, every later Err call continues to report context.Canceled.
+//
+// Inputs:
+//   - Receiver: a test-owned checkpoint context; do not copy it after first use.
+//
+// Returns:
+//   - error: nil before cancellation, context.Canceled afterwards.
+//
+// Errors:
+//   - context.Canceled is returned by the embedded standard context.
+//
+// Determinism:
+//   - Cancellation is driven by observation count, not scheduling delays.
+//
+// Complexity:
+//   - Time O(1), Space O(1) per observation for this context without children.
+//
+// Notes:
+//   - Atomic counting avoids a race if a future consumer observes Err concurrently.
+//
+// AI-Hints:
+//   - Do not use a fabricated Err implementation that reports cancellation while Done remains open.
+func (ctx *steinerCheckpointContext) Err() error {
+	// Advance the counter even in recording mode so the test can discover all checkpoints.
+	observation := ctx.polls.Add(1)
+	if ctx.cancelAt > 0 && observation == ctx.cancelAt {
+		ctx.cancel()
+	}
+	return ctx.Context.Err()
+}
+
+// mustSteinerBoundaryError checks a failed stage's sentinel identity and absence of a public result.
+// It intentionally accepts only a SteinerResult pointer, avoiding reflection or typed-nil ambiguity.
+// Implementation:
+//   - Stage 1: Reject any published result on failure.
+//   - Stage 2: Check the precise error identity using the shared sentinel assertion.
+//
+// Behavior highlights:
+//   - Joined and wrapped errors are accepted through errors.Is.
+//
+// Inputs:
+//   - t: active test; result: returned result; err: actual error; want: required sentinel; op: diagnostic label.
+//
+// Returns:
+//   - None; the helper terminates the current test on a mismatch.
+//
+// Errors:
+//   - Test failure for an unexpected non-nil result or missing error identity.
+//
+// Determinism:
+//   - Fixed assertion order; no message parsing.
+//
+// Complexity:
+//   - O(error-chain size) time and errors.Is traversal space.
+//
+// Notes:
+//   - A non-nil partial result is a failure even when its accompanying error is correct.
+//
+// AI-Hints:
+//   - Do not replace the nil-result check with IsNil on an unrelated result type.
+func mustSteinerBoundaryError(t *testing.T, result *mst.SteinerResult, err, want error, op string) {
+	t.Helper()
+	if result != nil {
+		t.Fatalf("%s: published a partial Steiner result: %+v", op, result)
+	}
+	mustErrorIs(t, err, want, op)
 }
