@@ -163,3 +163,67 @@ func TestCoreRejectsNaNInfWeightsBeforeFlow(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateCapacityDefensiveNumericBoundaries verifies the internal edge guard through a test-build bridge.
+// The fixture uses standalone core.Edge values, never corrupted graph-owned pointers.
+// Implementation:
+//   - Stage 1: Define nil, non-finite, and adjacent floating-point threshold cases.
+//   - Stage 2: Invoke the actual capacity validator through its test-only alias.
+//   - Stage 3: Compare the exact normalized value and every required sentinel.
+//
+// Behavior highlights: Tests both sides of -epsilon and +epsilon without approximate comparisons.
+// Inputs: t is the test handle.
+// Returns: None.
+// Errors: A wrong normalized capacity, missing sentinel, or edge mutation fails the test.
+// Determinism: math.Nextafter selects the immediately adjacent representable values.
+// Complexity: O(K) time for K constant-size validation cases, O(1) per case.
+// Notes: core.AddEdge correctly rejects NaN/Inf before these defensive checks are reachable.
+// AI-Hints: Never bypass core's public weight invariant just to increase flow coverage.
+func TestValidateCapacityDefensiveNumericBoundaries(t *testing.T) {
+	const epsilon = 0.25
+	above := math.Nextafter(epsilon, math.Inf(1))
+	belowNegative := math.Nextafter(-epsilon, math.Inf(-1))
+	cases := []struct {
+		name    string
+		nilEdge bool
+		weight  float64
+		want    float64
+		errs    []error
+	}{
+		{name: "nil_edge", nilEdge: true, errs: []error{flow.ErrInvalidCapacity}},
+		{name: "nan", weight: math.NaN(), errs: []error{flow.ErrInvalidCapacity, flow.ErrNaNInf}},
+		{name: "positive_inf", weight: math.Inf(1), errs: []error{flow.ErrInvalidCapacity, flow.ErrNaNInf}},
+		{name: "negative_inf", weight: math.Inf(-1), errs: []error{flow.ErrInvalidCapacity, flow.ErrNaNInf}},
+		{name: "below_negative_threshold", weight: belowNegative, errs: []error{flow.ErrInvalidCapacity, flow.ErrNegativeCapacity}},
+		{name: "negative_threshold", weight: -epsilon},
+		{name: "negative_tolerated", weight: -epsilon / 2},
+		{name: "zero"},
+		{name: "below_positive_threshold", weight: math.Nextafter(epsilon, 0)},
+		{name: "positive_threshold", weight: epsilon},
+		{name: "above_positive_threshold", weight: above, want: above},
+		{name: "largest_finite", weight: math.MaxFloat64, want: math.MaxFloat64},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var edge *core.Edge
+			if !tc.nilEdge {
+				edge = &core.Edge{ID: "capacity-fixture", From: flowTestSource, To: flowTestSink, Directed: true, Weight: tc.weight}
+			}
+			value, err := flow.ValidateCapacityForTest(edge, epsilon)
+			if len(tc.errs) == 0 {
+				mustNoError(t, err, "valid capacity")
+			} else {
+				for _, target := range tc.errs {
+					mustErrorIs(t, err, target, "capacity numeric policy")
+				}
+			}
+			if value != tc.want {
+				t.Fatalf("normalized capacity: got=%g want=%g", value, tc.want)
+			}
+			// Bit comparison also detects a changed NaN payload, for which equality is undefined.
+			if edge != nil && math.Float64bits(edge.Weight) != math.Float64bits(tc.weight) {
+				t.Fatal("capacity validation mutated its input")
+			}
+		})
+	}
+}

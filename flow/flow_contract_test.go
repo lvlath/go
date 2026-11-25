@@ -12,48 +12,6 @@ import (
 	"github.com/lvlath/go/flow"
 )
 
-func allAlgorithms() []struct {
-	name      string
-	algorithm flow.Algorithm
-} {
-	return []struct {
-		name      string
-		algorithm flow.Algorithm
-	}{
-		{name: "Dinic", algorithm: flow.AlgorithmDinic},
-		{name: "EdmondsKarp", algorithm: flow.AlgorithmEdmondsKarp},
-		{name: "FordFulkerson", algorithm: flow.AlgorithmFordFulkerson},
-	}
-}
-
-func buildEnterpriseBackboneProofNetwork(t *testing.T) *core.Graph {
-	t.Helper()
-
-	g := mustGraph(t, core.WithDirected(true), core.WithWeighted())
-
-	mustAddEdge(t, g, "S", "EdgeA", 10)
-	mustAddEdge(t, g, "S", "EdgeB", 15)
-	mustAddEdge(t, g, "S", "EdgeC", 10)
-
-	mustAddEdge(t, g, "EdgeA", "CoreD", 9)
-	mustAddEdge(t, g, "EdgeA", "CoreE", 4)
-	mustAddEdge(t, g, "EdgeB", "CoreD", 5)
-	mustAddEdge(t, g, "EdgeB", "CoreE", 8)
-	mustAddEdge(t, g, "EdgeB", "CoreF", 4)
-	mustAddEdge(t, g, "EdgeC", "CoreE", 6)
-	mustAddEdge(t, g, "EdgeC", "CoreF", 8)
-
-	mustAddEdge(t, g, "CoreD", "AggG", 10)
-	mustAddEdge(t, g, "CoreE", "AggG", 7)
-	mustAddEdge(t, g, "CoreE", "AggH", 8)
-	mustAddEdge(t, g, "CoreF", "AggH", 10)
-
-	mustAddEdge(t, g, "AggG", "T", 15)
-	mustAddEdge(t, g, "AggH", "T", 12)
-
-	return g
-}
-
 func TestMaxFlow_AllAlgorithms_EnterpriseBackboneProofCertificate(t *testing.T) {
 	for _, tt := range allAlgorithms() {
 		t.Run(tt.name, func(t *testing.T) {
@@ -263,51 +221,58 @@ func TestMaxFlow_FordFulkersonAugmentationLimitReturnsPartialResult(t *testing.T
 	mustEqualFloat(t, result.Value, 1, "augmentation limit pushed value")
 }
 
-func TestMaxFlow_ContextCanceledBeforeRunReturnsPartialResult(t *testing.T) {
+// TestMaxFlow_ContextCanceledBeforeRunReturnsNoResult verifies the pre-kernel cancellation law.
+// A canceled context prevents residual construction and therefore cannot publish partial flow.
+// Implementation: Cancel before MaxFlow, then verify the original context sentinel and nil result.
+// Behavior highlights: Distinguishes a rejected run from a partially executed run.
+// Inputs: t is the test handle.
+// Returns: None.
+// Errors: Incorrect cancellation identity or any result publication fails the test.
+// Determinism: Cancellation occurs synchronously before invocation.
+// Complexity: O(1) cancellation detection after input validation.
+// AI-Hints: Do not accept both nil and partial results for the same deterministic cancellation point.
+func TestMaxFlow_ContextCanceledBeforeRunReturnsNoResult(t *testing.T) {
 	g := buildEnterpriseBackboneProofNetwork(t)
-
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-
-	result, err := flow.MaxFlow(
-		g,
-		"S",
-		"T",
-		flow.WithContext(ctx),
-		flow.WithAlgorithm(flow.AlgorithmDinic),
-	)
-
+	result, err := flow.MaxFlow(g, flowTestSource, flowTestSink,
+		flow.WithContext(ctx), flow.WithAlgorithm(flow.AlgorithmDinic))
 	mustErrorIs(t, err, context.Canceled, "canceled MaxFlow")
 	if result != nil {
-		mustEqualBool(t, result.Partial, true, "canceled result is partial")
+		t.Fatalf("pre-run cancellation published a result: %+v", result)
 	}
 }
 
+// TestMaxFlow_ObserverFailureReturnsPartialResult verifies observer rejection across all engines.
+// The callback fails after the first committed augmentation, preserving both error identities.
+// Implementation:
+//   - Stage 1: Run the two-route fixture with a rejecting observer.
+//   - Stage 2: Verify the first event and every partial-result field.
+//
+// Behavior highlights: No later augmentation or optimality certificate may be published.
+// Inputs: t is the test handle.
+// Returns: None.
+// Errors: ErrObserverFailure and the original callback error must both survive wrapping.
+// Determinism: The callback stops the run at a fixed augmentation index.
+// Complexity: One committed augmentation and its search per engine.
+// AI-Hints: Do not replace a callback error with an unrelated cancellation error.
 func TestMaxFlow_ObserverFailureReturnsPartialResult(t *testing.T) {
-	g := mustGraph(t, core.WithDirected(true), core.WithWeighted())
-
-	mustAddEdge(t, g, "S", "A", 1)
-	mustAddEdge(t, g, "A", "T", 1)
-	mustAddEdge(t, g, "S", "B", 1)
-	mustAddEdge(t, g, "B", "T", 1)
-
 	observerErr := errors.New("observer stopped after first event")
-
-	result, err := flow.MaxFlow(
-		g,
-		"S",
-		"T",
-		flow.WithAlgorithm(flow.AlgorithmEdmondsKarp),
-		flow.WithObserver(func(context.Context, flow.AugmentationEvent) error {
-			return observerErr
-		}),
-	)
-
-	mustErrorIs(t, err, flow.ErrObserverFailure, "observer failure sentinel")
-	mustErrorIs(t, err, observerErr, "observer original error")
-	if result == nil {
-		t.Fatalf("observer failure must return a partial result")
+	for _, tc := range allAlgorithms() {
+		t.Run(tc.name, func(t *testing.T) {
+			g := buildFlowObservationNetwork(t)
+			events := make([]flow.AugmentationEvent, 0, 1)
+			result, err := flow.MaxFlow(g, flowTestSource, flowTestSink,
+				flow.WithAlgorithm(tc.algorithm),
+				flow.WithObserver(func(_ context.Context, event flow.AugmentationEvent) error {
+					events = append(events, event)
+					return observerErr
+				}))
+			mustErrorIs(t, err, flow.ErrObserverFailure, "observer failure sentinel")
+			mustErrorIs(t, err, observerErr, "observer original error")
+			want := expectedFlowEvents(tc.algorithm)[:1]
+			mustFlowEvents(t, events, want)
+			mustPartialFlowResult(t, result, want[0])
+		})
 	}
-	mustEqualBool(t, result.Partial, true, "observer failure partial")
-	mustEqualFloat(t, result.Value, 1, "observer failure pushed value")
 }
