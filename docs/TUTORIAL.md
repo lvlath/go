@@ -3390,7 +3390,7 @@ Validated ordered feed, with external instrument/cadence/offset
                    |
            Line, then Signal
                    |
-            Histogram finite?
+      All means and outputs valid?
                /       \
               no        yes
               |          |
@@ -3407,12 +3407,19 @@ Active source offset K ── authenticate [Snapshot + offset K+1] ──> Stand
 A failed `Push` leaves **every** counter and mean unchanged; a rejected
 `Restore` does not partially replace any state. Invalid closes are not
 substitutes for missing bars. `Snapshot.Config` is the SHA-256 identity of
-`"macd/sma-ema/v1"` and normalized period integers encoded little-endian;
+`"macd/sma-ema/v2"` and normalized period integers encoded little-endian;
 it does **not authenticate `Count` or the six state values**. Persist the
 source offset separately, authenticate the whole record using application
 security, and avoid routing `uint64` offsets through lossy JSON/JavaScript
 number conversions. `Reset` starts a new history with the **same periods**;
 it is not gap interpolation.
+
+For `Fast=1`, the current close is copied exactly into the fast EMA. For
+`Signal=1`, Signal is bitwise identical to Line and Histogram is numerically
+zero, not an invalid warmup value. The v2 executor rejects v1 checkpoints
+through `ErrStateVersion`. Rebuild the original accepted prefix using the
+same normalized options; see [MACD migration](MACD.md#migration-from-v1-to-v2)
+before switching persisted artifacts or standby workers.
 
 ### 11k.6. Error, ownership and performance boundaries
 

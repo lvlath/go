@@ -20,7 +20,7 @@ package macd
 //   - Options: Fast=12, Slow=26, Signal=9, all explicitly positive.
 //
 // Determinism:
-//   - The constants are fixed for algorithm version macd/sma-ema/v1.
+//   - The constants are fixed for algorithm version macd/sma-ema/v2.
 //
 // Complexity:
 //   - Time O(1), Space O(1).

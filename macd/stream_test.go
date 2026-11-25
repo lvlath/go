@@ -78,14 +78,32 @@ func TestNilAndZeroStream(t *testing.T) {
 
 // TestStream_ZeroAllocsPush Measures the steady-state hot path after New, excluding setup and snapshots.
 func TestStream_ZeroAllocsPush(t *testing.T) {
-	s, _ := macd.New(macd.Options{})
-	allocs := testing.AllocsPerRun(10000, func() {
-		if _, err := s.Push(101); err != nil {
-			t.Fatal(err)
-		}
-	})
-	if allocs != 0 {
-		t.Fatalf("Push allocations = %g", allocs)
+	for _, tc := range []struct {
+		name string
+		opts macd.Options
+	}{
+		{"default", macd.Options{}},
+		{"unit_weight", macd.Options{Fast: 1, Slow: 2, Signal: 1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, err := macd.New(tc.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Reset is allocation-free; it also exercises every warmup phase.
+			prices := [...]float64{1e308, 1, 101, 98, 102}
+			allocs := testing.AllocsPerRun(1000, func() {
+				s.Reset()
+				for i := 0; i < 64; i++ {
+					if _, pushErr := s.Push(prices[i%len(prices)]); pushErr != nil {
+						t.Fatal(pushErr)
+					}
+				}
+			})
+			if allocs != 0 {
+				t.Fatalf("Reset/64 Push calls allocated %g objects", allocs)
+			}
+		})
 	}
 }
 

@@ -101,6 +101,7 @@ func smaller(x, y uint64) uint64 {
 //   - Signal counter equals min(max(Count-Slow+1, 0), Signal).
 //   - Signed negative signal means are valid; the price means remain positive.
 //   - Inactive means must use canonical positive zero, including its float64 sign bit.
+//   - Only macd/sma-ema/v2 is accepted; v1 must be rebuilt from the original closes.
 //
 // Inputs:
 //   - state: caller-owned Snapshot with fully populated, read-only slices during call.
@@ -123,6 +124,8 @@ func smaller(x, y uint64) uint64 {
 //   - Snapshot state is not cryptographically authenticated. A structurally plausible
 //     but fabricated mean can pass Restore; responsibility for trust is external.
 //   - Original states and supplied slices remain independently owned after success.
+//   - Changing only Algorithm/Config cannot repair old numeric state; replay the
+//     exact accepted prefix with New using the same normalized options.
 //   - Concurrent Restore and any other Stream access is unsupported.
 //
 // AI-Hints:

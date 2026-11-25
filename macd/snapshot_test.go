@@ -185,15 +185,15 @@ func TestSnapshot_ConfigDigestIndependentVectors(t *testing.T) {
 	}{
 		{
 			opts:   macd.Options{},
-			config: "05e527ad85a2a33a6723537e3fb700be704df27ee733487e4e7a12d9b24b4191",
+			config: "445b75fd55d24a7e556a9028d92e9bff144f4c8bc4b16b7cea0425c9f7655e21",
 		},
 		{
 			opts:   macd.Options{Fast: 2, Slow: 3, Signal: 2},
-			config: "b4f0d77f86ca4c46b5a9d9c248f59c22f0bb9e018537aadd94c4d510f4ad7e74",
+			config: "ccb5a820c2b78df6b8a658d48698605418b2de7c14f116b355354dec4896ba70",
 		},
 		{
 			opts:   macd.Options{Fast: 5, Slow: 35, Signal: 5},
-			config: "fcacaff906dbfdca40892d916b7d7c5d41589bb1152fe39b135a0cce1c20a5a9",
+			config: "36e83efa7221ab417a25468bdbf223b303d279d2530c514da92cc0dc22d70458",
 		},
 	} {
 		stream, err := macd.New(tc.opts)
@@ -201,10 +201,103 @@ func TestSnapshot_ConfigDigestIndependentVectors(t *testing.T) {
 			t.Fatal(err)
 		}
 		state := stream.Snapshot()
-		mustEqualString(t, state.Algorithm, "macd/sma-ema/v1", "algorithm")
+		mustEqualString(t, state.Algorithm, "macd/sma-ema/v2", "algorithm")
 		mustEqualString(t, state.Config, tc.config, "independent config SHA-256")
 		if len(state.FloatState) != 3 || len(state.IntState) != 3 || state.Count != 0 {
 			t.Fatalf("uninitialized snapshot invariant failed: %+v", state)
 		}
 	}
+}
+
+// TestSnapshot_V1_Rejected pins the incompatible numeric identity and tests
+// the only supported migration: replay the original accepted price prefix.
+// A legitimate old checkpoint and a relabeled old digest must both fail.
+//
+// Implementation:
+//   - Stage 1: build a v2 stream, independently compute v1's known config hash
+//     and supply the exact v1 state for a period-one cancellation fixture.
+//   - Stage 2: reject v1, mismatched hashes, and a label-only replacement.
+//   - Stage 3: replay the original prefix, then restore and compare continuation.
+//
+// Determinism:
+//   - The old fixture records exact binary64 values and a literal v1 SHA-256.
+//   - v2 is produced only by New/Push, never by relabeling legacy state.
+//
+// Complexity:
+//   - Time O(n) for replay, Space O(1) for the fixed-size stream and checkpoints.
+//
+// AI-Hints:
+//   - Reject a v1 checkpoint even when no period equals one; schema identity is
+//     unconditional, and the digest is not authentication of numeric history.
+func TestSnapshot_V1_Rejected(t *testing.T) {
+	// This benign v1 checkpoint is compatible in shape and all numeric fields,
+	// but version admission must reject it even with ordinary periods.
+	ordinary, err := macd.NewWithPeriods(2, 3, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, price := range []float64{1, 2, 3, 2} {
+		if _, err = ordinary.Push(price); err != nil {
+			t.Fatal(err)
+		}
+	}
+	prior := ordinary.Snapshot()
+	const legacyDigest = "b4f0d77f86ca4c46b5a9d9c248f59c22f0bb9e018537aadd94c4d510f4ad7e74"
+	legacy := ordinary.Snapshot()
+	legacy.Algorithm, legacy.Config = "macd/sma-ema/v1", legacyDigest
+	mustErrorIs(t, ordinary.Restore(legacy), macd.ErrStateVersion)
+	mustSnapshotsEqual(t, prior, ordinary.Snapshot())
+	// Neither half of the identifier/digest pair may come from v1.
+	legacy.Algorithm = prior.Algorithm
+	mustErrorIs(t, ordinary.Restore(legacy), macd.ErrStateVersion)
+	mustSnapshotsEqual(t, prior, ordinary.Snapshot())
+	legacy.Algorithm, legacy.Config = "macd/sma-ema/v1", prior.Config
+	mustErrorIs(t, ordinary.Restore(legacy), macd.ErrStateVersion)
+	mustSnapshotsEqual(t, prior, ordinary.Snapshot())
+
+	// Recover a historically corrupted Fast=1 state from the original closes,
+	// not from the lost mean or a substituted epsilon.
+	const first = 1e308
+	const second = 1.0
+	active, err := macd.NewWithPeriods(1, 2, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken := macd.Snapshot{
+		Algorithm:  "macd/sma-ema/v1",
+		Config:     "0e353be9329d7065c27341cabfa1e3b7eb4900ef73c8002adddaf60932311e61",
+		Count:      2,
+		FloatState: []float64{0, 5e307, -5e307},
+		IntState:   []uint64{1, 2, 1},
+	}
+	initial := active.Snapshot()
+	mustErrorIs(t, active.Restore(broken), macd.ErrStateVersion)
+	mustSnapshotsEqual(t, initial, active.Snapshot())
+	for _, price := range []float64{first, second} {
+		if _, err = active.Push(price); err != nil {
+			t.Fatal(err)
+		}
+	}
+	corrected := active.Snapshot()
+	mustBits(t, corrected.FloatState[0], second, "replayed exact Fast")
+	mustEqualString(t, corrected.Algorithm, "macd/sma-ema/v2", "new algorithm")
+	standby, err := macd.NewWithPeriods(1, 2, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = standby.Restore(corrected); err != nil {
+		t.Fatal(err)
+	}
+	for _, price := range []float64{3, 1e100, 4} {
+		point, pushErr := active.Push(price)
+		if pushErr != nil {
+			t.Fatal(pushErr)
+		}
+		want, pushErr := standby.Push(price)
+		if pushErr != nil {
+			t.Fatal(pushErr)
+		}
+		mustMACDPointsEqual(t, point, want)
+	}
+	mustSnapshotsEqual(t, active.Snapshot(), standby.Snapshot())
 }

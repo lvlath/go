@@ -47,7 +47,7 @@ func TestSnapshot_NativeIntPeriodEncoding(t *testing.T) {
 		t.Fatalf("maximal native-width periods must remain valid: %v", err)
 	}
 
-	const algorithm = "macd/sma-ema/v1"
+	const algorithm = "macd/sma-ema/v2"
 	const periodBytes = 8
 	var wire [len(algorithm) + 3*periodBytes]byte
 	copy(wire[:], algorithm)

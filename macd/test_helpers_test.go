@@ -57,7 +57,7 @@ func mustNilState(t *testing.T, v any, want bool, op string) {
 // mustClose Compares independent rational fixture values with a fixed floating tolerance.
 func mustClose(t *testing.T, got, want float64, where string) {
 	t.Helper()
-	if math.Abs(got-want) > 2e-14*math.Max(1, math.Abs(want)) {
+	if math.IsNaN(got) || math.IsInf(got, 0) || math.Abs(got-want) > 2e-14*math.Max(1, math.Abs(want)) {
 		t.Fatalf("%s got %.17g want %.17g", where, got, want)
 	}
 }
@@ -84,4 +84,28 @@ func mustSnapshotsEqual(t *testing.T, a, b macd.Snapshot) {
 			t.Fatalf("snapshot count %d: %d != %d", i, a.IntState[i], b.IntState[i])
 		}
 	}
+}
+
+// mustMACDPointsEqual compares the complete point surface without reflection.
+// It preserves both readiness flags and all binary64 bits, including zeros.
+// Time O(1), Space O(1). Compare only results from the same execution target.
+func mustMACDPointsEqual(t *testing.T, got, want macd.Point) {
+	t.Helper()
+	mustEqualBool(t, got.LineValid, want.LineValid, "Line readiness")
+	mustEqualBool(t, got.SignalValid, want.SignalValid, "Signal readiness")
+	mustBits(t, got.Line, want.Line, "Line")
+	mustBits(t, got.Signal, want.Signal, "Signal")
+	mustBits(t, got.Histogram, want.Histogram, "Histogram")
+}
+
+// finitePositiveOHLC validates the candle-level price shape independently
+// of MACD's scalar close validation; it does not repair corrupt market bars.
+// Time O(1), Space O(1), no allocation.
+func finitePositiveOHLC(open, high, low, closePrice float64) bool {
+	return !math.IsNaN(open) && !math.IsInf(open, 0) &&
+		!math.IsNaN(high) && !math.IsInf(high, 0) &&
+		!math.IsNaN(low) && !math.IsInf(low, 0) &&
+		!math.IsNaN(closePrice) && !math.IsInf(closePrice, 0) &&
+		open > 0 && low > 0 && high >= math.Max(open, closePrice) &&
+		low <= math.Min(open, closePrice)
 }

@@ -7,8 +7,9 @@ package macd
 
 const (
 	// algorithmID identifies the initial-window SMA seed and subsequent EMA recurrence.
+	// Version 2 preserves the exact current sample at unit weight; v1 states are incompatible.
 	// Any change to seed positions or recurrence arithmetic requires a new state version.
-	algorithmID = "macd/sma-ema/v1"
+	algorithmID = "macd/sma-ema/v2"
 
 	defaultFastPeriod   = 12
 	defaultSlowPeriod   = 26

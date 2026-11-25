@@ -23,7 +23,9 @@
 //     smoothing used by RSI. Matching period numbers do not imply matching kernels.
 //   - For zero-based indices, the first valid Line is Slow-1. The first valid
 //     Signal and Histogram are Slow+Signal-2, including Signal=1.
-//   - With Signal=1, Signal matches Line bitwise and Histogram is exactly +0.
+//   - For P=1 the EMA equals its current sample exactly, including binary64 bits.
+//     No subtraction, multiplication or addition involving the old mean is needed.
+//   - With Signal=1, Signal matches Line bitwise and Histogram is numerically zero.
 //   - Before a value becomes ready, its published value is +0, but Valid is false.
 //     Histogram.Valid equals Signal.Valid at every position.
 //   - After C accepted closes, Fast/Slow seed counters are min(C,Fast/Slow).
@@ -49,8 +51,9 @@
 //   - Line, Signal and Histogram are SIGNED and must not reuse price validation.
 //   - SMA seeds use bounded online means rather than raw potentially overflowing
 //     sums. Opposite-sign signal updates use weighted terms rather than x-old.
-//   - Every required intermediate and final float result must be representable;
-//     failed computation returns ErrOverflow, never silently published Inf/NaN.
+//   - Before commit, one numeric admission gate checks all candidate means and
+//     published outputs, including strictly positive observed price means. Failure
+//     returns ErrOverflow with no published Inf/NaN or partial state.
 //   - Online SMA is a fixed-order finite-precision running mean, not a guarantee
 //     of correctly rounded mathematical sums for every binary64 input.
 //   - A valid Line/Signal/Histogram may equal zero or have either sign. Validity
@@ -81,12 +84,16 @@
 //   - Stream is a single-goroutine mutable object; no synchronization lock exists.
 //     Concurrent mutation, or Snapshot during mutation, is unsupported.
 //   - Snapshot exports detached arrays of [fast,slow,signal] means and saturated
-//     counters, plus Count, Algorithm="macd/sma-ema/v1" and a SHA-256 config identity.
+//     counters, plus Count, Algorithm="macd/sma-ema/v2" and a SHA-256 config identity.
 //   - Config = lowercase hex SHA-256(ASCII Algorithm || LE64(Fast) ||
 //     LE64(Slow) || LE64(Signal)). It is NOT an authentication tag for the state.
 //   - Restore checks the target's normalized periods, slice lengths, saturated
 //     counter identities, finite means, positive observed price means, and
 //     canonical +0 for unobserved means before changing any field.
+//   - Restore rejects macd/sma-ema/v1, even for identical periods and shape. Rebuild
+//     the original accepted prefix using a new v2 stream, validate continuation,
+//     and republish the checkpoint and dependent numeric artifacts before cutover.
+//     Changing only the version label and Config cannot recover lost sample bits.
 //   - A snapshot does not include the last source sequence number, wall-clock
 //     timestamp, data provenance or an authenticated checksum of the state.
 //   - Nil Push/Restore return ErrNilInput; nil Reset does nothing; nil Snapshot
@@ -116,6 +123,8 @@
 //   - Never replace SMA seeding with the first quote or truncate warmup zeros
 //     without applying the same index alignment to timestamps and other features.
 //   - Never treat a zero-valued Histogram as invalid: read Signal.Valid or SignalValid.
+//   - Do not replace the exact unit-weight projection with a rounded difference
+//     update or special-case Histogram to hide a bad Signal state.
 //   - Never introduce a second MACD kernel in Compute or update Fast/Slow in place
 //     before validating the signed signal and final histogram.
 //   - Use one Stream per instrument/cadence, and guard all derived business

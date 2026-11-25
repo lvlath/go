@@ -54,3 +54,21 @@ func BenchmarkStream_Push(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkStream_PushPeriodOne measures the exact identity path at both Fast
+// and Signal, alternating huge and small finite inputs after construction.
+// Snapshot, JSON and user logging are intentionally outside the timed path.
+func BenchmarkStream_PushPeriodOne(b *testing.B) {
+	stream, err := macd.NewWithPeriods(1, 2, 1)
+	if err != nil {
+		b.Fatal(err)
+	}
+	prices := [...]float64{1e308, 1, 100, 101}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err = stream.Push(prices[i%len(prices)]); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

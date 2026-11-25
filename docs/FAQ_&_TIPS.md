@@ -3103,9 +3103,10 @@ is successful, but its unready fields remain `(Values=0, Valid=false)`.
 
 No. An invalid warmup cell is `Histogram.Values[i]==0` **and**
 `Histogram.Valid[i]==false`. A fully computed histogram can also be exactly
-zero. For `Signal=1`, Signal equals the valid Line and every valid Histogram
-is exactly `+0.0`; those zeros are **real computed values**, not missing
-values. In streaming mode Histogram has no dedicated validity flag:
+zero. For `Signal=1`, Signal is bitwise equal to the valid Line and every
+valid Histogram is numerically zero; those zeros are **real computed values**,
+not missing values. `Fast=1` preserves the current accepted price exactly.
+In streaming mode Histogram has no dedicated validity flag:
 `Point.SignalValid` is its validity flag. Check this boolean rather than
 `Histogram==0` before using a point.
 
@@ -3131,12 +3132,13 @@ checking nil/uninitialized receiver state. Both APIs classify errors via
 ### Q13j.8. Can finite prices still cause arithmetic overflow?
 
 Yes. `ErrOverflow` is not the same as `ErrNonFinite`: an individually valid
-close may contribute to an unrepresentable **derived** Line or Histogram
-under an extreme state. The SMA warmup uses a bounded online mean rather
+close may contribute to an unrepresentable **derived** Histogram under an
+extreme restored state. Line is bounded by the difference of two positive
+finite price means. The SMA warmup uses a bounded online mean rather
 than summing `P` large prices; signed Signal updates avoid raw subtraction
 of opposite-sign large operands. This avoids *avoidable* overflow but does
-not promise exact real-number arithmetic. If any required derived value is
-not finite, the entire `Push` is rejected without committing fast, slow,
+not promise exact real-number arithmetic. A failed numeric commit gate
+rejects the entire `Push` without committing fast, slow,
 signal or count.
 
 ### Q13j.9. Why can the same periods disagree with a charting service?
@@ -3161,7 +3163,7 @@ source-sequence IDs to prevent a duplicate accepted close.
 
 ### Q13j.11. What exactly does Snapshot preserve?
 
-For an initialized Stream, `Algorithm` is exactly `"macd/sma-ema/v1"`;
+For an initialized Stream, `Algorithm` is exactly `"macd/sma-ema/v2"`;
 `Config` is lowercase SHA-256 of that ASCII version plus LE64-encoded
 normalized Fast, Slow and Signal. `Count` counts **accepted closes**.
 `FloatState` is the three current fast/slow/signal SMA-or-EMA means;
@@ -3190,6 +3192,12 @@ package has no clock or feed-ID validator. Decide upstream whether to
 reject the feed, reconstruct explicitly with provenance, or call `Reset`
 and wait through a new warmup. Do **not** inject zero or synthetic prices
 into MACD as a hidden gap policy.
+
+For migration, v2 rejects all v1 snapshots with `ErrStateVersion`. The old
+state may have lost sample bits in a period-one EMA. Replay the original
+accepted price prefix, using the same normalized options, and publish a
+new v2 checkpoint with the next source offset. A new label or digest is
+not a numerical repair. See [MACD migration](MACD.md#migration-from-v1-to-v2).
 
 ### Q13j.14. May several goroutines share one Stream?
 

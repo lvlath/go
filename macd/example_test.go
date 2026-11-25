@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2025-2026 katalvlaran
 
-// Package macd_test presents five deterministic operational MACD pipelines.
+// Package macd_test presents seven deterministic operational MACD pipelines.
 // These offline price fixtures resemble exchange-bar/tick replays but are not live
 // or historical exchange quotes; they never implement order execution or risk policy.
 package macd_test
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -146,7 +147,7 @@ func ExampleStream_Push_intradayMomentumMonitor() {
 //
 // Process:
 //   - Feed an explicit, deterministic 60-bar history into the primary.
-//   - Snapshot and restore exactly at a difficult mid-warmup boundary.
+//   - Serialize a v2 checkpoint and restore at a difficult mid-warmup boundary.
 //   - Compare each continuation Point at the float64-bit level and report progress.
 //
 // AI-Hints:
@@ -171,12 +172,24 @@ func ExampleStream_Restore_warmupFailover() {
 		}
 	}
 	checkpoint := primary.Snapshot()
+	// Round-trip the typed snapshot without passing uint64 counters through float64.
+	// Real transport must authenticate the entire record and its source offset.
+	wire, err := json.Marshal(checkpoint)
+	if err != nil {
+		fmt.Println("encode checkpoint:", err)
+		return
+	}
+	var recovered macd.Snapshot
+	if err = json.Unmarshal(wire, &recovered); err != nil {
+		fmt.Println("decode checkpoint:", err)
+		return
+	}
 	standby, err := macd.NewDefault()
 	if err != nil {
 		fmt.Println("standby setup:", err)
 		return
 	}
-	if err = standby.Restore(checkpoint); err != nil {
+	if err = standby.Restore(recovered); err != nil {
 		fmt.Println("restore:", err)
 		return
 	}
@@ -196,11 +209,11 @@ func ExampleStream_Restore_warmupFailover() {
 			math.Float64bits(leader.Signal) == math.Float64bits(follower.Signal) &&
 			math.Float64bits(leader.Histogram) == math.Float64bits(follower.Histogram)
 	}
-	fmt.Printf("checkpoint=%d line-ready=%t signal-warming=%t replay-bitwise=%t final-count=%d\n",
-		checkpoint.Count, lineReady, signalWarming, matching, standby.Snapshot().Count)
+	fmt.Printf("algorithm=%s checkpoint=%d line-ready=%t signal-warming=%t replay-bitwise=%t final-count=%d\n",
+		checkpoint.Algorithm, checkpoint.Count, lineReady, signalWarming, matching, standby.Snapshot().Count)
 
 	// Output:
-	// checkpoint=29 line-ready=true signal-warming=true replay-bitwise=true final-count=60
+	// algorithm=macd/sma-ema/v2 checkpoint=29 line-ready=true signal-warming=true replay-bitwise=true final-count=60
 }
 
 // ExampleCompute_featureReadinessGate demonstrates a leak-resistant feature
@@ -498,14 +511,53 @@ func ExampleStream_Push_reconciledMinuteBars() {
 	// accepted=42 signal-ready=32 malformed=1 out-of-order=2 bitwise=true count=42
 }
 
-// finitePositiveOHLC validates the candle-level price shape independently
-// of MACD's scalar close validation; it does not repair corrupt market bars.
-// Time O(1), Space O(1), no allocation.
-func finitePositiveOHLC(open, high, low, closePrice float64) bool {
-	return !math.IsNaN(open) && !math.IsInf(open, 0) &&
-		!math.IsNaN(high) && !math.IsInf(high, 0) &&
-		!math.IsNaN(low) && !math.IsInf(low, 0) &&
-		!math.IsNaN(closePrice) && !math.IsInf(closePrice, 0) &&
-		open > 0 && low > 0 && high >= math.Max(open, closePrice) &&
-		low <= math.Min(open, closePrice)
+// ExampleStream_Push_periodOneIdentity illustrates a finite-range numerical audit
+// for checkpointed price analytics. A synthetic extreme-to-unit transition
+// must preserve the exact current observation at Fast=1 and the signed Line at
+// Signal=1; it is an arithmetic stress fixture, not an ordinary market quote.
+//
+// Implementation:
+//   - Stage 1: create a period-one Fast/Signal stream and process two prices.
+//   - Stage 2: restore its complete v2 checkpoint on a fresh accumulator.
+//   - Stage 3: compare the exact period-one mean and the signed output identity.
+//
+// Complexity:
+//   - Time O(1), Space O(1), with fixed checkpoint copies outside Push.
+//
+// AI-Hints:
+//   - Replay old v1 prices into a fresh v2 stream; never relabel v1 state.
+//   - Signal=1 is an exact identity, so it cannot generate a crossover spread.
+func ExampleStream_Push_periodOneIdentity() {
+	stream, err := macd.NewWithPeriods(1, 2, 1)
+	if err != nil {
+		fmt.Println("setup:", err)
+		return
+	}
+	// The first price establishes the seed. The second stresses cancellation.
+	if _, err = stream.Push(1e308); err != nil {
+		fmt.Println("seed:", err)
+		return
+	}
+	point, err := stream.Push(1)
+	if err != nil {
+		fmt.Println("update:", err)
+		return
+	}
+	saved := stream.Snapshot()
+	standby, err := macd.NewWithPeriods(1, 2, 1)
+	if err != nil {
+		fmt.Println("standby:", err)
+		return
+	}
+	if err = standby.Restore(saved); err != nil {
+		fmt.Println("restore:", err)
+		return
+	}
+	fmt.Printf("%s fast=%g ready=%t identity=%t histogram=%g restored=%d\n",
+		saved.Algorithm, saved.FloatState[0], point.SignalValid,
+		math.Float64bits(point.Line) == math.Float64bits(point.Signal),
+		point.Histogram, standby.Snapshot().Count)
+
+	// Output:
+	// macd/sma-ema/v2 fast=1 ready=true identity=true histogram=0 restored=2
 }

@@ -6,13 +6,13 @@
   Package: github.com/lvlath/go/macd
   Purpose: rigorous mathematical and operational reference for the SMA-seeded MACD engine.
   Contract status: implemented batch/stream API; same canonical recurrence and versioned state.
-  Scope: positive scalar closes; signed Line/Signal/Histogram; warmup masks; deterministic replay.
+  Scope: positive scalar closes; signed Line/Signal/Histogram; exact period-one identity; v2 replay.
   License: AGPL-3.0-only.
 -->
 
 # MACD - SMA-seeded convergence/divergence, batch and streaming
 
-> **Primary rule:** Price EMAs and the MACD signal EMA are all seeded with a **simple average of their first corresponding samples**. The signal starts after the first *valid* MACD line, never at the first input price. A valid numeric zero and an invalid warmup placeholder are different states.
+> **Primary rule:** Price EMAs and the MACD signal EMA are all seeded with a **simple average of their first corresponding samples**. The signal starts after the first *valid* MACD line, never at the first input price. A valid numeric zero and an invalid warmup placeholder are different states. Period-one EMAs are exact binary64 identities. The current checkpoint identity is `macd/sma-ema/v2`; legacy v1 checkpoints must be rebuilt from original prices.
 
 ## Contents
 
@@ -68,13 +68,13 @@ type Snapshot struct {
 }
 
 func DefaultOptions() Options
-func Compute(close []float64, opts Options) (*Result, error)
-func ComputeDefault(close []float64) (*Result, error)
-func ComputeWithPeriods(close []float64, fast, slow, signal int) (*Result, error)
+func Compute(closes []float64, opts Options) (*Result, error)
+func ComputeDefault(closes []float64) (*Result, error)
+func ComputeWithPeriods(closes []float64, fast, slow, signal int) (*Result, error)
 func New(opts Options) (*Stream, error)
 func NewDefault() (*Stream, error)
 func NewWithPeriods(fast, slow, signal int) (*Stream, error)
-func (s *Stream) Push(close float64) (Point, error)
+func (s *Stream) Push(price float64) (Point, error)
 func (s *Stream) Reset()
 func (s *Stream) Snapshot() Snapshot
 func (s *Stream) Restore(state Snapshot) error
@@ -136,7 +136,7 @@ Here `S_t` is seeded from the **first `Signal` valid M samples**, not the first 
 | 2/3/2             |                2 |                            3 |                          4 |
 | 2/3/1             |                2 |                            2 |                          3 |
 
-A shorter **nonempty** history is successful: the arrays retain their original length and all still-unready fields have false masks. `Signal=1` is a meaningful special case: the first valid signal equals the current MACD line, and every valid histogram is exactly `+0.0`; its mask is still **true**.
+A shorter **nonempty** history is successful: the arrays retain their original length and all still-unready fields have false masks. `Signal=1` is a meaningful special case: **every** valid Signal is bitwise equal to the corresponding Line, and every valid Histogram is numerically zero; its mask is still **true**. `Fast=1` likewise preserves the current accepted close exactly. These identities apply to finite binary64 values without tolerance.
 
 In terms of **accepted close count** rather than zero-based indexes, the slow price EMA becomes ready at `Count=Slow`, and the signal becomes ready at `Count=Slow+Signal-1`. At any accepted count `C`, the three saturated seed counters satisfy:
 
@@ -183,21 +183,20 @@ flowchart TD
     D --> E[Slow SMA seed or EMA advance]
     E --> F{Slow seeded?}
     F -- No --> G[Point all fields invalid]
-    F -- Yes --> H[Line = Fast - Slow; finite gate]
+    F -- Yes --> H[Line = Fast - Slow]
     H --> I[Signal SMA seed or signed EMA advance]
     I --> J{Signal seeded?}
     J -- No --> K[Only Line valid]
-    J -- Yes --> L[Histogram = Line - Signal; finite gate]
-    G --> M[Commit full candidate]
-    K --> M
-    L --> M
-    H -- Overflow --> Z
-    I -- Overflow --> Z
-    L -- Overflow --> Z
+    J -- Yes --> L[Histogram = Line - Signal]
+    G --> V{All means and outputs finite; price means positive?}
+    K --> V
+    L --> V
+    V -- No --> Z
+    V -- Yes --> M[Commit full candidate]
     M --> N[Return Point]
 ```
 
-A single internal `nextStep` coordinates the phases. `Push` first validates its receiver and close, passes a **value copy** of the stream state to the kernel, and only after a full successful calculation does it assign `*stream = candidate`. An overflow in signed signal or histogram can therefore **never** leave fast/slow counters or EMA values partially advanced.
+A single internal `nextStep` coordinates the phases. `Push` first validates its receiver and close, passes a **value copy** of the stream state to the kernel, and only after a full successful calculation does it assign `*stream = candidate`. The private `advanceEMA` performs candidate-only arithmetic. Before publication, one gate checks all three candidate means, positive observed price means, Line and Histogram. A computed Signal is exactly the checked signal mean. This includes warmup states and zero placeholders. An invalid numeric candidate therefore **never** leaves fast/slow counters or EMA values partially advanced. Total count exhaustion is checked before any arithmetic. No candidate arithmetic indexes or allocates storage, so even a nonfinite temporary remains confined to the rejected candidate.
 
 `Compute` validates all input closes before allocating its result, constructs a private fresh Stream and invokes `Push` once per close, in **ascending index order**. On a failed later price or arithmetic operation, the public batch result is `nil`, not a misleading partial result. This extra whole-history validation is intentional: a `NaN` at index 40 must not be hidden by an earlier negative price at index 2, even though a streamed `Push` checks only its current price.
 
@@ -219,15 +218,46 @@ A naive `sum += price` may overflow when every price is individually finite and 
 
 The implementation applies a sign-aware equivalent grouping when signed samples have opposite signs. This prevents a raw sum from overflowing for constant near-`MaxFloat64` prices. It is a bounded-memory IEEE-754 algorithm, **not** a promise of exact real-number summation or correctly rounded arbitrary-precision SMA for every possible input.
 
-### 5.2. Signed signal EMA and cancellation risk
+### 5.2. Exact EMA period-one identity
 
-For same-sign `old` and `sample`, the recurrence uses a difference update `old + weight*(sample-old)`. This is safe from the opposite-sign subtraction overflow because the difference lies within the larger magnitude. For opposite signs it instead computes:
+For period `P=1`, `alpha=2/(1+1)=1` and the mathematical recurrence reduces to:
+
+![Exact unit-weight identity](https://latex.codecogs.com/svg.image?%5Calpha%3D1%5Cquad%5CRightarrow%5Cquad%20E_t%3Dx_t%2C%5Cqquad%20S_t%3DM_t%5Cquad%5CRightarrow%5Cquad%20H_t%3D0)
+
+The same-sign difference formula is not an IEEE-754 identity at unit weight.
+For `old=1e308, sample=1`, `sample-old` rounds to `-1e308`, so
+`old + 1*(sample-old)` produces zero rather than one. The v2 common
+weighted-mean helper returns `sample` directly when `weight == 1.0`, before
+any arithmetic involving the old mean. The first seed observation is already
+copied directly. All remaining weights retain the same sign-aware operation
+order as the prior recurrence.
+
+This is an exact projection of the input binary64 bits, not a rounded
+approximation. With Fast=1, the stored fast price mean is the current close,
+including `math.SmallestNonzeroFloat64`. With Signal=1, the signed Line is
+copied exactly, and the Histogram is obtained by the usual subtraction;
+there is no artificial zeroing or price-domain validation of Signal.
+
+For a numerical stress replay `[1e308,1]` with 1/2/1, both updates succeed,
+Fast becomes exactly 1, and a fresh stream accepts the emitted checkpoint.
+The repeat of `[1,1e270,1e-270,1e-100,1e100,1,3,2]` with 2/26/1 exposes
+the former cancellation at index 26; repeating is necessary because eight
+prices alone cannot reach Slow=26. The exact identity now holds at every
+ready index. See `ExampleStream_Push_periodOneIdentity` for a runnable test.
+
+### 5.3. Signed signal EMA and cancellation risk
+
+For `0 < weight < 1` and same-sign `old` and `sample`, the recurrence uses a difference update `old + weight*(sample-old)`. This is safe from the opposite-sign subtraction overflow because the difference lies within the larger magnitude. For opposite signs it instead computes:
 
 ![Signed convex combination](https://latex.codecogs.com/svg.image?m_%7Bnew%7D%3D%281-w%29m_%7Bold%7D%2Bw%20x)
 
-With `0<w<=1`, the two terms have opposite signs; a raw `sample-old` could overflow even though their weighted combination is finite. The signed branch avoids that avoidable loss. The final MACD Line or Histogram subtraction can still be unrepresentable with finite operands: the operation then returns `ErrOverflow` and the entire streaming state remains unchanged.
+With `0<w<1`, the two terms have opposite signs; a raw `sample-old` could overflow even though their weighted combination is finite. The signed branch avoids that avoidable loss.
 
-### 5.3. No misleading cross-library parity
+Under the admitted state domain, a seed update uses `1/k <= 1/2` for `k>=2`; a mature nonidentity update uses `2/(P+1) <= 2/3` for `P>=2`. The exact convex mean is bounded by its operands. For binary64 same-sign subtraction, nearby magnitudes have an exact difference (Sterbenz's lemma); distant magnitudes retain ample headroom under these weights. For opposite signs, each weighted term is finite and addition is subtractive. The seed count increments only while below an admitted period, itself no greater than `MaxInt`. Thus separate private error-return branches for these arithmetic transitions or their seed counters are not reachable by valid public inputs merely by selecting large finite prices. Line also subtracts two positive finite price means and is bounded by `MaxFloat64` in magnitude.
+
+Histogram is different: two signed finite outputs can have opposite signs and an unrepresentable difference, for example in a structurally admitted but adversarial restored state. The common numeric commit gate checks all means and derived outputs, regardless of reachability under an ordinary history. It returns `ErrOverflow`, a zero Point, and the unchanged previous stream. This is a defense at the public transaction boundary, not permission to admit nonfinite snapshots.
+
+### 5.4. No misleading cross-library parity
 
 - Different price histories, starting windows or gap policies do not define the same MACD input.
 - Different SMA seed locations do not define the same EMA recurrence state.
@@ -264,7 +294,7 @@ With `0<w<=1`, the two terms have opposite signs; a raw `sample-old` could overf
 
 | Field           | Encoding/invariant                        |
 |-----------------|-------------------------------------------|
-| `Algorithm`     | Exact literal `macd/sma-ema/v1`           |
+| `Algorithm`     | Exact literal `macd/sma-ema/v2`           |
 | `Config`        | Lowercase SHA-256 hex of `ASCII Algorithm || LE64(Fast) || LE64(Slow) || LE64(Signal)` |
 | `Count`         | Number of *accepted* closes, uint64       |
 | `FloatState[0]` | Fast online SMA / EMA mean                |
@@ -279,6 +309,54 @@ All six state elements are finite/count-bounded. Before an EMA sees any sample, 
 `Snapshot()` copies both slices, so mutations to an exported snapshot cannot change the original stream. `Restore(snapshot)` verifies algorithm ID, target configuration, slice lengths, phase identities, numeric state and canonical inactive phases; it builds a candidate and commits **only after** all checks pass. The state remains untouched after rejection. Restoration requires a new Stream constructed with the **same normalized periods**. Neither a successful `Restore` nor an equal configuration digest proves that stored means came from a particular historical close sequence.
 
 **Portable persistence warning:** `Count` is a `uint64`, not an IEEE-754 `float64`. Avoid round-tripping it through an intermediary that treats all numbers as JavaScript `Number` (integers above `2^53` lose exactness). Preserve each finite `FloatState` binary64 value without rounding, including signed zero on active phases, and ensure the receiving process enforces the same algorithm revision and execution environment before claiming last-bit replay.
+
+### Migration from v1 to v2
+
+The public Go API, field order, phase counters, warmup masks and period
+normalization are unchanged. The numerical identity changes because period
+one must preserve the current sample without cancellation. The versioned
+configuration bytes are now exactly:
+
+```text
+ASCII("macd/sma-ema/v2") || LE64(Fast) || LE64(Slow) || LE64(Signal)
+```
+
+Hash this byte sequence with SHA-256 and encode the digest as lowercase hex.
+For normalized 12/26/9, the v2 digest is
+`445b75fd55d24a7e556a9028d92e9bff144f4c8bc4b16b7cea0425c9f7655e21`.
+The v1 digest for those same periods is different. `Restore` rejects **every
+v1 checkpoint** with `ErrStateVersion`, even when neither period equals one
+and the stored numbers happen to be valid. It also rejects a label-only
+change with the old digest. A successful v2 restore still verifies structure,
+not provenance: replacing both label and digest could make a fabricated state
+structurally plausible, but would not make it a legitimate migration.
+
+Migration procedure for one logical feed:
+
+1. Keep the accepted close log and its exact source offset, instrument,
+   adjustments, cadence and original normalized options. Freeze the old
+   checkpoint and the corresponding feature generation; do not delete the log.
+2. Initialize a fresh v2 `Stream` with those same options. Replay exactly the
+   accepted prefix in original order, using the original binary64 inputs.
+   Verify every `Push` error and final Count against the original event log.
+3. Produce a new v2 Snapshot. Validate `Restore` into a fresh v2 standby and
+   compare continuation Points with a continuous v2 replay, including masks.
+4. Recompute dependent stored MACD features, derived crossings, labels or
+   model inputs when their provenance depends on the old indicator values.
+   Histories without unit-weight updates preserve the original arithmetic
+   expressions, but still need the new checkpoint identity. Do not mix
+   artifacts with different numerical revision labels without validation.
+5. At an application-controlled handover boundary, catch up buffered unseen
+   events in order, publish the authenticated v2 checkpoint and next offset
+   together, and switch ownership. Resume only at the first unseen event.
+   Zero downtime is a deployment design goal, not a library guarantee.
+
+If the original accepted price prefix is unavailable, lossless migration
+cannot be certified. Either recover the authoritative input log or explicitly
+start a new history with a fresh warmup and mark that discontinuity in
+all downstream data. Never replace a zero mean with epsilon or relabel an
+old snapshot as v2. A separate legacy executor would be a different versioned
+product; the current package does not implement one.
 
 ### Important security boundary
 
@@ -306,7 +384,7 @@ sequenceDiagram
     Note over Standby: Full SMA/EMA state continued; no price history replay
 ```
 
-For executable bitwise replay checks, see `ExampleStream_Restore_warmupFailover` in [`macd/example_test.go`](../macd/example_test.go) and the standalone `go run ./examples/macd` scenario (when that example directory is present in the checkout).
+For executable bitwise replay checks, see `ExampleStream_Restore_warmupFailover` in [`macd/example_test.go`](../macd/example_test.go) and the standalone `go run ./examples/macd` scenario. Both use a typed JSON round trip for v2 state; transport authentication remains external.
 
 ---
 
@@ -422,7 +500,7 @@ For a strict *negative-to-positive* review marker, an application might apply `p
 
 ### 9.4. Warmup failover and invalid tick isolation
 
-The failover example snapshots a 12/26/9 stream at accepted price count 29, when Line is ready and Signal is still warming. A standby created with the same options restores the snapshot and matches each future line/signal/histogram bitwise. The invalid-tick example classifies NaN/Inf and zero/negative closes using `errors.Is`, proves rejected ticks do not increment Count, and validates that a subsequent accepted tick matches an uncorrupted reference.
+The failover example snapshots a 12/26/9 stream at accepted price count 29, when Line is ready and Signal is still warming. A standby created with the same options decodes the typed v2 JSON snapshot, restores it and matches each future line/signal/histogram bitwise. The invalid-tick example classifies NaN/Inf and zero/negative closes using `errors.Is`, proves rejected ticks do not increment Count, and validates that a subsequent accepted tick matches an uncorrupted reference.
 
 Run the larger operational demonstration:
 
@@ -430,7 +508,7 @@ Run the larger operational demonstration:
 go run ./examples/macd
 ```
 
-Its deterministic output covers two batch period regimes, a signal-warmup failover, and rejection of a corrupt price without state drift.
+Its deterministic output covers a mid-signal-warmup v2 checkpoint, 40-event replay with 32 post-checkpoint points compared bitwise and three valid crossover review markers, and concurrent screening of three instruments at actual 1-minute and 5-minute cadences. Each 5-minute close is the last close of a complete block; the default 12/26/9 and alternative 5/35/5 configurations are independent sample-count policies. Six batch jobs publish in stable instrument/cadence order, not goroutine completion order. The OHLC admission and corrupt-tick cases remain in the package's executable examples. All market-style data are deterministic synthetic fixtures, not observed exchange histories.
 
 ---
 
@@ -479,20 +557,28 @@ The test suite is entirely in `package macd_test` and uses public `macd.*` surfa
 | Ownership      | Input untouched; Result's distinct slices independent; snapshots detached |
 | State encoding | Inactive phase uses canonical +0, corrupt snapshots rejected atomically   |
 | Race/fuzz      | Immutable Result reads and stream parity under varied input histories     |
+| Period-one repair | Fast mean preserves every input bit; Signal=1 matches signed Line exactly, Histogram zero |
+| Commit admission | Both signed Histogram overflows, invalid phase means, saturated Count and retry rollback |
+| v1/v2 migration | Independently encoded digest goldens, old version/hash rejection, prefix replay |
 
 Useful commands from the actual repository root:
 
 ```bash
 gofmt -w macd/*.go examples/macd/main.go
-go test ./macd -count=1 -cover
+go test ./macd -count=1 -coverprofile=macd.cover
+go tool cover -func=macd.cover
 go test -race ./macd -count=1
 go test ./macd -run '^Example' -count=1 -v
-go test ./macd -fuzz '^FuzzStream_ParityNoPanic$' -fuzztime=5s
+go test ./macd -run '^TestFIXMACD' -count=1
+go test ./macd -run '^$' -fuzz '^FuzzStream_ParityNoPanic$' -fuzztime=5s
+go test ./macd -run '^$' -fuzz '^FuzzStream_SnapshotRoundTrip$' -fuzztime=5s
 go test -run '^$' -bench . -benchmem ./macd
 go vet ./...
 go test ./...
 golangci-lint run
 ```
+
+The package targets at least 92% statement coverage overall and per file/function with executable statements. Go statement coverage does not imply exhaustive execution of every short-circuit condition. Unreachable private failure branches must not be made reachable by weakening public validation or adding production test hooks. Tests exercise the actual arithmetic commit gate through finite structural overflow witnesses and independently reject malformed snapshots at the input boundary.
 
 **Benchmark integrity:** batch measurements run at 1,000 and 1,000,000 closes (default and Signal=1), with input setup outside the timer. A steady-state streaming benchmark reports time and `allocs/op` for successful Push. Do not claim allocator performance for snapshot serialization or the surrounding service from this hot-path result.
 
@@ -504,7 +590,7 @@ golangci-lint run
 
 1. Require externally validated instrument, source, timezone, bar cadence, provenance and monotonically ordered observation identity.
 2. Reject nonfinite or nonpositive closes; do not silently replace corrupt/missing prices with zeros or last-known values.
-3. Use the same normalized periods for every shard that compares or restores the same logical stream.
+3. Use the same normalized periods and v2 numerical identity for every shard that compares or restores the same logical stream. Rebuild v1 checkpoints from accepted price history before cutover.
 4. Gate dependent features and crossover logic on `SignalValid` / `Histogram.Valid`.
 5. Keep one mutable Stream owner; transfer ownership with explicitly synchronized snapshot/restore and source offset.
 6. Authenticate snapshots in storage/transit and detect duplicated/missing events independently of `macd`.
@@ -513,4 +599,4 @@ golangci-lint run
 9. Validate with independent math oracles plus bitwise batch/stream comparisons, and run race/fuzz/benchmark/CI gates on the exact release toolchain.
 10. Treat MACD as a descriptive lagging feature. Any production decision requires independent domain policy, execution/risk admission and proper holdout/backtest governance.
 
-Related references: [`macd/doc.go`](../macd/doc.go), [`macd/example_test.go`](../macd/example_test.go), [`examples/macd/main.go`](../examples/macd/main.go) (when installed), [`TUTORIAL.md`](TUTORIAL.md), [`FAQ_&_TIPS.md`](FAQ_%26_TIPS.md), and the package-level [`README.md`](../README.md).
+Related references: [`macd/doc.go`](../macd/doc.go), [`macd/example_test.go`](../macd/example_test.go), [`examples/macd/main.go`](../examples/macd/main.go), [`TUTORIAL.md`](TUTORIAL.md), [`FAQ_&_TIPS.md`](FAQ_%26_TIPS.md), and the package-level [`README.md`](../README.md).

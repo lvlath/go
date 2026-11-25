@@ -155,7 +155,8 @@ type Point struct {
 // It supports deterministic continuity across process restarts with the same algorithm/version.
 //
 // Behavior highlights:
-//   - Algorithm is the literal "macd/sma-ema/v1" for every initialized Stream.
+//   - Algorithm is the literal "macd/sma-ema/v2" for every initialized Stream.
+//   - v1 checkpoints are not restorable; replay their original accepted price prefix.
 //   - Config is lowercase SHA-256 hex over Algorithm and three little-endian uint64 periods.
 //   - Count counts accepted closes, not attempted Push calls.
 //   - FloatState has three means in [fast, slow, signal] order.

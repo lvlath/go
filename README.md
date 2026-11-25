@@ -1530,9 +1530,14 @@ periods**, not an authentication tag for the state; authenticate persisted
 checkpoints and resume with the first unseen bar. These guarantees are
 independent of, and do not imply, trading profitability.
 
+Period-one EMAs preserve the current binary64 sample exactly. The current
+checkpoint identity is `macd/sma-ema/v2`; v1 snapshots require an original
+price-prefix replay, not a relabeled hash. See the migration procedure in
+[`docs/MACD.md`](docs/MACD.md#migration-from-v1-to-v2).
+
 Read [`docs/MACD.md`](docs/MACD.md) for mathematical and numeric proofs,
 [`macd/doc.go`](macd/doc.go) for the package charter,
-[`macd/example_test.go`](macd/example_test.go) for five reproducible
+[`macd/example_test.go`](macd/example_test.go) for seven reproducible
 operational examples, and the [MACD Tutorial](docs/TUTORIAL.md#11k-macd-foundations-sma-seeded-ema-signed-momentum-and-checkpoint-replay)
 for a checked failover pipeline. The [MACD FAQ](docs/FAQ_%26_TIPS.md#13j-macd-faq--sma-seeding-signed-values-batchstream-replay-and-feature-safety)
 covers warmup, signed arithmetic, error precedence and checkpoint trust.
