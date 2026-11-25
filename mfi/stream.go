@@ -138,10 +138,8 @@ func (s *Stream) Push(bar Bar) (value float64, valid bool, err error) {
 	if s.count == math.MaxUint64 {
 		return 0, false, ErrOverflow
 	}
-	current, err := typical(bar)
-	if err != nil {
-		return 0, false, err
-	}
+	// The exact convex mean of validated positive finite prices is representable.
+	current := typical(bar)
 
 	// The first price fixes the comparison baseline without introducing a transition.
 	if s.count == 0 {

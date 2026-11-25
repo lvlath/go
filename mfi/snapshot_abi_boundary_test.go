@@ -28,7 +28,7 @@ func TestSnapshotABI_CursorEpochAndCheckpoint(t *testing.T) {
 			}
 			var bytes [8]byte
 			binary.LittleEndian.PutUint64(bytes[:], uint64(period))
-			material := append([]byte("mfi/rolling-neumaier/v1"), bytes[:]...)
+			material := append([]byte("mfi/rolling-neumaier/v2"), bytes[:]...)
 			digest := sha256.Sum256(material)
 			wantConfig := hex.EncodeToString(digest[:])
 
@@ -101,7 +101,7 @@ func TestSnapshotABI_MaxPeriod(t *testing.T) {
 	state := stream.Snapshot()
 	var encoded [8]byte
 	binary.LittleEndian.PutUint64(encoded[:], uint64(mfi.MaxPeriod))
-	input := append([]byte("mfi/rolling-neumaier/v1"), encoded[:]...)
+	input := append([]byte("mfi/rolling-neumaier/v2"), encoded[:]...)
 	sum := sha256.Sum256(input)
 	if state.Config != hex.EncodeToString(sum[:]) {
 		t.Fatalf("maximum-period digest changed: %s", state.Config)

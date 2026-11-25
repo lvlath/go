@@ -5,7 +5,7 @@
   File: docs/MFI.md
   Package reference: github.com/lvlath/go/mfi
   Purpose: mathematical, numerical, operational and API reference for Money Flow Index.
-  Contract status: implemented mfi/rolling-neumaier/v1; aligned with the package's public Go API.
+  Contract status: implemented mfi/rolling-neumaier/v2; aligned with the package's public Go API.
   Scope: fixed-transition OHLCV windows, batch/stream equivalence, state persistence,
          numerical limits, ownership, validation, applications and verification.
   License: AGPL-3.0-only; see ../LICENSE.
@@ -106,9 +106,9 @@ These declarations abbreviate the existing source for orientation; use [`../mfi/
 
 ## 3. Mathematical definition
 
-For valid bar `t`, the typical price is the arithmetic mean of the high, low and close:
+For valid bar `t`, the typical price is the **single nearest-even binary64 rounding of the exact arithmetic mean** of the original binary64 high, low and close:
 
-![Typical price](https://latex.codecogs.com/svg.image?TP_t%3D%5Cfrac%7BH_t%2BL_t%2BC_t%7D%7B3%7D)
+![Typical price](https://latex.codecogs.com/svg.image?TP_t%3D%5Coperatorname%7BRN%7D_%7B64%7D%28%5Cfrac%7BH_t%2BL_t%2BC_t%7D%7B3%7D%29)
 
 **Open** is deliberately absent from that mean, but must still satisfy candle geometry. Let `V_t` denote the nonnegative base-unit traded volume, and define the raw money flow:
 
@@ -178,11 +178,13 @@ flowchart LR
 
 Do **not** implement typical price as `(High + Low + Close) / 3`. When three finite prices are close to `math.MaxFloat64`, the intermediate sum overflows to `+Inf` while the final mean is representable.
 
-With validated positive prices, `High` is the largest of the three operands. The implementation uses the High-anchored mean:
+The v2 kernel does not use the old High-anchored expression or sum individually rounded thirds. For instance, candles (H,L,C)=(4,1,2) and (3,2,2) both have exact sum 7. Their canonical typical prices must have the same bits; period-one MFI is exactly 50 in either arrival order, regardless of volume.
 
-![Stable typical price](https://latex.codecogs.com/svg.image?TP%3DH%2B%5Cfrac%7BL-H%7D%7B3%7D%2B%5Cfrac%7BC-H%7D%7B3%7D)
+Each positive finite binary64 price is an integer significand times an integral power of two, with minimum quantum 2^-1074. Decode the original significands and align them at the smallest exponent. Three terms span at most 2100 integer bits, so 33 uint64 limbs suffice. Identical-price candles return their common value directly. If the exponent span is at most nine, a single uint64 contains the entire sum, since 3*(2^53-1)*2^9 < 2^64. Otherwise the fixed stack array retains every bit. No heap allocation or math/big is used.
 
-Both offsets are nonpositive and no intermediate exceeds the positive finite anchor. The arithmetic still rounds as binary64; it is an overflow-avoiding formula, **not** an exact-rational implementation. A computed nonfinite or nonpositive typical price results in `ErrOverflow`, without changing stream state.
+Divide the exact sum by three to obtain quotient Q and remainder r in {0,1,2}. Let d=max(bitlen(Q)-53,0). If d=0, increment Q exactly when r=2. If d>0, retain the high 53 bits; the first discarded bit is the guard, and every lower bit plus r!=0 forms sticky. Round up exactly when guard is set and either sticky is set or the retained integer is odd. This is nearest-even, including halfway cases. A carry into bit 53 renormalizes exactly; subnormal results retain their original minimum quantum. The final power-of-two scaling is exact because the rounded significand is representable.
+
+Because the exact integer sum is independent of candle shape and insertion order, so is its rounded mean. The true mean lies between Low and High, so a valid candle cannot produce an infinite or zero typical price. Different exact means may round to the same price; that is intentionally a flat transition. Direction comparison remains strict, with no epsilon. Raw flow multiplication and compensated rolling totals are still binary64, not exact decimal money arithmetic.
 
 ### 5.2 Raw flow and representable sums
 
@@ -326,7 +328,7 @@ For fault-tolerant ingestion, persist the **market source offset/sequence ID** a
 The public ABI is intentionally fixed:
 
 ```text
-Algorithm = "mfi/rolling-neumaier/v1"
+Algorithm = "mfi/rolling-neumaier/v2"
 Config    = lowerhex(SHA256(ASCII(Algorithm) || LE64(effective Period)))
 Count     = number of accepted bars since New or Reset
 
@@ -355,6 +357,14 @@ The previous typical price is zero only before the first accepted bar. Ring entr
 Here `S` is the saved effective sum, `R` the replayed compensated sum and `M` the maximum relevant magnitude scale. This is a conservative corruption screen, **not** a proof that the state is reachable from a genuine market history or a cryptographic integrity check. No arbitrary epsilon is applied to live rolling sums.
 
 An accepted restore copies the **saved** Neumaier `sum` and `correction`, both physical rings, count, cursor and previous typical. It does **not** replace saved data with the replayed validation sum. That distinction is necessary for bitwise continuation under the same implementation and floating-point environment.
+
+### Migration from v1: rebuild, do not relabel
+
+A v1 checkpoint may contain both a differently rounded previous typical price and flows classified in the wrong direction. Its physical arrays have the same layout but its numerical identity is incompatible. Restore returns ErrStateVersion before mutating the target when given a v1 ID or digest. Editing Algorithm and Config is not a migration: recomputing sums from old ring entries does not recover the correct signs.
+
+Rebuild a new v2 stream by replaying original validated OHLCV from the intended reset boundary in the same order, period, units and gap policy. Preserve source identity and offsets outside mfi; authenticate and persist the new checkpoint and version derived MFI datasets separately. Rebuild downstream cached features and any model artifacts that depend on v1 values according to application policy. Do not rewrite historical event logs as if v2 had been running then. For a new, intentionally shortened history, explicitly reset and accept a new warmup instead of claiming bitwise continuation of the old history.
+
+Replay validation uses the rounded nonnegative reference accumulator as its magnitude scale. It does not independently reject a near-maximum sum merely because its exact real value is slightly beyond MaxFloat64 when its compensated binary64 value is still finite. Nonfinite additions, corrections, effective totals and inconsistent rings remain errors.
 
 ### Configuration identity is not authentication
 
@@ -481,7 +491,7 @@ Do not normalize volume independently for each bar, mix instruments' base units 
 | Persistent rings    | `2*P*8` bytes = **16 MiB** at maximum period, excluding Go slice/Stream overhead                                        |
 | Snapshot arrays     | Another `2*P` float64 cells plus five prefix fields and three `uint64`s                                                 |
 | Time representation | No timestamps are stored or inferred                                                                                    |
-| Price magnitude     | Finite, strictly positive binary64; stable typical price avoids three-term overflow                                     |
+| Price magnitude     | Finite, strictly positive binary64; correctly rounded canonical typical price avoids three-term overflow                                     |
 | Volume magnitude    | Finite, nonnegative binary64 in a consistent base unit                                                                  |
 | Flow range          | Individual used products and effective rolling sums must be finite binary64                                             |
 | Ratio               | Bounded branch avoids overflowing a combined sum; may round small ratios to zero                                        |

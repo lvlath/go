@@ -535,3 +535,38 @@ func ExampleComputeCandles_replayReconciliation() {
 	// Output:
 	// archive=36 replay=35 missing-sequence=310029 dropped-zero=true aligned-mismatches=5
 }
+
+// ExampleComputeCandles_canonicalTypical demonstrates quote-feed reconciliation.
+// Distinct candle ranges with the same exact H+L+C do not imply a directional
+// flow, even if their traded volumes differ substantially.
+func ExampleComputeCandles_canonicalTypical() {
+	rows := []mfi.Bar{
+		{Open: 2, High: 4, Low: 1, Close: 2, Volume: 10000},
+		{Open: 2, High: 3, Low: 2, Close: 2, Volume: 18000},
+		{Open: 2, High: 4, Low: 1, Close: 2, Volume: 24000},
+	}
+	result, err := mfi.ComputeCandles(rows, mfi.Options{Period: 1})
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	stream, err := mfi.NewPeriod(1)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	parity := true
+	for i, row := range rows {
+		value, ready, pushErr := stream.Push(row)
+		if pushErr != nil {
+			fmt.Println(pushErr)
+			return
+		}
+		parity = parity && ready == result.Valid[i] && math.Float64bits(value) == math.Float64bits(result.Values[i])
+	}
+	fmt.Printf("values=%v valid=%v parity=%t\n", result.Values, result.Valid, parity)
+	fmt.Printf("numeric identity=%s\n", stream.Snapshot().Algorithm)
+	// Output:
+	// values=[0 50 50] valid=[false true true] parity=true
+	// numeric identity=mfi/rolling-neumaier/v2
+}

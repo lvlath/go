@@ -8,7 +8,7 @@
 // Domain and purpose:
 //   - Each Bar records finite positive Open, High, Low, Close and finite Volume>=0.
 //   - Low<=Open,Close<=High; Open validates candle geometry but does not enter
-//     the typical price TP=(High+Low+Close)/3.
+//     the typical price TP=RN64((High+Low+Close)/3).
 //   - Volume uses one consistent base unit within an instrument's series.
 //   - The first bar establishes a comparison baseline without a money-flow term.
 //   - Later bars contribute current TP*Volume to the positive sign when TP rises,
@@ -25,15 +25,18 @@
 //     negative-only produces 0. The range is [0,100], with no arbitrary clipping.
 //
 // Numerical law:
-//   - Typical price uses a High-anchored convex mean to avoid overflowing
-//     the otherwise representable three-price arithmetic average.
+//   - Typical price is the nearest-even binary64 rounding of the exact mean of
+//     the original binary64 High, Low and Close. Equal exact sums give identical
+//     bits; distinct exact means rounding to the same price are flat transitions.
+//   - The integer kernel uses one word for narrow exponent spans and a bounded
+//     33-word stack accumulator otherwise, with exact quotient/remainder rounding.
 //   - Raw flows and both rolling sums must be individually representable float64.
 //   - Two Neumaier accumulators compensate the eviction-before-insertion recurrence.
 //   - Every Period transitions, both candidate sums are recomputed deterministically
 //     from ring elements oldest to newest. One extra rebase per epoch is permitted
 //     on negative drift; a repeated failure returns ErrOverflow, never a clamp.
-//   - Binary64 roundoff affects intermediate values; no exact-real or decimal
-//     arithmetic guarantee is made. An unsuccessful calculation never commits state.
+//   - Beyond the canonical price, raw products and rolling totals retain their
+//     binary64 arithmetic; no exact-real or decimal guarantee is made. An unsuccessful calculation never commits state.
 //
 // Shape, options and errors:
 //   - Options.Period=0 selects DefaultPeriod; valid explicit values are
@@ -63,8 +66,10 @@
 //     never an invalid/nil result or evidence of zero directional pressure.
 //
 // Snapshot ABI:
-//   - Algorithm is "mfi/rolling-neumaier/v1". Config is SHA-256 of that ASCII
+//   - Algorithm is "mfi/rolling-neumaier/v2". Config is SHA-256 of that ASCII
 //     identifier followed by a little-endian uint64 effective period, in hex.
+//   - Restore rejects v1 checkpoints with ErrStateVersion. Replay original OHLCV
+//     from the intended reset boundary; do not relabel old directional flows.
 //   - FloatState=[previousTP,sumPositive,sumNegative,corrPositive,corrNegative,
 //     positiveRing[Period],negativeRing[Period]].
 //   - IntState=[used,head,extraRebaseUsed], Count counts accepted bars.

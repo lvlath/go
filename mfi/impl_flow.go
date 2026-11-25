@@ -5,45 +5,36 @@
 // This file has no mutable state or difference between batch and stream execution.
 package mfi
 
-// typical evaluates the convex average of High, Low and Close without forming
-// an overflowing three-term sum. The candle has already passed validateBar.
+// typical evaluates the correctly rounded mean of the three validated prices.
+// It delegates to the allocation-free exact binary-input kernel, so equal exact
+// sums always give identical values regardless of candle geometry.
 //
 // Implementation:
-//   - Stage 1: anchor the mean at High, the largest of its three operands.
-//   - Stage 2: add two nonpositive one-third offsets, avoiding positive overflow.
-//   - Stage 3: reject a nonfinite or nonpositive computed result.
+//   - Stage 1: use canonicalTypical after validateBar has admitted the OHLC domain.
+//   - Stage 2: return the single nearest-even binary64 rounding of the exact mean.
 //
 // Behavior highlights:
-//   - Both adjustment terms are nonpositive for a valid candle, avoiding a three-price sum overflow.
+//   - The mean is finite and positive even for mixed subnormal and near-maximum prices.
 //
 // Inputs:
-//   - bar: already validated finite-positive OHLCV value; Open and Volume do not enter the mean.
+//   - bar: validated finite positive OHLC; Open and Volume are not mean operands.
 //
 // Returns:
-//   - float64: finite, strictly positive typical price on success.
-//   - error: ErrOverflow when the computed mean cannot be published.
+//   - float64: canonical typical price, bounded by Low and High.
 //
 // Errors:
-//   - ErrOverflow: computed mean becomes nonfinite or nonpositive despite validated input.
+//   - None for validated prices; the exact convex mean is representable.
 //
 // Determinism:
-//   - Evaluates offsets in Low then Close order, with Go float64 semantics.
+//   - Equal exact sums yield identical bits; no order-dependent floating sum is used.
 //
 // Complexity:
-//   - Time O(1), Space O(1), zero allocation.
-//
-// Notes:
-//   - This stable expression still rounds to binary64; it does not claim exact rational means.
+//   - Time O(1), Space O(1), zero heap allocation.
 //
 // AI-Hints:
-//   - Never replace this formula with (High+Low+Close)/3 near MaxFloat64.
-func typical(bar Bar) (float64, error) {
-	// Since both offsets are nonpositive, no intermediate can exceed High.
-	value := bar.High + (bar.Low-bar.High)/3 + (bar.Close-bar.High)/3
-	if !finite(value) || value <= 0 {
-		return 0, ErrOverflow
-	}
-	return value, nil
+//   - Never round High/3, Low/3 and Close/3 independently or introduce an epsilon.
+func typical(bar Bar) float64 {
+	return canonicalTypical(bar.High, bar.Low, bar.Close)
 }
 
 // classify produces exactly one signed money-flow contribution per transition.
@@ -88,7 +79,8 @@ func classify(previous, current, volume float64) (positive, negative float64, er
 		return 0, 0, nil
 	}
 	flow := current * volume
-	if !finite(flow) || flow < 0 {
+	// The admitted operands are nonnegative; only nonfinite multiplication can fail.
+	if !finite(flow) {
 		return 0, 0, ErrOverflow
 	}
 	if current > previous {
@@ -113,10 +105,10 @@ func classify(previous, current, volume float64) (positive, negative float64, er
 //
 // Returns:
 //   - float64: finite MFI in [0,100] on success.
-//   - error: ErrOverflow when the sums or computed ratio are invalid.
+//   - error: ErrOverflow when the effective input sums are invalid.
 //
 // Errors:
-//   - ErrOverflow: negative, nonfinite or unpublishable effective input/ratio.
+//   - ErrOverflow: negative or nonfinite effective input sums.
 //
 // Determinism:
 //   - Branch selection uses exact float64 comparison; no clipping is permitted.
@@ -150,8 +142,7 @@ func ratio(pos, neg float64) (float64, error) {
 		quotient := pos / neg
 		result = 100 * (quotient / (1 + quotient))
 	}
-	if !finite(result) {
-		return 0, ErrOverflow
-	}
+	// The admitted nonnegative finite inputs give a denominator in [1,2]
+	// and a quotient in [0,1]; the result cannot be nonfinite.
 	return result, nil
 }

@@ -16,7 +16,7 @@ import (
 const (
 	// snapshotAlgorithm fixes the recurrence and the public binary state layout.
 	// Any incompatible change to either requires a new algorithm identifier.
-	snapshotAlgorithm = "mfi/rolling-neumaier/v1"
+	snapshotAlgorithm = "mfi/rolling-neumaier/v2"
 
 	// These indices constitute the versioned FloatState and IntState wire format.
 	snapshotFloatHeader = 5
@@ -91,7 +91,7 @@ func snapshotWord(value int) uint64 {
 //   - string: lowercase SHA-256 hex of ASCII algorithm ID followed by LE64(period).
 //
 // Determinism:
-//   - The byte sequence and digest encoding are fixed by snapshot ABI v1.
+//   - The byte sequence and digest encoding are fixed by snapshot ABI v2.
 //
 // Complexity:
 //   - Time O(1), Space O(1) excluding a short digest-string allocation.
@@ -130,7 +130,7 @@ func configHash(period int) string {
 //   - Snapshot: detached scalar metadata and arrays, or zero Snapshot for invalid receiver.
 //
 // Determinism:
-//   - State fields and ring slots are copied in the fixed v1 order.
+//   - State fields and ring slots are copied in the fixed v2 order.
 //
 // Complexity:
 //   - Time O(Period), Space O(Period) newly allocated snapshot storage.
@@ -182,7 +182,7 @@ func (s *Stream) Snapshot() Snapshot {
 //   - Corrupt larger-than-period fields cannot alias valid slots by modulo wrapping.
 //
 // Inputs:
-//   - value: untrusted v1 wire coordinate, never an unchecked slice index.
+//   - value: untrusted v2 wire coordinate, never an unchecked slice index.
 //
 // Returns:
 //   - int: exact native index in [0, MaxPeriod] on success.
@@ -357,13 +357,13 @@ func validateSnapshotRing(floats []float64, period, used int, count uint64) erro
 }
 
 // referenceSum independently replays occupied slots in logical oldest-to-newest order.
-// It computes both a compensated checksum and an upper magnitude scale without
-// allocating, providing a bounded comparison against the saved recurrence.
+// It computes a compensated checksum and its finite rounded magnitude scale
+// without allocating, providing a bounded comparison against the saved recurrence.
 //
 // Implementation:
 //   - Stage 1: choose oldest logical index (head when full, zero during warmup).
-//   - Stage 2: add each occupied value in order with Neumaier and accumulate nonnegative magnitude.
-//   - Stage 3: return both a compensated reference and its independent size bound.
+//   - Stage 2: add each occupied value in order with Neumaier.
+//   - Stage 3: return the compensated reference and its rounded nonnegative sum as scale.
 //
 // Behavior highlights:
 //   - Does not modify the source ring or overwrite the saved compensation.
@@ -375,11 +375,11 @@ func validateSnapshotRing(floats []float64, period, used int, count uint64) erro
 //
 // Returns:
 //   - compensated: independently replayed ring accumulator.
-//   - float64: checked magnitude used for roundoff scale.
-//   - error: ErrOverflow if replay or magnitude is not representable.
+//   - float64: finite rounded magnitude used for roundoff scale.
+//   - error: ErrOverflow if compensated replay arithmetic is not finite.
 //
 // Errors:
-//   - ErrOverflow: compensated replay or magnitude sum exceeds finite float64.
+//   - ErrOverflow: a compensated replay addition or correction is nonfinite.
 //
 // Determinism:
 //   - Visits occupied logical slots from oldest to newest with fixed sign arithmetic.
@@ -394,7 +394,6 @@ func validateSnapshotRing(floats []float64, period, used int, count uint64) erro
 //   - Do not replace this independent replay with the saved sum; it would stop detecting corruption.
 func referenceSum(values []float64, used, head int) (compensated, float64, error) {
 	var result compensated
-	magnitude := 0.0
 	index := 0
 	if used == len(values) {
 		index = head
@@ -404,16 +403,15 @@ func referenceSum(values []float64, used, head int) (compensated, float64, error
 		if err := result.add(value); err != nil {
 			return compensated{}, 0, err
 		}
-		if magnitude > math.MaxFloat64-value {
-			return compensated{}, 0, ErrStateVersion
-		}
-		magnitude += value
 		index++
 		if index == len(values) {
 			index = 0
 		}
 	}
-	return result, magnitude, nil
+	// The nonnegative replay sum already is the rounded magnitude scale.
+	// Rechecking against MaxFloat64-value would reject finite rounded sums
+	// just above the exact maximum even when the compensated value is finite.
+	return result, result.sum, nil
 }
 
 // nearSaved compares normalized binary64 sums against a conservative roundoff envelope.
@@ -543,7 +541,7 @@ func validateSnapshotTotals(floats []float64, period, used, head int) error {
 //   - A failure leaves the previous state bit-for-bit intact.
 //
 // Inputs:
-//   - state: caller-owned read-only snapshot, with exact v1 algorithm/config ABI.
+//   - state: caller-owned read-only snapshot, with exact v2 algorithm/config ABI.
 //
 // Returns:
 //   - error: nil only if the complete state was validated and installed.
@@ -561,6 +559,7 @@ func validateSnapshotTotals(floats []float64, period, used, head int) error {
 //
 // Notes:
 //   - The engine's period cannot change; a compatible target is created with New.
+//   - Legacy v1 states require replay from original OHLCV, not an ID or hash edit.
 //   - Caller must authenticate untrusted persisted bytes before invoking Restore.
 //   - Concurrent use of the same Stream is unsupported.
 //

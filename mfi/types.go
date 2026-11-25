@@ -59,7 +59,7 @@ type Options struct {
 //   - One Bar value is consumed by Push and is not retained or mutated.
 //
 // Determinism:
-//   - Typical price uses High, Low and Close; comparisons use exact float64 ordering.
+//   - Typical price is the nearest-even binary64 mean of High, Low and Close; comparisons use exact float64 ordering.
 //
 // Complexity:
 //   - This value occupies O(1) memory and is copied by value by Push.

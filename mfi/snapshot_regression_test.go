@@ -30,7 +30,7 @@ func TestSnapshot_RejectsCorruptionAtomically(t *testing.T) {
 		name   string
 		mutate func(*mfi.Snapshot)
 	}{
-		{"algorithm", func(s *mfi.Snapshot) { s.Algorithm = "mfi/rolling-neumaier/v2" }},
+		{"algorithm", func(s *mfi.Snapshot) { s.Algorithm = "mfi/rolling-neumaier/v1" }},
 		{"config", func(s *mfi.Snapshot) { s.Config = "0000" }},
 		{"float-shape", func(s *mfi.Snapshot) { s.FloatState = s.FloatState[:len(s.FloatState)-1] }},
 		{"int-shape", func(s *mfi.Snapshot) { s.IntState = s.IntState[:2] }},
