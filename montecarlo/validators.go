@@ -12,14 +12,17 @@ import (
 
 // checkedInt converts an unsigned size to the platform's addressable int domain.
 // strconv.Atoi validates the native int range without a potentially narrowing cast.
+// Implementation:
+//   - Stage 1: encode the full unsigned size without losing its high bits.
+//   - Stage 2: parse using the current platform's native signed int range.
+//   - Stage 3: return the converted value or the package overflow sentinel.
 //
 // Inputs: value is a nonnegative uint64 count or index bound.
 // Returns: the exact int value, or ErrOverflow if the platform cannot represent it.
 // Determinism: a pure range check, independent of machine scheduling.
 // Complexity: Time O(1), Space O(1) for bounded machine-width conversion.
 // AI-Hints: this one-time preflight conversion uses strconv to avoid G115-prone
-//
-//	uint64-to-int casts; never invoke it inside the path-reduction hot loop.
+// uint64-to-int casts; never invoke it inside the path-reduction hot loop.
 func checkedInt(value uint64) (int, error) {
 	converted, err := strconv.Atoi(strconv.FormatUint(value, 10))
 	if err != nil {
@@ -29,18 +32,26 @@ func checkedInt(value uint64) (int, error) {
 	return converted, nil
 }
 
-// nonnegativeUint64 converts a validated nonnegative int to uint64.
-// A guarded decimal conversion avoids signed-to-unsigned casts in API preflight.
+// nonnegativeUint64 converts a signed native size into the unsigned count domain.
+// The unsigned parser checks sign and range at one canonical admission boundary.
+// Implementation:
+//   - Stage 1: encode the original int without altering a negative value.
+//   - Stage 2: parse its decimal representation in the complete uint64 domain.
+//   - Stage 3: return the exact unsigned count or the package overflow sentinel.
 //
-// Inputs: value is an int size that must be >=0.
+// Behavior highlights:
+//   - Every nonnegative native int fits uint64; negative input is rejected.
+//   - Callers map a negative option or dimension to ErrInvalidOption.
+//
+// Inputs: value is an int size supplied at preflight, possibly negative.
 // Returns: its exact uint64 equivalent or ErrOverflow when negative.
 // Determinism: pure, with no architecture-dependent truncation.
-// Complexity: Time O(1), Space O(1).
-// AI-Hints: callers validate semantic positivity separately from integer safety.
+// Complexity: Time O(1), Space O(1) for bounded machine-width conversion.
+// Notes: this path performs no unchecked signed-to-unsigned conversion.
+// AI-Hints: validate semantic positivity separately; zero itself converts safely.
 func nonnegativeUint64(value int) (uint64, error) {
-	if value < 0 {
-		return 0, ErrOverflow
-	}
+	// ParseUint rejects the negative decimal spelling directly; a separate sign
+	// branch followed by another fallible conversion would duplicate this gate.
 	converted, err := strconv.ParseUint(strconv.Itoa(value), 10, 64)
 	if err != nil {
 		return 0, ErrOverflow
@@ -50,7 +61,6 @@ func nonnegativeUint64(value int) (uint64, error) {
 
 // validateQuantileLevels validates ordered interpolation probabilities.
 // It rejects duplicates, NaN/Inf, and out-of-range values without reordering them.
-//
 // Inputs: levels is a caller-owned, read-only slice; nil and empty mean no quantiles.
 // Returns: ErrInvalidOption for any invalid level, otherwise nil.
 // Determinism: inspect indices from 0 to q-1; the first invalid level wins.
@@ -70,7 +80,6 @@ func validateQuantileLevels(levels []float64) error {
 
 // finiteScalar reports whether a sample/output has a representable finite value.
 // The stochastic driver rejects nonnumeric realizations before ordered reduction.
-//
 // Inputs: value is a float64 produced by the sampler or numeric kernel.
 // Returns: true for every finite float64 (including +/-0 and subnormals).
 // Determinism: pure IEEE-754 classification. Complexity: O(1) time and space.
