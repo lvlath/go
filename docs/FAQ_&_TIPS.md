@@ -3,7 +3,7 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/FAQ_&_TIPS.md
-  Package reference: atr, ema, core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima, lstm, pacf, tfsax and the wider lvlath package family
+  Package reference: donchian, atr, ema, core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima, lstm, pacf, tfsax and the wider lvlath package family
   lvlath - FAQ & Tips
 
   Purpose:
@@ -30,6 +30,7 @@
     - Fixed-window ACF estimator conventions, numeric safeguards, pair-count diagnostics, and noncausal provenance.
     - Reproducible block-bootstrap indices, unbiased random integers, partial row publication, and resource admission.
     - Exact affine EMA levels, SMA/First readiness, bounded seed continuation and atomic replay.
+    - Donchian current/prior windows, shared readiness, finite midpoint, derived-width safety and batch correction boundaries.
     - Wilder RSI warmup masks, deterministic batch/stream semantics, state rollback and checkpoint boundaries.
     - MACD SMA-seeded EMAs, signed features, three readiness masks, checkpoint identity and hot-path ownership.
     - MFI fixed-transition OHLCV windows, zero-volume retention, compensated rebasing and checkpoint authentication.
@@ -99,6 +100,7 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
     13u. [TFSAX FAQ](#13u-tfsax-faq---research-only-dtw-retrieval-and-reproducible-evidence)
     13v. [EMA FAQ](#13v-ema-faq-exact-smoothing-seeds-and-checkpoints)
     13w. [ATR FAQ](#13w-atr-faq-signed-candles-readiness-and-replay)
+    13x. [Donchian FAQ](#13x-donchian-faq-windows-errors-and-range-safety)
 14. [Builder and gridgraph tips](#14-builder-and-gridgraph-tips)
 15. [Errors and diagnostics](#15-errors-and-diagnostics)
 16. [Determinism and concurrency](#16-determinism-and-concurrency)
@@ -141,6 +143,7 @@ Start with the question, not the algorithm name.
 | “Which autoregressive lag adds linear dependence after shorter lags are removed?”                             | `pacf.ComputeCentered`                                    | Durbin-Levinson common-n PACF with order-wise prediction variances.                                   |
 | "How do I smooth a signed finite level and preserve exact warmup through restart?"                            | `ema.ComputeSMA` / `ComputeFirst` / `NewSMA` / `NewFirst` | Exact affine updates, explicit readiness and bounded Snapshot/Restore.                                |
 | "How do I measure gap-aware ranges for signed candle prices?"                                                 | `atr.ComputePeriod` / `NewPeriod`                         | Exact TR, Wilder ATR, independent readiness and exact seed continuation.                              |
+| "How do I compare a close against preceding observed highs and lows?"                                         | `donchian.ComputeExcludeCurrent`                          | Explicit prior window; owning Upper/Middle/Lower and one mask; no execution assumptions.              |
 | “How strong are smoothed up/down changes in an ordered positive price feed?”                                  | `rsi.ComputePeriod` / `Stream.Push`                       | Wilder oscillator with a validity mask or zero-allocation, single-owner recurrence.                   |
 | “How do fast and slow price trends diverge and how does that separation change?”                              | `macd.ComputeDefault` / `NewDefault`                      | SMA-seeded EMA, three signed aligned series, independent readiness masks and replayable Stream.       |
 | “How much rising versus falling typical-price flow occurred over the most recent candles?”                    | `mfi.ComputeDefault` / `NewDefault`                       | Volume-weighted last-P-transition MFI, warmup mask, compensated rolling ring and detached checkpoint. |
@@ -184,6 +187,7 @@ detect fixed-window serial dependence  -> ACF ComputeDefault (not causal)
 screen partial AR lag dependence       -> PACF ComputeCentered (common-n, not causal)
 smooth a causal signed level           -> EMA ComputeSMA / ComputeFirst / Stream.Push
 measure gap-aware candle ranges        -> ATR ComputePeriod / Stream.Push (not EMA or NATR)
+select an observed prior-bar range     -> DONCHIAN ComputeExcludeCurrent (not a smoothed range)
 compute causal Wilder price strength   -> RSI ComputePeriod / Stream.Push
 compute signed trend-separation factor -> MACD ComputeDefault / Stream.Push
 compute volume-weighted OHLCV flow     -> MFI ComputeDefault / Stream.Push
@@ -5550,6 +5554,172 @@ state does not mean hard real-time scheduling or unlimited physical memory.
 
 ---
 
+## 13x. Donchian FAQ: Windows, Errors, and Range Safety
+
+### Q13x.1. Which entry point should a caller use?
+
+Use `ComputeIncludeCurrent(ctx,h,l,p)` for a finalized-bar range overlay, and
+`ComputeExcludeCurrent(ctx,h,l,p)` for a previous-bar baseline. Use canonical
+`Compute(ctx,h,l,opts)` when configuration already lives in Options. The wrappers
+only select ExcludeCurrent; they preserve all channels, errors, context polls,
+and numerical evaluation. There is no default period: Options{} is invalid.
+
+### Q13x.2. Why can my close never break the inclusive upper boundary?
+
+For a consistent candle, close[t]<=high[t]<=UpperInclude[t]. The current high is
+already in the maximum, so close[t]>UpperInclude[t] cannot be true. That is the
+wrong information set for a prior-range test, not evidence that the data contain
+no historical breakout. Exclude uses [t-P,t-1]; include uses [t-P+1,t]. Both are
+causal once their required observations are available. Neither authorizes a fill
+at the signal close or authenticates a historical data revision.
+
+### Q13x.3. Why do the first ready indices differ by one?
+
+Include has its first P observations at P-1. Exclude needs P earlier observations,
+so readiness starts at P. With P=1, include returns current H/L; exclude row zero
+is masked and row one returns row zero's H/L. No first-row history is invented.
+On an accepted history, ready exclude row t equals include row t-1 bit for bit.
+
+### Q13x.4. Are empty, short, nil, and zero-valued results interchangeable?
+
+No. Equal empty inputs, including nil/empty combinations, succeed with a non-nil
+Result and four non-nil empty channels. A short history succeeds with +0 payloads
+and false masks: n<P for include, n<=P for exclude. A complete all-zero window is
+valid. IsNil checks only the pointer; it does not test readiness or field shape.
+Every error returns a nil result. Check err, then Valid, before consuming values.
+
+### Q13x.5. Which error wins, and can one error match two categories?
+
+Entry precedence is context, options, then shape. Nil/nonempty matches both
+ErrShape and ErrNilInput; a non-nil empty slice paired with a nonempty one matches
+only ErrShape. Next, nonfinite input has global priority over finite geometry:
+a later NaN wins over an earlier high<low candle. That differs from ATR's per-bar
+finite/geometry ordering; familiar sentinel names are not shared precedence laws.
+
+This complete example demonstrates classification without reading error strings:
+
+<!-- donchian-example: faq-error-categories -->
+```go
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"math"
+
+	"github.com/lvlath/go/donchian"
+)
+
+func main() {
+	const period = 2
+	ctx := context.Background()
+	// A nil high column and nonempty low column form two observable categories.
+	missing, err := donchian.ComputeExcludeCurrent(ctx, nil, []float64{1}, period)
+	fmt.Printf("shape=%t nil-input=%t result-nil=%t\n",
+		errors.Is(err, donchian.ErrShape), errors.Is(err, donchian.ErrNilInput), missing.IsNil())
+
+	// The first finite candle is wrong; the later NaN has global precedence.
+	rejected, err := donchian.ComputeIncludeCurrent(ctx,
+		[]float64{0, math.NaN()}, []float64{1, 0}, period)
+	fmt.Printf("nonfinite=%t bar=%t result-nil=%t\n",
+		errors.Is(err, donchian.ErrNonFinite), errors.Is(err, donchian.ErrBar), rejected.IsNil())
+}
+```
+
+Output:
+
+```text
+shape=true nil-input=true result-nil=true
+nonfinite=true bar=false result-nil=true
+```
+
+Concurrent cancellation and an input failure after entry have no prescribed winner.
+An already canceled context wins before options. Do not classify errors by text.
+
+### Q13x.6. Why does an invalid last bar reject exclude-current output?
+
+ExcludeCurrent selects numerical windows; it does not exempt any supplied row
+from validation. The last bar and wholly masked histories are checked. A future
+invalid row can reject the entire call although admissible future rows cannot
+change earlier numerical results. There is no partial-prefix publication mode.
+Keep a previously successful artifact in the application until its replacement succeeds.
+
+### Q13x.7. Are signed prices and signed zeros legal?
+
+All finite signs are legal when high>=low. For high=-1 and low=-5, the P1 midpoint
+is -3. Equal extrema select the latest index, including ties between +0 and -0.
+The selected H/L bits are preserved. An exact-zero midpoint is +0; a negative
+nonzero mean can correctly underflow to -0. All masked payloads are strictly +0.
+Display rounding and numeric equality do not prove bitwise equivalence.
+
+### Q13x.8. How can Middle be finite while a width overflows?
+
+The exact mean lies between finite bounds; the kernel avoids overflowing the sum
+or difference and avoids premature subnormal loss. Conversely, MaxFloat64 minus
+negative MaxFloat64 is not a finite width. Width is not a Result field. Check
+caller-side subtraction, denominator positivity, and quotient finiteness before
+normalizing. ErrOverflow from Compute concerns packed-output size, not a correctly
+computed mean or a later arithmetic expression outside the package.
+
+### Q13x.9. Will Period=MaxInt allocate a MaxInt-sized deque?
+
+No. If no output can become ready, no deques are allocated; input validation and
+O(n) owning output allocation still occur. Otherwise each queue has exactly P
+integer slots, with P<=n. No P+1 sentinel slot is used. This prevents a giant
+period/small-history allocation explosion, not all runtime OOM for giant actual
+inputs. Byte-size checks neither reserve memory nor recover process exhaustion.
+
+### Q13x.10. Does O(n) mean constant worst-case latency per observation?
+
+No. Each index is inserted once and removed at most once per queue, giving
+amortized O(1) work per bar. A single new extreme can remove O(P) older candidates.
+Long removals have additional context checks. Polling every 1024 scan indices
+and every 1024 removals within a long insertion is phase-local, not one check
+per 1024 aggregate operations or a wall-clock deadline. Allocation is not interruptible
+through this loop polling. A cancellation after the last successful check cannot
+retroactively revoke a returned artifact.
+
+### Q13x.11. Why does retaining Upper keep more memory than expected?
+
+Upper, Middle, and Lower are disjoint regions of one packed array. Each has
+cap==len, so append cannot overwrite a neighboring channel, but any remaining
+view keeps the shared backing array alive. Copy a selected channel for an independent
+lifetime. Copying the Result struct copies slice headers only. Inputs are never
+retained; independent calls own separate results. The public slices are mutable,
+so callers must synchronize writes and must not assume edited results remain valid.
+
+### Q13x.12. How should I process chunks or corrected history?
+
+There is no Stream or Snapshot. A suffix needs up to P-1 preceding observations
+in include mode, or P in exclude mode; run overlap+suffix and discard the overlap
+outputs. Cold independent chunks restart warmup. For an admissible correction at k,
+only ready include rows in [k,k+P-1], or exclude rows in [k+1,k+P], can change.
+These mathematical intervals must be bounded before machine-integer addition.
+Store source/revision, units, row mapping, period, and mode outside Result.
+See [batch boundaries](DONCHIAN.md#composition-revision-and-batch-boundaries).
+
+### Q13x.13. Can I use current ATR or subtract the two legs' highs?
+
+Those are different information-set and aggregation questions. A pre-bar scale
+uses a ready ATR[t-1]; ATR[t] includes the current shock. Neither is automatically
+a calibrated risk measure. For paired spreads, aggregate synchronous A-B samples;
+independently timed leg extrema do not define observed spread extrema. A ready zero
+scale or overflowing difference needs an explicit consumer policy, not an epsilon fix.
+
+### Q13x.14. Where are executable scenarios and independent checks?
+
+Run `go test ./donchian -run '^Example' -count=1 -v`. The five programs are in
+[example_test.go](../donchian/example_test.go); shared fixtures and independent
+O(nP)/rational oracles are in [test_helper_test.go](../donchian/test_helper_test.go).
+The frozen vendor demo is not a live or exchange-audited feed; synthetic spreads
+and deliberately corrupted data are separately labeled. Tests use donchian_test,
+public calls, and bitwise comparisons rather than blanket tolerances. Report
+coverage for each executable file, and distinguish local package checks from
+full CI. See [DONCHIAN.md](DONCHIAN.md#testing-and-verification) for commands.
+
+---
+
 ## 14. Builder and gridgraph tips
 
 ### Q14.1. When should I use `builder`?
@@ -6156,6 +6326,20 @@ the first unprocessed source event. `Count` is not an event identifier.
 The [complete replay program](EMA.md#7-complete-checkpoint-and-replay-program)
 and [`ExampleStream_Restore_warmupFailover`](../ema/example_test.go) show the
 numerical continuation. They do not implement a distributed storage transaction.
+
+---
+
+### Recipe U. Publish a prior-range feature without losing its information set
+
+Admit ordered H/L and aligned close/source metadata in consistent units. Call
+`donchian.ComputeExcludeCurrent` with an explicit period; replace a previously
+successful artifact only after err==nil. Check Valid before any comparison.
+For a prior volatility scale, separately require a ready finite positive ATR[t-1]
+and finite derived arithmetic. Persist the mode, period, source revision, and
+row mapping beside the channels: Result does not retain that metadata.
+Do not infer execution, reset windows at arbitrary chunk boundaries, or silently
+substitute a current-inclusive range. Run the [five scenarios](../donchian/example_test.go)
+and consult [the composition guide](DONCHIAN.md#composition-revision-and-batch-boundaries).
 
 ---
 

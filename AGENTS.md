@@ -32,6 +32,7 @@ If these sources disagree, do not guess. Report the inconsistency and propose th
 - `tsp`: exact, approximate, and local-search routing under explicit assumptions.
 - `dtw`: time-series alignment, windows, penalties, memory policy, optional path recovery.
 - `atr`: exact signed-candle True Range, Wilder ATR, ATR-only readiness and transactional exact continuation.
+- `donchian`: batch observed high/low channels, explicit current-bar policy, exact midpoint and bounded monotonic deques.
 
 ## Repository-wide laws
 
@@ -158,6 +159,21 @@ Never weaken an assertion merely to make a nondeterministic implementation pass.
 - Keep English per-symbol and private-kernel comments synchronized with actual branches, exact bounds, ownership and complexity. Maintain docs/ATR.md (uppercase), tutorial, FAQ, README, root doc.go, llms.txt, and these agent notes. Preserve unrelated content.
 - Keep the vendor demo fixture frozen and explicitly sourced; distinguish it from engineered stress histories. Examples must stay offline and contain checked Output blocks. Source cursor persistence, authentication, revision replay and decision policy stay in the application.
 
+
+### `donchian`
+
+- Keep Compute canonical. ComputeIncludeCurrent and ComputeExcludeCurrent only construct Options and delegate without extra polls, validation, buffers, or discarded fields. Options{} is invalid; all positive int periods, including MaxInt, are valid. There is no default period, Stream, or Snapshot.
+- Include [i-P+1,i] becomes ready at P-1; exclude [i-P,i-1] at P. Read exclude output before expiration and insertion. Include is causal after bar finality but is not a prior-bar threshold. Do not turn a known close or later observed open into a fill guarantee.
+- Preserve latest equal extrema, including observable signed-zero ties. Middle is RN64 of the exact boundary mean: exact zero becomes +0, negative nonzero underflow may become -0. Never substitute a naive sum, difference midpoint, or unconditional sum of halves.
+- Validate every row, including masked histories and the final excluded bar. Context precedes options and shape; nil/nonempty matches BOTH ErrShape and ErrNilInput. ErrNonFinite has global priority over a remembered finite ErrBar. Do not copy ATR's different per-index precedence. All errors return nil.
+- Keep Result.IsNil exactly a pointer check. Successful empty input yields four non-nil empty slices. False Valid masks all three +0 payloads; ready zeros remain valid. Result stores no period, mode, source identity or revision metadata.
+- Retain fixed rings of exactly P slots only when a ready row is possible. Wholly masked histories allocate no rings. Total work is O(n), workspace O(min(P,n)), outputs O(n); one insertion can pop O(P) candidates. Poll inside long pops as well as input scans, without promising a global operation count or runtime allocation cancellation.
+- Preserve packed-output byte checks and cap-limited non-overlapping numerical views. Keeping one view retains the shared allocation; copying Result is shallow. ErrOverflow concerns output allocation arithmetic, not an impossible finite midpoint overflow or a caller's width calculation. No runtime OOM recovery is promised.
+- Keep production free of reflect, unsafe, panic, recover, go:embed, math/big, and test-only exports. Tests remain in package donchian_test and call donchian's public facade. Reusable helpers, fixtures, and independent O(nP)/math/big.Rat oracles belong in test_helper_test.go.
+- Protect wrapper parity, all error categories, empty/short/P1/MaxInt, signed zeros, deque wrap/equal eviction/pop bursts, exact midpoint boundaries, admissible-prefix causality, shifted-mode identity, correction horizons, ownership and deterministic cancellation. Require 92% overall and per executable file; report unexercisable legal-input allocation guards honestly.
+- Keep the five offline scenario examples aligned with the real API. Preserve the frozen vendor-demo source and distinguish it from engineered spreads and deliberate corruption; do not refresh quotes silently or describe the fixture as independently exchange-audited. Aggregate synchronized spread observations, not differences of leg extrema.
+- Keep donchian/doc.go, docs/DONCHIAN.md, tutorial, FAQ, README, root doc.go, llms.txt, and these notes synchronized. Maintain existing section anchors and unrelated package content. Link to existing source/examples, not assumed standalone programs. Re-run complete documentation programs and check their output after edits.
+- Source cadence, bar finality, close admission, historical availability, correction replay, artifact envelopes, ATR alignment and execution stay in the application. For a prior scale use a ready ATR[i-1]; widths, denominators and quotients need explicit finite-domain policy. No epsilon repair or profit claim.
 
 ### shortest paths, MST, flow, TSP, DTW
 

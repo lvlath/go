@@ -3,9 +3,9 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/TUTORIAL.md
-  Package reference: atr, ema, matrix, stats, ols, ridge, series, pacf, tfsax, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima, lstm and the wider lvlath package family
+  Package reference: donchian, atr, ema, matrix, stats, ols, ridge, series, pacf, tfsax, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima, lstm and the wider lvlath package family
   Contract status: learning guide; package doc.go and source define the public API.
-  Scope: graph, matrix, factorization, statistical and temporal workflows, including exact affine EMA, causal MACD, rolling MFI, cumulative OBV, Chaikin A/D, reproducible parallel Monte Carlo, exact-in-distribution GBM, experimental Merton jump diffusion, GJR-GARCH causal volatility with constrained Gaussian QMLE, and fixed-order conditional Gaussian ARIMA with anchored forecasts, and frozen IFGO LSTM recurrent inference, and finite-window Durbin-Levinson PACF estimation, and the TFSAX research-only DTW-versus-SAX retrieval gate.
+  Scope: graph, matrix, factorization, statistical and temporal workflows, including causal Donchian ranges, exact affine EMA, causal MACD, rolling MFI, cumulative OBV, Chaikin A/D, reproducible parallel Monte Carlo, exact-in-distribution GBM, experimental Merton jump diffusion, GJR-GARCH causal volatility with constrained Gaussian QMLE, and fixed-order conditional Gaussian ARIMA with anchored forecasts, and frozen IFGO LSTM recurrent inference, and finite-window Durbin-Levinson PACF estimation, and the TFSAX research-only DTW-versus-SAX retrieval gate.
   lvlath - Repository Tutorial
 
   Purpose:
@@ -25,7 +25,7 @@
 
 > **hard math on an easy level**
 
-Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fitted feature scaling, covariance PCA, exact affine EMA, causal Wilder RSI, SMA-seeded MACD, rolling Money Flow Index, compensated On-Balance Volume, Chaikin A/D, reproducible parallel Monte Carlo, exact-lognormal GBM paths, stationary asymmetric GJR-GARCH conditional variance, fixed-order conditional Gaussian ARIMA, frozen LSTM forward inference, time-series alignment, and research-only DTW-versus-SAX retrieval audits.
+Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fitted feature scaling, covariance PCA, exact affine EMA, causal Donchian ranges, causal Wilder RSI, SMA-seeded MACD, rolling Money Flow Index, compensated On-Balance Volume, Chaikin A/D, reproducible parallel Monte Carlo, exact-lognormal GBM paths, stationary asymmetric GJR-GARCH conditional variance, fixed-order conditional Gaussian ARIMA, frozen LSTM forward inference, time-series alignment, and research-only DTW-versus-SAX retrieval audits.
 
 This tutorial is the beginning of the learning path. It introduces the objects and ideas that most packages share: graphs, matrices, options, result artifacts, error contracts, and deterministic algorithm execution.
 
@@ -69,6 +69,7 @@ This tutorial is the beginning of the learning path. It introduces the objects a
     11v. [TFSAX Research Gate: Exact DTW Truth, SAX Ranking and Reproducible Evidence](#11v-tfsax-research-gate-exact-dtw-truth-sax-ranking-and-reproducible-evidence)
     11w. [EMA Foundations: Exact Levels, Readiness, and Replay](#11w-ema-foundations-exact-levels-readiness-and-replay)
     11x. [ATR Foundations: Exact Ranges and Replay](#11x-atr-foundations-exact-ranges-and-replay)
+    11y. [Donchian Foundations: Observed Ranges and Information Sets](#11y-donchian-foundations-observed-ranges-and-information-sets)
 12. [Algorithm Selection Guide](#12-algorithm-selection-guide)
 13. [Professional Best Practices](#13-professional-best-practices)
 14. [Where To Go Next](#14-where-to-go-next)
@@ -105,6 +106,7 @@ The library covers:
 * `pacf` finite-window Durbin-Levinson partial autocorrelation with common-denominator covariances and one-step prediction variances;
 * `ema` exact-binary-input exponential levels with SMA/First seeding, aligned readiness, error-atomic streaming and bounded seed checkpoints;
 * `atr` exact True Range and Wilder range smoothing, finite signed candle geometry, ATR-only readiness and exact source-bound continuation;
+* `donchian` observed high/low ranges, explicit current-bar inclusion, correctly rounded midpoint and one aligned readiness mask;
 * `rsi` causal Wilder gain/loss smoothing, index-aligned readiness masks, zero-allocation streaming and versioned scalar checkpoints;
 * `macd` SMA-seeded Appel EMAs with signed Line/Signal/Histogram, separate readiness masks, transactional streaming and detached restart state;
 * `mfi` compensated rolling typical-price money flow over OHLCV, transition-counted zero volumes, batch/stream parity and detached replay state;
@@ -153,6 +155,7 @@ sample autocorrelation     *acf.Result                 fixed-window lag coeffici
 sample partial ACF         *pacf.Result                lag reflection coefficients / order-wise V_m
 exact affine level         *ema.Result                 original-index Values / Valid; exact seed and rounded recurrence
 exact candle range         *atr.Result                 always-present TR / independently ready ATR / Valid
+observed rolling range     *donchian.Result            Upper / Middle / Lower / shared Valid; explicit current-bar policy
 Wilder RSI factor          *rsi.Result                 aligned oscillator / Valid mask
 MACD trend difference      *macd.Result                aligned Line / Signal / Histogram masks
 MFI volume-weighted flow   *mfi.Result                 aligned Values / Valid with compensated rolling window
@@ -195,6 +198,7 @@ A shortest-path formula is easy. A reliable Go package must also answer:
 * Did a live hidden-state decision accidentally use future-conditioned smoothing instead of filtering?
 * Were independent HMM training sequences illegally concatenated into fabricated transitions?
 * Did an EMA pipeline treat an invalid warmup zero as a measured level, or discard exact unfinished seed state during failover?
+* Did a previous-range comparison accidentally include the current high, or normalize by a scale that already includes the same shock?
 * Did a market-data loader drop a legitimate zero-volume candle and change the MFI rolling window?
 * Did an OBV calculation add the very first candle's volume, lose Neumaier correction, or reuse a mismatched feed cursor after Restore?
 * Did an A/D calculation accidentally discard the first contribution, form 2*Close, divide by a flat spread, or authenticate a public Config digest?
@@ -268,6 +272,7 @@ Read these files as a learning path. `doc.go` files define implemented package c
 | 8v   | [`PACF.md`](PACF.md)                       | Durbin-Levinson PACF, common-n covariance, stable variances, error law and practical applications.                             |
 | 8w   | [`EMA.md`](EMA.md)                         | Exact affine level smoothing, seed modes, readiness masks, bounded snapshots, cancellation and replay.                         |
 | 8x   | [`ATR.md`](ATR.md)                         | Exact first-bar/gap ranges, Wilder seed/steps, named period facades, signed candles and lossless continuation.                 |
+| 8y   | [`DONCHIAN.md`](DONCHIAN.md)               | Observed rolling ranges, current-bar policy, exact midpoint, masks, bounded deques and consumer arithmetic.                    |
 | 9    | [`DTW.md`](DTW.md)                         | `Align`, `AlignCostMatrix`, `AlignMatrix`, `AlignBounded`, exact `Search`, numeric and path artifacts.                         |
 | 9a   | [`DTW_SEARCH.md`](DTW_SEARCH.md)           | Fixed-length exact top-K, certified LB_Keogh, workers, budgets, and partial-result law.                                        |
 | 10   | [`TSP.md`](TSP.md)                         | Matrix-backed tours, exact regimes, Christofides, Blossom matching, local search, timeouts.                                    |
@@ -300,6 +305,8 @@ Working on numeric/time-series workflows:
   SERIES -> EMA.ComputeSMA / ComputeFirst -> aligned level and mask
   source admission -> EMA.NewSMA / NewFirst -> Push -> snapshot + source cursor
   source admission -> ATR.NewPeriod -> Push -> range/readiness -> snapshot + source cursor
+  ordered H/L -> DONCHIAN.ComputeIncludeCurrent / ComputeExcludeCurrent -> owning ranges + shared mask
+  prior DONCHIAN[t] + separately ready ATR[t-1] -> caller-owned normalized feature (check units and arithmetic)
   SERIES -> RSI.ComputePeriod / Stream.Push -> causal price-strength factors
   SERIES -> MACD.Compute / Stream.Push -> signed trend-separation features and masks
   SERIES -> MFI.Compute / Stream.Push -> OHLCV volume-weighted transition factor and validity mask
@@ -5530,6 +5537,148 @@ for nil inputs, wrong candles, range overflow, checkpoint bounds, and zero range
 
 ---
 
+## 11y. Donchian Foundations: Observed Ranges and Information Sets
+
+### Start with the boundary, not a trading rule
+
+EMA smooths a level; ATR smooths a gap-aware range; Donchian selects observed
+highs/lows over exactly P observations and reports their nearest-even midpoint.
+It supplies no prediction interval, probability, position, order, or fill.
+The caller owns time ordering, bar finality, aligned closes, and source revisions.
+
+The most important option is the range's information set:
+
+| Intent                         | Call                                        | Window at row t                | First ready       |
+|--------------------------------|---------------------------------------------|--------------------------------|-------------------|
+| Draw a finalized-bar overlay   | `donchian.ComputeIncludeCurrent(ctx,h,l,p)` | `[t-p+1,t]`                    | `p-1`             |
+| Compare with a preceding range | `donchian.ComputeExcludeCurrent(ctx,h,l,p)` | `[t-p,t-1]`                    | `p`               |
+| Use a stored policy value      | `donchian.Compute(ctx,h,l,opts)`            | Explicit `opts.ExcludeCurrent` | According to mode |
+
+Neither wrapper has an implicit default period or an independent numerical kernel.
+`Options{}` is invalid; every positive int period, including MaxInt, is admitted.
+A period counts supplied observations, not calendar days or elapsed sessions.
+
+### Watch what the current bar changes
+
+The following complete program uses synthetic bounded candles to isolate the
+information-set choice. Closes are finite and inside the corresponding candles;
+Donchian validates only H/L, so the application must establish that close contract.
+
+<!-- donchian-example: tutorial-information-set -->
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/lvlath/go/donchian"
+)
+
+func main() {
+	const period = 3 // An explicit observation count, not a default.
+	high := []float64{12, 14, 13, 50, 16}
+	low := []float64{9, 10, 11, 12, 12}
+	close := []float64{11, 13, 12, 45, 15}
+	ctx := context.Background()
+
+	// The overlay deliberately includes the current finalized observation.
+	overlay, err := donchian.ComputeIncludeCurrent(ctx, high, low, period)
+	if err != nil {
+		fmt.Println("overlay error:", err)
+		return
+	}
+	// The comparison baseline excludes that same observation.
+	prior, err := donchian.ComputeExcludeCurrent(ctx, high, low, period)
+	if err != nil {
+		fmt.Println("prior error:", err)
+		return
+	}
+	for i, ready := range prior.Valid {
+		if !ready || !overlay.Valid[i] {
+			continue // Preserve alignment; never treat warmup as an observed zero.
+		}
+		fmt.Printf("bar=%d prior-upper=%.0f current-upper=%.0f close=%.0f above-prior=%t\n",
+			i, prior.Upper[i], overlay.Upper[i], close[i], close[i] > prior.Upper[i])
+	}
+}
+```
+
+Output:
+
+```text
+bar=3 prior-upper=14 current-upper=50 close=45 above-prior=true
+bar=4 prior-upper=50 current-upper=50 close=15 above-prior=false
+```
+
+At row 3 the current high becomes 50. The current-inclusive overlay therefore
+moves to 50, while the preceding upper remains 14. Include-current is not
+inherently noncausal after bar finality; it simply answers a different question.
+For a consistent candle, close<=high<=inclusive Upper, so a strict upper breakout
+against that inclusive boundary cannot occur. A comparison against the prior
+range still does not imply execution at the known signal close.
+
+### Admit data before consuming aligned output
+
+`Result` owns Upper, Middle, Lower, and Valid of input length. A false mask means
+all three numeric payloads are +0 and unavailable. A true mask may legitimately
+accompany three zeros. `IsNil()` checks only pointer presence. Empty H/L, including
+nil/empty combinations, succeed with non-nil empty channels after validation.
+
+Context precedes options, shape, a complete finiteness scan, then the first bad
+finite high<low candle. A nil/nonempty mismatch matches both ErrShape and ErrNilInput;
+a later NaN outranks an earlier finite geometry failure. Even the final excluded
+bar and wholly masked histories are validated. A failed batch returns nil, not
+a partly trustworthy prefix. Numeric prefix causality is not partial-result admission.
+
+Negative finite prices are valid. Upper/Lower retain selected input bits; latest
+indices win equal extrema, including signed-zero ties. The exact-zero midpoint
+is +0; negative nonzero means may round to -0. Do not use an epsilon to reinterpret
+a mask, tie, shape mismatch, or sentinel category.
+
+### Compose without shifting the meaning of a baseline
+
+For a pre-bar normalized excursion, combine `channel.Valid[t]` from exclude-current
+with a previously ready ATR at `t-1`, not automatically ATR at `t`. Both computations
+must use the same source, row mapping, and units. Check t>0, both masks, a finite
+positive scale, representable subtraction, and a finite quotient. ATR[t] includes
+the current shock and therefore defines a different post-bar feature.
+
+For a 10/50 width comparison, require both channel masks and a finite positive
+slow width. Finite extrema and Middle do not guarantee finite Upper-Lower. A
+flat range is not a missing bar and does not justify an arbitrary epsilon divisor.
+For signed spreads, aggregate synchronized A-B observations, not differences of
+independently timed leg extrema. See [Donchian composition](DONCHIAN.md#composition-revision-and-batch-boundaries).
+
+### Keep batch boundaries and memory visible
+
+Two monotonic deques give O(n) total work: each index enters and leaves each queue
+at most once. One insertion can still remove O(P) candidates; the bound per bar is
+amortized. Workspace is O(min(P,n)); wholly masked histories allocate no rings,
+but the four owning outputs still require O(n) storage. This is not a zero-allocation API.
+
+The three price channels are disjoint, capacity-limited views of one packed array.
+Keeping only one channel retains that array; copying Result by value is shallow.
+Independent calls on stable input are safe, but mutation requires caller coordination.
+A chronological suffix needs preceding context (P-1 bars for include, P for exclude)
+when computed independently. There is no Stream, Snapshot, or automatic overlap.
+
+### Run the existing scenario suite
+
+```sh
+go test ./donchian -run '^Example' -count=1 -v
+```
+
+The five [executable examples](../donchian/example_test.go) cover a current-range
+report, a prior-20 event audit, a 10/50 compression monitor, a synthetic negative
+spread, and rejected-feed quarantine. The [fixture source](../donchian/test_helper_test.go)
+labels the frozen vendor demo and synthetic data separately; examples do not make
+live requests. Follow [DONCHIAN.md](DONCHIAN.md) for the midpoint proof, exact error
+table, memory bounds, correction horizon, and complete verification commands, or
+[Donchian FAQ](FAQ_%26_TIPS.md#13x-donchian-faq-windows-errors-and-range-safety) for troubleshooting.
+
+---
+
 ## 12. Algorithm Selection Guide
 
 ### If the input is a graph
@@ -5581,6 +5730,7 @@ for nil inputs, wrong candles, range overflow, checkpoint bounds, and zero range
 | Direct sample ACF by integer lag                              | `acf.ComputeDefault` / `acf.Compute`                       | One fitted window, explicit denominator convention and pair counts; not causal streaming.                     |
 | Partial autocorrelation and AR-order screening                | `pacf.ComputeCentered` / `pacf.ComputeAtLag`               | Common-n Durbin-Levinson and in-window prediction variances; no automatic model selection.                    |
 | Smooth a finite signed level with explicit seed/readiness     | `ema.ComputeSMA` / `ComputeFirst`                          | Owning aligned Values/Valid; stream continuation through NewSMA/NewFirst.                                     |
+| Observed range including or excluding the current bar | `donchian.ComputeIncludeCurrent` / `ComputeExcludeCurrent` | Exact selected extrema, nearest-even midpoint, shared readiness; no default period or Stream. |
 | Causal Wilder price-strength oscillator                       | `rsi.ComputePeriod` / `rsi.NewPeriod`                      | Aligned Values+Valid or single-owner zero-allocation stream with explicit Reset.                              |
 | SMA-seeded MACD and trend separation                          | `macd.ComputeDefault` / `macd.NewDefault`                  | Three aligned signed outputs; independently gated Line and Signal/Histogram; zero-allocation Push.            |
 | Volume-weighted OHLCV price direction and rolling MFI         | `mfi.ComputeDefault` / `mfi.NewDefault`                    | Finite `[0,100]` feature, one Valid mask, compensated ring and versioned snapshots.                           |
@@ -5631,6 +5781,7 @@ approx terminal-only backbone         -> mst.SteinerTree
 cover all edges of a given tree       -> mst.SteinerWalk
 max feasible throughput               -> flow
 all-pairs distances                   -> matrix metric closure
+previous-bar high/low range           -> donchian.ComputeExcludeCurrent (not an inclusive overlay)
 dense topology/covariance             -> matrix
 streaming mean/variance               -> stats.Moments / stats.Summarize
 train-only standardization            -> stats.FitStandardizer
@@ -5787,6 +5938,10 @@ For examples and the exact error law, read [`LSTM.md`](LSTM.md) and the
 ## 14. Where To Go Next
 
 Use this tutorial as the entry point, then move into package-specific material:
+
+> For observed ranges and previous-bar comparisons:
+>
+>   [`SERIES.md`](SERIES.md) -> [`DONCHIAN.md`](DONCHIAN.md) -> [`donchian/example_test.go`](../donchian/example_test.go) -> [Donchian FAQ](FAQ_%26_TIPS.md#13x-donchian-faq-windows-errors-and-range-safety)
 
 > If you are running reproducible stochastic engineering or risk experiments:
 >

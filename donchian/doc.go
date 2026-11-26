@@ -1,72 +1,131 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2025-2026 katalvlaran
 
-// Package donchian provides causal Donchian Channel computations over finite,
-// ordered high/low observations using two bounded monotonic index deques.
+// Package donchian computes causal rolling high/low ranges with an explicit
+// current-bar policy and a correctly rounded binary64 midpoint.
+// This file defines the batch contract, ownership boundaries, and operational limits.
 //
 // # What and why
 //
-// Compute returns aligned Upper, Middle, Lower and Valid channels. It provides
-// a range baseline for caller-defined features and historical comparisons,
-// not trading decisions or a profitability claim. No other lvlath package is
-// imported. Time-grid preparation belongs to the caller, optionally using series.
+// Compute returns aligned Upper, Middle, Lower, and Valid channels. It supplies
+// observed range boundaries for overlays and caller-defined comparisons, not a
+// trading system, prediction interval, or profitability claim. ComputeIncludeCurrent
+// and ComputeExcludeCurrent are named policy wrappers around Compute; neither
+// changes validation, numerical evaluation, context polling, or returned channels.
+// No other lvlath package is imported. Time-grid preparation belongs to the caller,
+// optionally using series; ATR-based normalization is a separate application step.
 //
-// # Windows and mathematical laws
+// # Implementation
 //
-// With P=Options.Period, include-current uses [i-P+1,i], first valid at P-1.
-// ExcludeCurrent uses [i-P,i-1], first valid at P. Upper is the maximum high;
-// Lower is the minimum low. Equal extrema retain their latest observation.
-// This also defines deterministic signed-zero selection at the boundaries.
-// Middle is RN64((Upper+Lower)/2), with no overflow or intermediate underflow
-// loss. Exact-zero means are +0; negative nonzero underflow may round to -0.
+//   - Stage 1: validate context, period, shape, all finite values, then candle geometry.
+//   - Stage 2: check packed-output size, allocate zeroed owning channels, and scan
+//     with two fixed-capacity monotonic index deques when any row can become ready.
+//   - Stage 3: check cancellation before returning the complete result; every error
+//     discards private work and returns a nil *Result.
 //
-// Include-current is causal after bar finality but includes the bar being
-// compared. Exclude-current removes that same-bar threshold contamination.
-// Neither mode certifies historical availability or same-close execution.
+// # Behavior highlights
 //
-// # Options, domain, errors and nilability
+// For P=Options.Period, include-current uses [i-P+1,i], first ready at P-1;
+// exclude-current uses [i-P,i-1], first ready at P. Upper selects the maximum high
+// and Lower selects the minimum low. New equal values replace older candidates,
+// so the latest index wins, including ties between positive and negative zero.
+// At P=1, include selects current H/L and exclude selects previous H/L.
 //
-// Period must be positive; there is no implicit default. Huge positive periods
-// are valid. Negative prices and signed zeros are valid; NaN/Inf are not.
-// Every high must be at least its corresponding low. Validation precedence is
-// context, options, shape, non-finiteness over the complete input, then geometry.
-// Nil/nonempty mismatches match both ErrShape and ErrNilInput via errors.Is.
-// All-empty inputs, including nil slices, yield a non-nil result with non-nil
-// empty channels. A short history yields positive-zero payloads and false masks.
-// A ready zero stays valid. Result.IsNil checks only pointer presence.
+// Middle is RN64((Upper+Lower)/2): nearest-even rounding of the exact mean of the
+// selected binary64 boundaries. Magnitude-dependent evaluation prevents false
+// sum/difference overflow and destructive intermediate subnormal underflow.
+// Exact-zero means are +0; a negative nonzero mean may round to -0. Selected H/L
+// retain their original bits. All three unready payloads are strictly +0.
 //
-// ErrNilContext, ErrNilInput, ErrInvalidOption, ErrShape, ErrNonFinite, ErrBar
-// and ErrOverflow are stable categories. Cancellation returns ctx.Err(). Every
-// batch error returns nil; no partially populated result is ever published.
-// ErrOverflow protects packed output size, not the mathematically finite mean.
+// Include-current is causal after the current bar is available, but is not a
+// previous-bar threshold: a consistent close cannot exceed its own inclusive
+// upper boundary. Exclude-current reads the prior window before expiring its
+// oldest bar or inserting the current bar. Neither policy authenticates historical
+// availability or permits an assumed fill at the signal close.
 //
-// # Ownership, cancellation and concurrency
+// # Inputs and options
 //
-// Inputs are read-only for the duration of a call. Outputs do not alias inputs;
-// output channels are disjoint, capped and caller-owned. Independent calls on
-// unchanged inputs are safe. Concurrent mutation of inputs or of the same result
-// requires caller synchronization. The package has no mutable processing state.
-// Context is polled at least every 1024 bars, every 1024 removals in long deque
-// bursts, after validation and immediately before publication. Concurrent input
-// errors and cancellation are reported in whichever order they are observed.
-// A final context check is not a scheduling barrier against later cancellation.
+// ctx must be a non-nil usable context.Context. Period is an observation count in
+// [1, MaxInt], with no default; Options{} is invalid. high and low are equal-length,
+// read-only, already ordered slices in consistent units, with high[i] >= low[i].
+// Finite negative values, both zero signs, and subnormals are admitted. NaN and
+// either infinity are rejected. The package does not accept or validate closes,
+// timestamps, corporate-action adjustments, or missing-bar metadata.
 //
-// # Complexity and resource bounds
+// # Returns and nilability
 //
-// Validation, kernel and output initialization take O(n) time. Every index is
-// inserted once into each deque and removed at most once. Rings use O(min(P,n))
-// indices, with no sentinel slot; wholly masked histories allocate no rings.
-// Output payload is 25*n bytes, excluding headers and allocator rounding.
-// Checked packed-array byte arithmetic prevents integer overflow, but cannot
-// guarantee available RAM or make runtime out-of-memory termination recoverable.
+// Success returns a non-nil *Result with four input-length channels. All-empty
+// inputs, including nil/empty combinations, yield four non-nil empty slices.
+// n<P in include mode, or n<=P in exclude mode, yields an entirely false mask
+// without deque allocation. Ready zero-valued rows remain valid.
+// Result.IsNil is exactly a pointer-presence test, including through interfaces;
+// it does not inspect readiness, shape, or numeric values.
 //
-// # Non-goals and AI-Hints
+// # Errors
 //
-// No Stream, Snapshot, calendar, interpolation, sorting, revision handling,
-// ATR normalization, width output or private execution/risk import is provided.
-// General Upper-Lower can overflow even though Middle is finite; callers must
-// separately govern derived width or ratio arithmetic. Never trade on warmup
-// zeros or treat include-current boundaries as prior-bar breakout thresholds.
+// ErrNilContext or an already observed ctx.Err() precedes ErrInvalidOption, then
+// ErrShape. A nil slice paired with a nonempty slice matches both ErrShape and
+// ErrNilInput via errors.Is. After shape admission, high is checked before low
+// at each increasing index. ErrNonFinite has global priority over a remembered
+// finite ErrBar; only after the entire finite scan is the first bad bar reported.
+// Every supplied row is checked, including warmup rows and the last excluded bar.
+// An invalid later row rejects the whole batch, not merely that row or a suffix.
+//
+// ErrOverflow guards an unrepresentable packed float-output byte count; the mean
+// of two finite bounds cannot itself overflow. No partial result accompanies any
+// error. Error text is diagnostic; classify categories with errors.Is. Custom
+// typed-nil or misbehaving context implementations are unsupported and not recovered.
+//
+// # Determinism
+//
+// The kernel visits indices ascending, updates the upper deque before the lower
+// deque, and retains latest equal extrema. Admissible prefixes are numerically
+// invariant under appending admissible future bars. On the same accepted history,
+// exclude row i equals include row i-1 bit for bit when those rows are ready.
+// Concurrent cancellation and an input error after entry have no prescribed winner.
+//
+// # Complexity and resources
+//
+// Validation, initialization, and the kernel take O(n) total time. Each index
+// enters each deque once and leaves it at most once. A single insertion can remove
+// O(P) candidates; O(1) per bar is amortized, not a worst-case latency bound.
+// Outputs use O(n) storage; deque workspace is O(min(P,n)), with exactly P integer
+// slots per deque only when a ready row is possible. No P+1 allocation is needed.
+//
+// Three float64 channels share a packed 3*n array. Its 24*n byte arithmetic is
+// checked before multiplication; Valid has a separate n-element bool allocation.
+// Allocation checks do not reserve RAM, interrupt runtime allocation, or make
+// runtime out-of-memory termination recoverable. Huge P with small n never causes
+// a period-sized allocation. This owning batch API is not allocation-free.
+//
+// # Ownership, cancellation, and concurrency
+//
+// Inputs are never mutated or retained, and outputs do not alias them. The three
+// numerical channels are non-overlapping views of one owning backing array, each
+// capped at len==n. Append cannot overwrite a neighboring channel, but keeping
+// one numerical channel alive retains the shared allocation. Copy it when an
+// independent lifetime matters. Copying Result by value does not deep-copy slices.
+//
+// Independent calls may share stable read-only input, including overlapping input
+// slices. Concurrent input mutation or writes to a shared result require caller
+// synchronization. There is no persistent processing state or internal lock.
+// Context is polled every 1024 input indices in each scan, additionally every
+// 1024 removals within a long single-deque insertion, after validation, and before
+// publication. These are phase-local iteration bounds, not a universal bound of
+// 1024 operations or a wall-clock guarantee. The final successful check cannot
+// retroactively withdraw a result if cancellation occurs immediately afterward.
+//
+// # Notes and AI-Hints
+//
+// There is no Stream, Snapshot, default period, width output, timestamp handling,
+// order execution, or private risk dependency. Source identity, revision, units,
+// cadence, and Options must accompany saved artifacts outside Result; the result
+// does not carry policy metadata or prove provenance.
+// Never interpret a masked zero as a measurement or use IsNil as a readiness test.
+// Validate a close separately before comparing it with a prior boundary. Upper-Lower
+// can overflow despite a finite Middle; widths, ratios, and ATR denominators need
+// explicit consumer policy. For a pre-event scale, align a ready ATR[i-1], not an
+// unexamined ATR[i]. Recompute affected windows after historical corrections.
 // Production uses no reflection, unsafe operations, arbitrary-precision arithmetic,
-// embedded fixtures, panic calls, recovery calls, or test-only public exports.
+// embedded fixtures, panic/recovery calls, or test-only public exports.
 package donchian

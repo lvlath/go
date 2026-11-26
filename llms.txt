@@ -1,6 +1,6 @@
 # lvlath/go
 
-> lvlath/go is a deterministic, contract-driven, pure-Go library for graph modeling, traversal, shortest paths, spanning trees, network flow, routing, dense matrix computation, combinatorial optimization, grid construction, reproducible fixtures, time-series alignment, and exact affine exponential level smoothing.
+> lvlath/go is a deterministic, contract-driven, pure-Go library for graph modeling, traversal, shortest paths, spanning trees, network flow, routing, dense matrix computation, combinatorial optimization, grid construction, reproducible fixtures, time-series alignment, exact affine exponential level smoothing, and observed Donchian range channels with explicit current-bar policy.
 
 
 Maintained repository: `github.com/lvlath/go`.
@@ -49,6 +49,7 @@ go get github.com/lvlath/go@latest
 - Use `dtw` for deterministic scalar, multivariate, or cost-matrix dynamic time warping.
 - Use `ema.ComputeSMA` / `ComputeFirst` for owning, index-aligned smoothed levels with an explicit period, or `NewSMA` / `NewFirst` and `Stream.Push(ctx,x)` for recoverable streaming. Canonical `Compute` and `New` accept full `ema.Options`.
 - Use `atr.ComputePeriod` / `NewPeriod` for an explicit observation horizon, or `ComputeDefault` / `NewDefault` to explicitly select `DefaultPeriod=14`. Canonical Compute/New retain Options; Options{} is invalid. ATR measures range, not smoothed price levels.
+- Use `donchian.ComputeIncludeCurrent(ctx,high,low,period)` for a finalized-bar overlay or `ComputeExcludeCurrent` for a preceding-range comparison. Canonical `Compute` accepts Options. No default period, Stream, or Snapshot exists.
 
 ## Critical semantic boundaries:
 
@@ -74,6 +75,13 @@ go get github.com/lvlath/go@latest
 - `atr`: Snapshot Version=1, Algorithm="atr/wilder-rn/v1". PreviousClose and exact unsigned SeedSum preserve continuation; canonical decimal is bounded to 660 bytes and Count*MaxBinary64Units. Warmup Current is +0; mature Current is finite nonnegative, including either zero sign. Restore is structural validation, not authentication.
 - `atr`: source identity/revision/offset, candle finality, correction replay, channel composition, and alert policy belong to the caller. Do not implement NATR, positions, stops, or division by ATR in the package. A ready zero is a valid measurement. Push has fixed O(34) work with no internal heap allocation; JSON, logging, and custom contexts are separate.
 
+
+- `donchian`: include window [i-P+1,i], first ready P-1; exclude [i-P,i-1], first ready P. All positive int periods including MaxInt are valid; Options{} is invalid. P counts observations, not calendar days. Include is causal after bar availability, but is not a prior-bar threshold.
+- `donchian`: finite signed H/L with high>=low; latest equal extrema retain input bits. Middle rounds the exact boundary mean to nearest-even without destructive overflow/underflow. Exact zero becomes +0; negative nonzero means may round to -0. A finite Middle does not guarantee a finite width or ratio.
+- `donchian`: context -> options -> shape -> complete nonfinite scan -> first finite ErrBar -> computation/publication. Nil/nonempty matches both ErrShape and ErrNilInput. Even excluded or masked rows are validated; every error returns nil. Do not copy ATR's per-index error order.
+- `donchian`: Result owns aligned Upper/Middle/Lower/Valid; false masks imply +0 payloads, ready zeros remain valid. Empty inputs return non-nil empty channels. IsNil is only pointer presence. Result carries no Options or source provenance.
+- `donchian`: O(n) total work, O(n) output, O(min(P,n)) workspace. Entirely masked histories allocate no rings. Individual inserts can pop O(P); polling is phase-local, not hard real-time. Packed numerical channels are disjoint cap-limited views; keeping one retains the array, and struct copies are shallow. No runtime OOM recovery is promised.
+- `donchian`: callers govern time grids, closed bars, source revisions, close validity, chunk overlap, corrections and execution. Prior ATR normalization uses a ready ATR[i-1] and explicit finite arithmetic; no inferred epsilon or fill. All tests are external; fixed fixtures/oracles are in test_helper_test.go and five complete scenarios are in example_test.go.
 
 ## Canonical project resources:
 
@@ -101,6 +109,7 @@ go get github.com/lvlath/go@latest
 - [dtw](https://pkg.go.dev/github.com/lvlath/go/dtw): Dynamic time warping, windows, slope penalties, memory modes, costs, and optional path recovery.
 - [ema](https://pkg.go.dev/github.com/lvlath/go/ema): Exact affine exponential levels, explicit seed policies, Values/Valid, transactional streaming and bounded continuation. Use the source links below when the selected published version predates the package.
 - [atr](https://pkg.go.dev/github.com/lvlath/go/atr): Exact True Range and Wilder ATR, signed candles, independent readiness, named period facades, and lossless single-owner continuation. Check the selected published version.
+- [donchian](https://pkg.go.dev/github.com/lvlath/go/donchian): Observed rolling ranges, explicit current-bar inclusion, exact midpoint and aligned readiness. Use repository source when the selected published version predates the package.
 
 ## Detailed guides:
 
@@ -116,7 +125,8 @@ go get github.com/lvlath/go@latest
 - [Grid graph guide](https://github.com/lvlath/go/blob/main/docs/GRID_GRAPH.md): Lattice construction, connectivity, obstacles, and routing scenarios.
 - [EMA guide](https://github.com/lvlath/go/blob/main/docs/EMA.md): Correct rounding, seed and error tables, lossless warmup replay, complete programs, complexity, and pitfalls.
 - [ATR guide](https://github.com/lvlath/go/blob/main/docs/ATR.md): Exact range arithmetic, phase/error tables, prior-baseline review, source provenance and replay.
-- [Documentation routes](https://github.com/lvlath/go/blob/main/docs/README.md): Learning routes and EMA's actual standard-library imports.
+- [Donchian guide](https://github.com/lvlath/go/blob/main/docs/DONCHIAN.md): Window/error tables, finite-domain midpoint proof, deque bounds, ownership, complete usage and source-timing pitfalls.
+- [Documentation routes](https://github.com/lvlath/go/blob/main/docs/README.md): Learning routes, package-owned contracts, and Donchian's actual standard-library imports.
 
 ## Numerical representations and alignment:
 
@@ -129,6 +139,9 @@ go get github.com/lvlath/go@latest
 - [ATR API](https://raw.githubusercontent.com/lvlath/go/main/atr/api.go): Canonical Compute/New and the four period/default wrappers.
 - [ATR charter](https://raw.githubusercontent.com/lvlath/go/main/atr/doc.go): Signed domain, exact rounding, masks, ownership, cancellation and snapshot ABI.
 - [ATR types](https://raw.githubusercontent.com/lvlath/go/main/atr/types.go): Options, Result.IsNil, scalar Value, and Snapshot.
+- [Donchian charter](https://raw.githubusercontent.com/lvlath/go/main/donchian/doc.go): Windows, domain, masks, errors, ownership and cancellation.
+- [Donchian API](https://raw.githubusercontent.com/lvlath/go/main/donchian/api.go): Compute and the two explicit include/exclude-current wrappers; no hidden defaults.
+- [Donchian types](https://raw.githubusercontent.com/lvlath/go/main/donchian/types.go): Options, owning Result and pointer-only IsNil.
 
 ## Examples and verification:
 
@@ -142,6 +155,9 @@ go get github.com/lvlath/go@latest
 - [ATR executable scenarios](https://github.com/lvlath/go/blob/main/atr/example_test.go): Frozen vendor-source audit, prior-baseline review, warmup failover, rejected-row retry, signed spreads and ready zeros. Run `go test ./atr -run Example -count=1`.
 - [ATR oracle and fixtures](https://github.com/lvlath/go/blob/main/atr/test_helper_test.go): External tests, independent math/big.Rat arithmetic and offline source parsing; no production test hooks.
 - [ATR CSV replay](https://github.com/lvlath/go/blob/main/examples/atr/main.go): Bounded stdin CSV, typed checkpoint plus source cursor, and suffix bit parity.
+- [Donchian executable scenarios](https://github.com/lvlath/go/blob/main/donchian/example_test.go): Current-range report, prior-20 audit, 10/50 compression, signed spreads and feed quarantine. Run `go test ./donchian -run '^Example' -count=1 -v`.
+- [Donchian oracles and fixture provenance](https://github.com/lvlath/go/blob/main/donchian/test_helper_test.go): Independent direct-window/rational arithmetic and frozen or engineered data; no live requests.
+- [Donchian benchmarks](https://github.com/lvlath/go/blob/main/donchian/bench_test.go): Size/period grid, masked MaxInt, full rings, equal eviction, pop bursts and wrappers; setup outside timing.
 
 ## Optional:
 

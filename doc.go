@@ -3,7 +3,8 @@
 
 // Package main documents the lvlath repository, a deterministic, contract-driven
 // Go toolkit for graph algorithms, dense graph algebra, routing, network optimization,
-// time-series alignment, exact affine levels, exact candle ranges, tours, and reproducible fixtures.
+// time-series alignment, exact affine levels, exact candle ranges, observed rolling
+// Donchian boundaries, tours, and reproducible fixtures.
 // This file is the repository overview, not a re-exporting algorithm facade.
 // Import the owning subpackage, for example github.com/lvlath/go/ema.
 //
@@ -30,6 +31,8 @@
 //     aligned readiness masks, single-owner streams, and bounded warmup snapshots.
 //   - atr       - exact True Range and Wilder ranges over signed finite candles,
 //     independent ATR readiness, atomic streams, and bounded exact seed replay.
+//   - donchian  - observed high/low ranges with include/exclude-current policy,
+//     nearest-even boundary midpoints, shared readiness and bounded monotonic deques.
 //   - dtw       - deterministic Dynamic Time Warping for scalar, cost-matrix,
 //     and multivariate sequence alignment.
 //   - tsp       - matrix-backed TSP/ATSP solvers: exact, approximate, matching,
@@ -43,7 +46,8 @@
 //	matrix owns dense numeric artifacts;
 //	algorithm packages own explicit result contracts;
 //	ema owns signed finite level smoothing, not timestamps or execution policy;
-//	atr owns candle range measurement, not channel widths, NATR, or risk decisions.
+//	atr owns candle range measurement, not channel widths, NATR, or risk decisions;
+//	donchian owns observed range boundaries, not source timing or execution rules.
 //
 // Each package documents implemented API behavior in its own doc.go. Repository
 // theory, diagrams, pitfalls, and operational recipes live in docs/{PACKAGE}.md.
@@ -65,6 +69,9 @@
 // convergence, or numeric validity. Read the package-specific fields after checking
 // error. EMA's Value{} can mean either successful warmup or an error; only the
 // returned error distinguishes those two outcomes.
+// Donchian nil/nonempty mismatches match both ErrShape and ErrNilInput. Its complete
+// finiteness scan precedes any finite ErrBar, including for a wholly masked history.
+// Do not infer another package's validation order from a familiar sentinel name.
 //
 // Policy:
 //   - Validate inputs early and explicitly (shape, bounds, NaN, ±Inf).
@@ -86,6 +93,10 @@
 //     Its oracle uses represented binary64 inputs and rounds each step separately;
 //     compare output bits and masks, not rounded display strings or a blanket epsilon.
 //     Zero outputs are canonical +0, including a period-one input of -0.
+//   - Donchian selects the latest equal extrema, preserving their input bits.
+//     Its exact-zero midpoint is +0; a negative nonzero mean may round to -0.
+//     Invalid rows have +0 payloads and false masks. A finite midpoint does not
+//     imply a representable Upper-Lower width or a safe ratio denominator.
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // Package overview (balanced highlights)
@@ -195,7 +206,38 @@
 //	output. Snapshot serialization and custom context costs are separate. See
 //	docs/ATR.md, six atr/example_test.go scenarios, and examples/atr CSV replay.
 //
-
+// donchian
+//
+//	Compute(ctx, high, low, Options) returns owning Upper, Middle, Lower, and
+//	Valid channels of input length. ComputeIncludeCurrent and ComputeExcludeCurrent
+//	select the mode and delegate unchanged to Compute. No default period exists;
+//	all positive int periods are valid. No Stream or Snapshot is implemented.
+//
+//	Include-current uses [i-P+1,i], first ready at P-1; exclude-current uses
+//	[i-P,i-1], first ready at P. Read Valid before all three payloads. Empty
+//	input produces non-nil empty channels; short history is successful warmup.
+//	A ready zero is a measurement, while IsNil only checks pointer presence.
+//
+//	Observed extrema retain the latest equal value's bits. Middle is the
+//	nearest-even rounding of their exact mean, without false overflow or loss
+//	of representable subnormal results. Finite signed H/L must satisfy high>=low;
+//	all supplied bars are validated, including the last excluded observation.
+//	Every error returns nil. Numeric prefix causality is not partial publication.
+//
+//	Two monotonic rings give O(n) total time and O(min(P,n)) index workspace.
+//	Wholly masked histories allocate no rings; four aligned outputs still use
+//	O(n) memory. The three numerical slices are disjoint, capacity-limited views
+//	of one packed backing array. Keeping one retains the array; copying Result
+//	by value remains shallow. Inputs are read-only and are not retained.
+//
+//	A current-inclusive channel is causal after bar availability, but does not
+//	provide a prior-bar breakout threshold. Exclude removes the current bar
+//	from that threshold, not historical revision risk or execution assumptions.
+//	The caller owns timestamps, closes, units, missing bars, source identity,
+//	derived widths, ATR alignment, and artifact metadata. Independent calls
+//	on stable input are safe; shared result mutation needs synchronization.
+//	See docs/DONCHIAN.md and the five offline donchian/example_test.go scenarios.
+//
 // dtw
 //
 //	Implements Dynamic Time Warping through canonical Result-returning facades:
@@ -252,6 +294,10 @@
 //     internal heap allocation. Snapshot/Restore use bounded O(D*W) work,
 //     D<=660 decimal bytes; Snapshot may allocate the returned seed string.
 //     Context implementations, JSON, logging, and caller I/O are separate costs.
+//   - donchian: O(n) total validation/kernel work and output initialization, O(n)
+//     owning output and O(min(P,n)) index workspace. One insertion can remove
+//     O(P) candidates; per-bar O(1) is amortized. Cancellation polling has
+//     phase-local iteration bounds, not a hard real-time latency guarantee.
 //   - dtw: scalar Align is O(n*m); AlignMatrix adds O(n*m*d) local-cost
 //     construction. Rolling-row distance mode uses O(m) DP memory; path or
 //     accumulated-matrix output requires O(n*m) memory.
@@ -286,6 +332,9 @@
 //     calibrated anomaly threshold, or checkpoint authentication. The recurrence
 //     retains exponential state rather than a rolling P-observation window.
 //     Do not substitute MACD's private rounding law or use warmup zeros as data.
+//   - donchian: no Stream, Snapshot, implicit period, timestamps, close validation,
+//     execution, or width/ratio calculation. Batch errors never publish a prefix.
+//     Caller-side width or division can overflow despite finite channel values.
 //   - dtw: exact DTW is not generally a metric and does not imply triangle
 //     inequality. Path recovery requires full accumulated storage. AlignMatrix
 //     uses squared L2 row costs, so feature scale is caller responsibility.
@@ -306,6 +355,8 @@
 //   - {package}/doc.go - the formal API contracts, options, and edge cases.
 //   - docs/EMA.md - exact affine proofs, error/phase tables, and replay programs.
 //   - docs/ATR.md - exact range/seed proofs, signed candle domain, masks, and replay.
+//   - docs/DONCHIAN.md - observed windows, exact midpoint, error/mask tables,
+//     bounded rings, correction horizons and caller-owned range comparisons.
 //   - docs/README.md - documentation routes and package dependency boundaries.
 //   - docs/{ALGORITHM}.md - compact backgrounders with formulas, diagrams,
 //     and runnable examples for each algorithm.
