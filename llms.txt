@@ -48,6 +48,7 @@ go get github.com/lvlath/go@latest
 - Use `tsp` for exact, approximate, heuristic, and local-search tour construction under documented assumptions.
 - Use `dtw` for deterministic scalar, multivariate, or cost-matrix dynamic time warping.
 - Use `ema.ComputeSMA` / `ComputeFirst` for owning, index-aligned smoothed levels with an explicit period, or `NewSMA` / `NewFirst` and `Stream.Push(ctx,x)` for recoverable streaming. Canonical `Compute` and `New` accept full `ema.Options`.
+- Use `atr.ComputePeriod` / `NewPeriod` for an explicit observation horizon, or `ComputeDefault` / `NewDefault` to explicitly select `DefaultPeriod=14`. Canonical Compute/New retain Options; Options{} is invalid. ATR measures range, not smoothed price levels.
 
 ## Critical semantic boundaries:
 
@@ -66,6 +67,13 @@ go get github.com/lvlath/go@latest
 - `ema`: Snapshot Version=1, Algorithm="ema/affine-rn/v1"; restore only into a constructed stream with matching Options. Warmup SeedSum is exact signed decimal in 2^-1074 units, at most 660 bytes and bounded by Count*MaxBinary64Units. Outside SMA warmup it is "0". Current is finite and zero-canonical.
 - `ema`: one owner per Stream, no internal locks or retained history. Caller owns cadence, duplicates, corrections, source cursor, checkpoint authentication, and lossless numeric serialization. EMA is not ATR, a full Keltner channel, a prediction interval, or a trading/safety decision.
 - `ema`: Push uses fixed O(34) arithmetic and no internal heap allocation. Compute performs two linear passes and owns O(n) output; Snapshot may allocate its decimal seed string. Keep persistence, logging, and custom context costs outside Push claims.
+
+- `atr`: all finite signed H/L/C prices are allowed if low<=close<=high. Nonfinite input is ErrNonFinite; invalid finite geometry is ErrBar. Mixed nil/nonempty columns give ErrNilInput; other unequal lengths give ErrShape. Empty and short histories succeed after validation.
+- `atr`: TR0=RN64(H0-L0), no synthetic previous close. TR stays available during warmup; Valid belongs only to ATR. The first ATR is RN64(exactSum(roundedTR[0:P])/P), followed by RN64(((P-1)*previousATR+TR)/P). P1 is bitwise identity. No EMA coefficient, float alpha, clamp, or warmup TR masking.
+- `atr`: failed Compute returns nil; failed Push returns Value{} and changes no state. Result.IsNil is a pointer check. One Stream has one owner. NewPeriod/NewDefault delegate to New; no extra options, seed modes, or implicit default period exist.
+- `atr`: Snapshot Version=1, Algorithm="atr/wilder-rn/v1". PreviousClose and exact unsigned SeedSum preserve continuation; canonical decimal is bounded to 660 bytes and Count*MaxBinary64Units. Warmup Current is +0; mature Current is finite nonnegative, including either zero sign. Restore is structural validation, not authentication.
+- `atr`: source identity/revision/offset, candle finality, correction replay, channel composition, and alert policy belong to the caller. Do not implement NATR, positions, stops, or division by ATR in the package. A ready zero is a valid measurement. Push has fixed O(34) work with no internal heap allocation; JSON, logging, and custom contexts are separate.
+
 
 ## Canonical project resources:
 
@@ -92,6 +100,7 @@ go get github.com/lvlath/go@latest
 - [tsp](https://pkg.go.dev/github.com/lvlath/go/tsp): Exact, approximate, heuristic, and local-search tours with explicit assumptions and stopping policy.
 - [dtw](https://pkg.go.dev/github.com/lvlath/go/dtw): Dynamic time warping, windows, slope penalties, memory modes, costs, and optional path recovery.
 - [ema](https://pkg.go.dev/github.com/lvlath/go/ema): Exact affine exponential levels, explicit seed policies, Values/Valid, transactional streaming and bounded continuation. Use the source links below when the selected published version predates the package.
+- [atr](https://pkg.go.dev/github.com/lvlath/go/atr): Exact True Range and Wilder ATR, signed candles, independent readiness, named period facades, and lossless single-owner continuation. Check the selected published version.
 
 ## Detailed guides:
 
@@ -106,6 +115,7 @@ go get github.com/lvlath/go@latest
 - [DTW guide](https://github.com/lvlath/go/blob/main/docs/DTW.md): Alignment cost, path recovery, windows, penalties, and memory modes.
 - [Grid graph guide](https://github.com/lvlath/go/blob/main/docs/GRID_GRAPH.md): Lattice construction, connectivity, obstacles, and routing scenarios.
 - [EMA guide](https://github.com/lvlath/go/blob/main/docs/EMA.md): Correct rounding, seed and error tables, lossless warmup replay, complete programs, complexity, and pitfalls.
+- [ATR guide](https://github.com/lvlath/go/blob/main/docs/ATR.md): Exact range arithmetic, phase/error tables, prior-baseline review, source provenance and replay.
 - [Documentation routes](https://github.com/lvlath/go/blob/main/docs/README.md): Learning routes and EMA's actual standard-library imports.
 
 ## Numerical representations and alignment:
@@ -116,6 +126,9 @@ go get github.com/lvlath/go@latest
 - [EMA contract](https://raw.githubusercontent.com/lvlath/go/main/ema/doc.go): Numeric domain, readiness, errors, ownership, cancellation, and snapshot ABI.
 - [EMA API](https://raw.githubusercontent.com/lvlath/go/main/ema/api.go): Compute/New and the four named seed wrappers; no implicit period defaults.
 - [EMA types](https://raw.githubusercontent.com/lvlath/go/main/ema/types.go): Options, Result.IsNil, Value, and Snapshot fields.
+- [ATR API](https://raw.githubusercontent.com/lvlath/go/main/atr/api.go): Canonical Compute/New and the four period/default wrappers.
+- [ATR charter](https://raw.githubusercontent.com/lvlath/go/main/atr/doc.go): Signed domain, exact rounding, masks, ownership, cancellation and snapshot ABI.
+- [ATR types](https://raw.githubusercontent.com/lvlath/go/main/atr/types.go): Options, Result.IsNil, scalar Value, and Snapshot.
 
 ## Examples and verification:
 
@@ -126,6 +139,9 @@ go get github.com/lvlath/go@latest
 - [EMA executable scenarios](https://github.com/lvlath/go/blob/main/ema/example_test.go): Centerline, tick-noise admission, seed failover, prior-baseline incident review, rejected telemetry, and extreme cancellation. Run `go test ./ema -run Example -count=1` from the repository root.
 - [EMA rational oracle](https://github.com/lvlath/go/blob/main/ema/test_helper_test.go): Independent represented-input reference arithmetic and typed comparison helpers; tests use `package ema_test`.
 - [EMA benchmarks](https://github.com/lvlath/go/blob/main/ema/bench_test.go): Batch sizes 1e3/1e5/1e6 and periods 14/64/512; separate steady-state, warmup, and adversarial Push regimes. Report the actual toolchain and machine; no universal timing guarantee.
+- [ATR executable scenarios](https://github.com/lvlath/go/blob/main/atr/example_test.go): Frozen vendor-source audit, prior-baseline review, warmup failover, rejected-row retry, signed spreads and ready zeros. Run `go test ./atr -run Example -count=1`.
+- [ATR oracle and fixtures](https://github.com/lvlath/go/blob/main/atr/test_helper_test.go): External tests, independent math/big.Rat arithmetic and offline source parsing; no production test hooks.
+- [ATR CSV replay](https://github.com/lvlath/go/blob/main/examples/atr/main.go): Bounded stdin CSV, typed checkpoint plus source cursor, and suffix bit parity.
 
 ## Optional:
 

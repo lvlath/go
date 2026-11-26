@@ -31,6 +31,7 @@ If these sources disagree, do not guess. Report the inconsistency and propose th
 - `matrix`: dense algebra, graph adapters, zero-weight policy, APSP, statistics.
 - `tsp`: exact, approximate, and local-search routing under explicit assumptions.
 - `dtw`: time-series alignment, windows, penalties, memory policy, optional path recovery.
+- `atr`: exact signed-candle True Range, Wilder ATR, ATR-only readiness and transactional exact continuation.
 
 ## Repository-wide laws
 
@@ -143,6 +144,20 @@ Never weaken an assertion merely to make a nondeterministic implementation pass.
 - Use `+Inf`, not a large finite constant, for no-edge/no-path distance semantics.
 - Do not export metric-closure matrices as literal graph edges.
 - Keep fixed loop order and allocation/ownership guarantees.
+
+### `atr`
+
+- Keep Compute/New canonical. ComputePeriod/NewPeriod and ComputeDefault/NewDefault only delegate; the named default is 14, but Options{} remains invalid. Do not add smoothing modes or unrelated risk calculations.
+- Preserve TR0=RN64(H0-L0), then the exact prior-close range. Do not invent C[-1], erase warmup TR, or make negative finite prices invalid. Validate nonfinite values before same-bar geometry; ErrBar must precede numerical work.
+- Preserve the exact seed of rounded TR values and one nearest-even rounding per Wilder affine step. Never replace the fixed integer kernel with a rounded alpha, delta update, float numerator, or EMA kernel. Prove any optimization against independent rational arithmetic.
+- Keep Result.IsNil exactly a pointer-presence check. Preserve owning outputs, nil/empty distinctions, error precedence and P1 identity. Valid belongs to ATR only; a ready zero stays valid.
+- Snapshot v1 uses atr/wilder-rn/v1, matching Options, exact unsigned SeedSum in 2^-1074 units, PreviousClose and Count. Maintain grammar, 660-byte and magnitude bounds, phase-specific zero rules, and all-or-nothing Restore/Push. Do not mistake structural validation for provenance.
+- One Stream has one owner. Keep Push free of internal heap allocations in warmup, seed completion, maturity, and rejection. No reflect, unsafe, panic, recover, or production math/big; no test-only exports or lint suppression.
+- All package tests use package atr_test and public atr calls. Keep reusable helpers and independent math/big.Rat oracles in test_helper_test.go. Protect every reachable outcome with meaningful assertions; do not expose private arithmetic solely to raise coverage.
+- Require at least 92% statement coverage overall and for every executable production file. Files with no instrumented statements are N/A. Do not fabricate coverage for physically unreachable allocation-size guards.
+- Keep English per-symbol and private-kernel comments synchronized with actual branches, exact bounds, ownership and complexity. Maintain docs/ATR.md (uppercase), tutorial, FAQ, README, root doc.go, llms.txt, and these agent notes. Preserve unrelated content.
+- Keep the vendor demo fixture frozen and explicitly sourced; distinguish it from engineered stress histories. Examples must stay offline and contain checked Output blocks. Source cursor persistence, authentication, revision replay and decision policy stay in the application.
+
 
 ### shortest paths, MST, flow, TSP, DTW
 

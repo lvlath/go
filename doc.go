@@ -3,7 +3,7 @@
 
 // Package main documents the lvlath repository, a deterministic, contract-driven
 // Go toolkit for graph algorithms, dense graph algebra, routing, network optimization,
-// time-series alignment, exact affine levels, tours, and reproducible fixtures.
+// time-series alignment, exact affine levels, exact candle ranges, tours, and reproducible fixtures.
 // This file is the repository overview, not a re-exporting algorithm facade.
 // Import the owning subpackage, for example github.com/lvlath/go/ema.
 //
@@ -28,6 +28,8 @@
 //   - matrix    - dense row-major graph algebra, APSP, statistics, sanitation.
 //   - ema       - exact affine exponential levels with explicit SMA/First seeds,
 //     aligned readiness masks, single-owner streams, and bounded warmup snapshots.
+//   - atr       - exact True Range and Wilder ranges over signed finite candles,
+//     independent ATR readiness, atomic streams, and bounded exact seed replay.
 //   - dtw       - deterministic Dynamic Time Warping for scalar, cost-matrix,
 //     and multivariate sequence alignment.
 //   - tsp       - matrix-backed TSP/ATSP solvers: exact, approximate, matching,
@@ -40,7 +42,8 @@
 //	core owns topology;
 //	matrix owns dense numeric artifacts;
 //	algorithm packages own explicit result contracts;
-//	ema owns signed finite level smoothing, not timestamps or execution policy.
+//	ema owns signed finite level smoothing, not timestamps or execution policy;
+//	atr owns candle range measurement, not channel widths, NATR, or risk decisions.
 //
 // Each package documents implemented API behavior in its own doc.go. Repository
 // theory, diagrams, pitfalls, and operational recipes live in docs/{PACKAGE}.md.
@@ -166,6 +169,33 @@
 //	centerline, but EMA provides neither ATR nor channel widths or decisions.
 //	See docs/EMA.md and the six executable ema/example_test.go scenarios.
 //
+// atr
+//
+//	Compute(ctx, high, low, close, Options) owns aligned TR, ATR, and Valid arrays.
+//	ComputePeriod/NewPeriod select an explicit observation count. ComputeDefault
+//	and NewDefault explicitly choose DefaultPeriod=14; Options{} remains invalid.
+//	All positive int periods are admitted. Prices may be negative, but must be
+//	finite with low<=close<=high. Invalid geometry is ErrBar, not a clamp policy.
+//
+//	The first TR is RN64(high-low), without an invented previous close. Later TR
+//	includes gaps from the last accepted close. Only ATR has warmup: the exact mean
+//	of P rounded TR values first becomes ready at P-1. Later updates round the exact
+//	Wilder rational ((P-1)*previousATR+TR)/P once. P1 gives bit-identical ATR=TR.
+//	A ready zero is valid, not permission to divide by zero. IsNil checks presence.
+//
+//	One Stream has one owner. Failed Push/Restore changes no state. Snapshot v1,
+//	atr/wilder-rn/v1, retains PreviousClose and an exact unfinished SeedSum in
+//	2^-1074 units. Restore bounds canonical decimal length to 660 and validates
+//	phase/configuration before commit, but cannot authenticate source history.
+//	Save the source revision and next offset atomically with the state. Corrections
+//	require replay from an earlier checkpoint; event identity stays outside ATR.
+//
+//	The kernel imports only standard-library packages. Push uses fixed 34-limb
+//	work and no internal heap allocation; Compute uses two linear passes and O(n)
+//	output. Snapshot serialization and custom context costs are separate. See
+//	docs/ATR.md, six atr/example_test.go scenarios, and examples/atr CSV replay.
+//
+
 // dtw
 //
 //	Implements Dynamic Time Warping through canonical Result-returning facades:
@@ -275,6 +305,7 @@
 //     and practical guidance on determinism and numeric stability.
 //   - {package}/doc.go - the formal API contracts, options, and edge cases.
 //   - docs/EMA.md - exact affine proofs, error/phase tables, and replay programs.
+//   - docs/ATR.md - exact range/seed proofs, signed candle domain, masks, and replay.
 //   - docs/README.md - documentation routes and package dependency boundaries.
 //   - docs/{ALGORITHM}.md - compact backgrounders with formulas, diagrams,
 //     and runnable examples for each algorithm.

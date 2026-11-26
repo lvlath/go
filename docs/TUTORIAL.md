@@ -3,7 +3,7 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/TUTORIAL.md
-  Package reference: ema, matrix, stats, ols, ridge, series, pacf, tfsax, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima, lstm and the wider lvlath package family
+  Package reference: atr, ema, matrix, stats, ols, ridge, series, pacf, tfsax, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima, lstm and the wider lvlath package family
   Contract status: learning guide; package doc.go and source define the public API.
   Scope: graph, matrix, factorization, statistical and temporal workflows, including exact affine EMA, causal MACD, rolling MFI, cumulative OBV, Chaikin A/D, reproducible parallel Monte Carlo, exact-in-distribution GBM, experimental Merton jump diffusion, GJR-GARCH causal volatility with constrained Gaussian QMLE, and fixed-order conditional Gaussian ARIMA with anchored forecasts, and frozen IFGO LSTM recurrent inference, and finite-window Durbin-Levinson PACF estimation, and the TFSAX research-only DTW-versus-SAX retrieval gate.
   lvlath - Repository Tutorial
@@ -68,6 +68,7 @@ This tutorial is the beginning of the learning path. It introduces the objects a
     11u. [PACF Foundations: Partial Dependence and Prediction Variance](#11u-pacf-foundations-partial-dependence-and-prediction-variance)
     11v. [TFSAX Research Gate: Exact DTW Truth, SAX Ranking and Reproducible Evidence](#11v-tfsax-research-gate-exact-dtw-truth-sax-ranking-and-reproducible-evidence)
     11w. [EMA Foundations: Exact Levels, Readiness, and Replay](#11w-ema-foundations-exact-levels-readiness-and-replay)
+    11x. [ATR Foundations: Exact Ranges and Replay](#11x-atr-foundations-exact-ranges-and-replay)
 12. [Algorithm Selection Guide](#12-algorithm-selection-guide)
 13. [Professional Best Practices](#13-professional-best-practices)
 14. [Where To Go Next](#14-where-to-go-next)
@@ -103,6 +104,7 @@ The library covers:
 * `acf` scaled direct sample autocorrelation, explicit common versus pair-adjusted denominators, and detached per-lag pair counts;
 * `pacf` finite-window Durbin-Levinson partial autocorrelation with common-denominator covariances and one-step prediction variances;
 * `ema` exact-binary-input exponential levels with SMA/First seeding, aligned readiness, error-atomic streaming and bounded seed checkpoints;
+* `atr` exact True Range and Wilder range smoothing, finite signed candle geometry, ATR-only readiness and exact source-bound continuation;
 * `rsi` causal Wilder gain/loss smoothing, index-aligned readiness masks, zero-allocation streaming and versioned scalar checkpoints;
 * `macd` SMA-seeded Appel EMAs with signed Line/Signal/Histogram, separate readiness masks, transactional streaming and detached restart state;
 * `mfi` compensated rolling typical-price money flow over OHLCV, transition-counted zero volumes, batch/stream parity and detached replay state;
@@ -150,6 +152,7 @@ frozen LSTM features       *lstm.Result                optional zero-padded Sequ
 sample autocorrelation     *acf.Result                 fixed-window lag coefficients / pair counts
 sample partial ACF         *pacf.Result                lag reflection coefficients / order-wise V_m
 exact affine level         *ema.Result                 original-index Values / Valid; exact seed and rounded recurrence
+exact candle range         *atr.Result                 always-present TR / independently ready ATR / Valid
 Wilder RSI factor          *rsi.Result                 aligned oscillator / Valid mask
 MACD trend difference      *macd.Result                aligned Line / Signal / Histogram masks
 MFI volume-weighted flow   *mfi.Result                 aligned Values / Valid with compensated rolling window
@@ -263,7 +266,8 @@ Read these files as a learning path. `doc.go` files define implemented package c
 | 8t   | [`ARIMA.md`](ARIMA.md)                     | Conditional Gaussian ARIMA, Schur root validation, differenced drift, anchors and innovation-only forecast variance.           |
 | 8u   | [`LSTM.md`](LSTM.md)                       | Frozen PyTorch IFGO weights, tensor masks, streaming equivalence, model identity, arithmetic safety and pinned golden oracle.  |
 | 8v   | [`PACF.md`](PACF.md)                       | Durbin-Levinson PACF, common-n covariance, stable variances, error law and practical applications.                             |
-| 8w   | [`EMA.md`](EMA.md) | Exact affine level smoothing, seed modes, readiness masks, bounded snapshots, cancellation and replay. |
+| 8w   | [`EMA.md`](EMA.md)                         | Exact affine level smoothing, seed modes, readiness masks, bounded snapshots, cancellation and replay.                         |
+| 8x   | [`ATR.md`](ATR.md)                         | Exact first-bar/gap ranges, Wilder seed/steps, named period facades, signed candles and lossless continuation.                 |
 | 9    | [`DTW.md`](DTW.md)                         | `Align`, `AlignCostMatrix`, `AlignMatrix`, `AlignBounded`, exact `Search`, numeric and path artifacts.                         |
 | 9a   | [`DTW_SEARCH.md`](DTW_SEARCH.md)           | Fixed-length exact top-K, certified LB_Keogh, workers, budgets, and partial-result law.                                        |
 | 10   | [`TSP.md`](TSP.md)                         | Matrix-backed tours, exact regimes, Christofides, Blossom matching, local search, timeouts.                                    |
@@ -295,6 +299,7 @@ Working on numeric/time-series workflows:
   SERIES -> PACF.ComputeCentered -> partial lag memory / V_m (fixed-window, NOT causal)
   SERIES -> EMA.ComputeSMA / ComputeFirst -> aligned level and mask
   source admission -> EMA.NewSMA / NewFirst -> Push -> snapshot + source cursor
+  source admission -> ATR.NewPeriod -> Push -> range/readiness -> snapshot + source cursor
   SERIES -> RSI.ComputePeriod / Stream.Push -> causal price-strength factors
   SERIES -> MACD.Compute / Stream.Push -> signed trend-separation features and masks
   SERIES -> MFI.Compute / Stream.Push -> OHLCV volume-weighted transition factor and validity mask
@@ -5432,6 +5437,99 @@ in [EMA.md](EMA.md); operational failure modes are in the
 
 ---
 
+## 11x. ATR Foundations: Exact Ranges and Replay
+
+### Start with the measured quantity
+
+EMA describes a smoothed **level**. ATR describes a smoothed **range**, measured
+in the same units as H/L/C, not a percent, variance, or probability. A signed
+spread can cross zero and still have a valid nonnegative ATR. Negative prices
+are not an error; inconsistent candle geometry is.
+
+At the first bar there is no earlier close: TR is `RN64(H-L)`. Subsequently,
+TR includes the distance from the previous accepted close to the current
+interval. For H=[10,13,12], L=[8,11,10], C=[9,12,11], TR is [2,4,2]. With P=2,
+ATR is [0,3,2.5] and Valid is [false,true,true]. The first zero is unavailable;
+a ready zero on a flat history is a real measurement.
+
+### Select policy without inventing defaults
+
+| Usage                      | Surface                                                          | Meaning                                      |
+|----------------------------|------------------------------------------------------------------|----------------------------------------------|
+| Explicit configuration     | `Compute(ctx,h,l,c,Options{Period:p})`, `New(Options{Period:p})` | No implicit default.                         |
+| Explicit count             | `ComputePeriod(ctx,h,l,c,p)`, `NewPeriod(p)`                     | Same canonical computation.                  |
+| Explicit ATR14 convenience | `ComputeDefault(ctx,h,l,c)`, `NewDefault()`                      | `DefaultPeriod=14`, not a calendar interval. |
+
+All positive int periods are valid, including MaxInt. No period-sized buffer is
+retained. The seed is an exact mean of P already-rounded TR values. Every mature
+step rounds the exact rational `((P-1)*previousATR+TR)/P` once. An EMA coefficient,
+a rounded alpha, and a rolling mean are not interchangeable implementations.
+
+### Close the ingestion loop
+
+```text
+source instrument + revision + next event
+                    |
+              admit closed bar
+                    |
+        Push -> error? ---- yes ---> quarantine; keep state and cursor
+                    |
+                    no
+                    |
+         consume TR / ATR / Valid
+                    |
+       persist Snapshot + next cursor atomically
+```
+
+An index is an accepted observation, not elapsed time. The caller checks order,
+bar finality, missing records, and adjustment conventions. Do not use a rejected
+bar's close as the next reference. A historical correction is not a new event:
+restore a checkpoint before the correction and replay the corrected suffix.
+
+For a pre-event expansion review, compare TR[t] against a **previously ready**
+ATR[t-1]; using ATR[t] lets the shock modify its own baseline. This is a consumer
+choice, not a library option. A valid zero or a nonrepresentable multiplier
+requires a separate policy; no default trade or alert rule is implied.
+
+### Transfer exact continuation, not a displayed mean
+
+At Count=5/P=14, Current is +0 but SeedSum is generally nonzero. Saving only the
+printed ATR loses all five warmup observations. Snapshot v1 preserves that exact
+unsigned integer in 2^-1074 units, PreviousClose, Count, and complete Options.
+Restore accepts only a constructed stream with matching configuration and valid
+phase fields. It is atomic but not concurrent; one stream has one owner.
+
+A valid state is not authenticated history. Save source identity, revision, and
+next offset with the state; protect the storage envelope externally. Keep Count
+as an integer across serialization rather than routing it through an untyped
+binary64 JSON number. Repeated delivery and repeated observed prices are distinct:
+the caller rejects duplicate event identities, not equal price values.
+
+### Run a complete observed-data pipeline
+
+```sh
+go test ./atr -run '^Example' -count=1 -v
+go run ./examples/atr < atr/testdata/ibm_daily_20261026_20261120.csv
+```
+
+The source fixture is a pinned twenty-record vendor demo capture, not a live
+market query or independently verified exchange tape. Its first ATR14 is ready
+on 2026-11-12; examples also include separately labeled synthetic signed and flat
+stress histories. The standalone report checks bounded input, date order, typed
+checkpoint transfer after five bars, and suffix bit parity. Read the source
+provenance and full programs in [ATR.md](ATR.md#7-practical-use).
+
+With W=34 fixed limbs, Push uses O(W) work and fixed storage, with zero internal
+heap allocation. Compute performs one domain-validation scan and one numerical
+scan, owns O(n) output, and returns nil on every error. The Result's IsNil method
+checks pointer presence, not warmup. `atr` imports no EMA, stats, series, or core;
+those packages can participate only in an explicit application composition.
+
+See [ATR troubleshooting](FAQ_%26_TIPS.md#13w-atr-faq-signed-candles-readiness-and-replay)
+for nil inputs, wrong candles, range overflow, checkpoint bounds, and zero ranges.
+
+---
+
 ## 12. Algorithm Selection Guide
 
 ### If the input is a graph
@@ -5482,7 +5580,7 @@ in [EMA.md](EMA.md); operational failure modes are in the
 | Compatible Euclidean symbolic lower bound                     | `sax.Encoder.Mindist` / `sax.MindistValues`                | Lower-bound dissimilarity in the selected transformed space, never a general DTW bound.                       |
 | Direct sample ACF by integer lag                              | `acf.ComputeDefault` / `acf.Compute`                       | One fitted window, explicit denominator convention and pair counts; not causal streaming.                     |
 | Partial autocorrelation and AR-order screening                | `pacf.ComputeCentered` / `pacf.ComputeAtLag`               | Common-n Durbin-Levinson and in-window prediction variances; no automatic model selection.                    |
-| Smooth a finite signed level with explicit seed/readiness | `ema.ComputeSMA` / `ComputeFirst` | Owning aligned Values/Valid; stream continuation through NewSMA/NewFirst. |
+| Smooth a finite signed level with explicit seed/readiness     | `ema.ComputeSMA` / `ComputeFirst`                          | Owning aligned Values/Valid; stream continuation through NewSMA/NewFirst.                                     |
 | Causal Wilder price-strength oscillator                       | `rsi.ComputePeriod` / `rsi.NewPeriod`                      | Aligned Values+Valid or single-owner zero-allocation stream with explicit Reset.                              |
 | SMA-seeded MACD and trend separation                          | `macd.ComputeDefault` / `macd.NewDefault`                  | Three aligned signed outputs; independently gated Line and Signal/Histogram; zero-allocation Push.            |
 | Volume-weighted OHLCV price direction and rolling MFI         | `mfi.ComputeDefault` / `mfi.NewDefault`                    | Finite `[0,100]` feature, one Valid mask, compensated ring and versioned snapshots.                           |
