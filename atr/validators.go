@@ -110,7 +110,7 @@ func validateOptions(opts Options) (uint64, error) {
 //   - No channel is padded, truncated, reordered, or allocated.
 //
 // Inputs:
-//   - high, low, close: caller-owned read-only price slices.
+//   - high, low, closePrices: caller-owned read-only price slices.
 //
 // Returns:
 //   - error: nil for equal-length channels.
@@ -129,15 +129,15 @@ func validateOptions(opts Options) (uint64, error) {
 //
 // AI-Hints:
 //   - Do not treat mixed nil/nonempty inputs as a successful empty batch.
-func validateShape(high, low, close []float64) error {
+func validateShape(high, low, closePrices []float64) error {
 	// Length, not nilness, determines whether an observation is present.
-	nonempty := len(high) != 0 || len(low) != 0 || len(close) != 0
+	nonempty := len(high) != 0 || len(low) != 0 || len(closePrices) != 0
 	// A missing companion channel has its own stable input category.
-	if nonempty && (high == nil || low == nil || close == nil) {
+	if nonempty && (high == nil || low == nil || closePrices == nil) {
 		return ErrNilInput
 	}
 	// Never shorten the longer channels to hide a shape mismatch.
-	if len(high) != len(low) || len(high) != len(close) {
+	if len(high) != len(low) || len(high) != len(closePrices) {
 		return ErrShape
 	}
 	return nil
@@ -180,15 +180,15 @@ func finite(x float64) bool { return !math.IsNaN(x) && !math.IsInf(x, 0) }
 // No range subtraction occurs until the entire current candle passes this boundary.
 //
 // Implementation:
-//   - Stage 1: Reject any non-finite high, low, or close.
-//   - Stage 2: Check low <= high and close in the closed interval [low, high].
+//   - Stage 1: Reject any non-finite high, low, or closePrice.
+//   - Stage 2: Check low <= high and closePrice in the closed interval [low, high].
 //   - Stage 3: Return success without altering any supplied price.
 //
 // Behavior highlights:
 //   - Flat bars, boundary closes, signed zeros, and negative prices are accepted.
 //
 // Inputs:
-//   - high, low, close: represented prices in one common unit.
+//   - high, low, closePrice: represented prices in one common unit.
 //
 // Returns:
 //   - error: nil for a finite valid candle.
@@ -207,13 +207,13 @@ func finite(x float64) bool { return !math.IsNaN(x) && !math.IsInf(x, 0) }
 //
 // AI-Hints:
 //   - NaN comparisons alone cannot enforce geometry; preserve the finite check first.
-func validateBar(high, low, close float64) error {
+func validateBar(high, low, closePrice float64) error {
 	// NaN does not participate in a meaningful interval comparison.
-	if !finite(high) || !finite(low) || !finite(close) {
+	if !finite(high) || !finite(low) || !finite(closePrice) {
 		return ErrNonFinite
 	}
 	// Inclusive boundaries accept flat candles and endpoint closes.
-	if low > high || close < low || close > high {
+	if low > high || closePrice < low || closePrice > high {
 		return ErrBar
 	}
 	return nil
@@ -232,7 +232,7 @@ func validateBar(high, low, close float64) error {
 //
 // Inputs:
 //   - ctx: already validated non-nil context.
-//   - high, low, close: already shape-validated read-only equal-length channels.
+//   - high, low, closePrices: already shape-validated read-only equal-length channels.
 //
 // Returns:
 //   - error: nil only when all observed admission checks succeed.
@@ -251,7 +251,7 @@ func validateBar(high, low, close float64) error {
 //
 // AI-Hints:
 //   - Do not merge this pass with arithmetic and thereby change error precedence.
-func validateHistory(ctx context.Context, high, low, close []float64) error {
+func validateHistory(ctx context.Context, high, low, closePrices []float64) error {
 	// The first invalid index wins; no arithmetic is performed in this pass.
 	for i := range high {
 		// Poll even at index zero, then at fixed bounded intervals.
@@ -261,7 +261,7 @@ func validateHistory(ctx context.Context, high, low, close []float64) error {
 			}
 		}
 		// Shape was checked before these parallel indexed reads.
-		if err := validateBar(high[i], low[i], close[i]); err != nil {
+		if err := validateBar(high[i], low[i], closePrices[i]); err != nil {
 			return err
 		}
 	}

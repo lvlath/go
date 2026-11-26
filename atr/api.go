@@ -95,7 +95,7 @@ func New(opts Options) (*Stream, error) {
 //
 // Inputs:
 //   - ctx: non-nil context; cancellation is polled at least every 1024 bars in each pass.
-//   - high, low, close: equal-length, already ordered finite candle prices; low <= close <= high.
+//   - high, low, closePrices: equal-length, already ordered finite candle prices; low[i] <= closePrices[i] <= high[i].
 //   - opts: an explicit positive Period.
 //
 // Returns:
@@ -121,7 +121,7 @@ func New(opts Options) (*Stream, error) {
 //
 // AI-Hints:
 //   - Never erase warmup TR, switch to alpha-rounded EMA, or normalize prices by Close here.
-func Compute(ctx context.Context, high, low, close []float64, opts Options) (*Result, error) {
+func Compute(ctx context.Context, high, low, closePrices []float64, opts Options) (*Result, error) {
 	// Context always has precedence over options, shape, and price inspection.
 	if err := validateContext(ctx); err != nil {
 		return nil, err
@@ -132,11 +132,11 @@ func Compute(ctx context.Context, high, low, close []float64, opts Options) (*Re
 		return nil, err
 	}
 	// Establish aligned channel lengths before indexing any candle.
-	if err := validateShape(high, low, close); err != nil {
+	if err := validateShape(high, low, closePrices); err != nil {
 		return nil, err
 	}
 	// Admit the whole domain before computing any potentially overflowing TR.
-	if err := validateHistory(ctx, high, low, close); err != nil {
+	if err := validateHistory(ctx, high, low, closePrices); err != nil {
 		return nil, err
 	}
 	// Protect aggregate byte arithmetic; this is not a physical-memory guarantee.
@@ -162,7 +162,7 @@ func Compute(ctx context.Context, high, low, close []float64, opts Options) (*Re
 			}
 		}
 		// A private transition may fail without exposing any partial Result.
-		value, stepErr := stream.advance(high[i], low[i], close[i])
+		value, stepErr := stream.advance(high[i], low[i], closePrices[i])
 		if stepErr != nil {
 			return nil, stepErr
 		}
@@ -177,7 +177,7 @@ func Compute(ctx context.Context, high, low, close []float64, opts Options) (*Re
 }
 
 // ComputePeriod calculates TR and Wilder ATR with an explicit observation count.
-// It is exactly Compute(ctx, high, low, close, Options{Period: period}).
+// It is exactly Compute(ctx, high, low, closePrices, Options{Period: period}).
 //
 // Implementation:
 //   - Stage 1: Form the documented period configuration.
@@ -188,7 +188,7 @@ func Compute(ctx context.Context, high, low, close []float64, opts Options) (*Re
 //   - No alternative kernel, loss of TR, mask changes, or synthetic seed.
 //
 // Inputs:
-//   - ctx: non-nil context; high, low, close: aligned finite signed candle prices.
+//   - ctx: non-nil context; high, low, closePrices: aligned finite signed candle prices.
 //   - period: integer count in [1, MaxInt]; no implicit default.
 //
 // Returns:
@@ -209,9 +209,9 @@ func Compute(ctx context.Context, high, low, close []float64, opts Options) (*Re
 // AI-Hints:
 //   - Use the canonical facade when passing a stored Options value.
 //   - Snapshot Algorithm and Version are unchanged by the convenience entry point.
-func ComputePeriod(ctx context.Context, high, low, close []float64, period int) (*Result, error) {
+func ComputePeriod(ctx context.Context, high, low, closePrices []float64, period int) (*Result, error) {
 	// Configuration adaptation delegates all validation and arithmetic unchanged.
-	return Compute(ctx, high, low, close, Options{Period: period})
+	return Compute(ctx, high, low, closePrices, Options{Period: period})
 }
 
 // ComputeDefault calculates TR and Wilder ATR with the explicitly named fourteen-bar policy.
@@ -226,7 +226,7 @@ func ComputePeriod(ctx context.Context, high, low, close []float64, period int) 
 //   - No alternative kernel, loss of TR, mask changes, or synthetic seed.
 //
 // Inputs:
-//   - ctx: non-nil context; high, low, close: aligned finite signed candle prices.
+//   - ctx: non-nil context; high, low, closePrices: aligned finite signed candle prices.
 //
 // Returns:
 //   - *Result: complete owning TR/ATR/Valid channels, or nil on error.
@@ -246,9 +246,9 @@ func ComputePeriod(ctx context.Context, high, low, close []float64, period int) 
 // AI-Hints:
 //   - Use the canonical facade when passing a stored Options value.
 //   - Snapshot Algorithm and Version are unchanged by the convenience entry point.
-func ComputeDefault(ctx context.Context, high, low, close []float64) (*Result, error) {
+func ComputeDefault(ctx context.Context, high, low, closePrices []float64) (*Result, error) {
 	// Selecting this function is the explicit opt-in to the named default count.
-	return Compute(ctx, high, low, close, Options{Period: DefaultPeriod})
+	return Compute(ctx, high, low, closePrices, Options{Period: DefaultPeriod})
 }
 
 // NewPeriod constructs an empty stream with an explicit observation count.

@@ -68,7 +68,7 @@ type Stream struct {
 //
 // Inputs:
 //   - ctx: a non-nil, non-canceled context.
-//   - high, low, close: finite values with low <= close <= high; negative prices are valid.
+//   - high, low, closePrice: finite values with low <= closePrice <= high; negative prices are valid.
 //
 // Returns:
 //   - A detached Value on success; Value{} on every error.
@@ -91,7 +91,7 @@ type Stream struct {
 //
 // AI-Hints:
 //   - Do not commit PreviousClose, Count, or seed before the final context check.
-func (s *Stream) Push(ctx context.Context, high, low, close float64) (Value, error) {
+func (s *Stream) Push(ctx context.Context, high, low, closePrice float64) (Value, error) {
 	// Cancellation/presence is checked before inspecting even a nil receiver.
 	if err := validateContext(ctx); err != nil {
 		return Value{}, err
@@ -105,13 +105,13 @@ func (s *Stream) Push(ctx context.Context, high, low, close float64) (Value, err
 		return Value{}, ErrStateVersion
 	}
 	// Finite-domain and geometry failures must precede range arithmetic.
-	if err := validateBar(high, low, close); err != nil {
+	if err := validateBar(high, low, closePrice); err != nil {
 		return Value{}, err
 	}
 	// The fixed array is copied by value; no candidate field aliases live seed storage.
 	candidate := *s
 	// Only the private candidate accumulates a seed or advances a previous close.
-	value, err := candidate.advance(high, low, close)
+	value, err := candidate.advance(high, low, closePrice)
 	if err != nil {
 		return Value{}, err
 	}
@@ -137,7 +137,7 @@ func (s *Stream) Push(ctx context.Context, high, low, close float64) (Value, err
 //
 // Inputs:
 //   - s: initialized private state with validated phase invariants.
-//   - high, low, close: a finite geometry-validated candle in the stream unit.
+//   - high, low, closePrice: a finite geometry-validated candle in the stream unit.
 //
 // Returns:
 //   - Value: current TR plus +0/false warmup or a ready ATR; Value{} on failure.
@@ -157,7 +157,7 @@ func (s *Stream) Push(ctx context.Context, high, low, close float64) (Value, err
 // AI-Hints:
 //   - Do not update the live PreviousClose before the caller commits this candidate.
 //   - Readiness is count-based, not inferred from nonzero ATR or nonzero seed.
-func (s *Stream) advance(high, low, close float64) (Value, error) {
+func (s *Stream) advance(high, low, closePrice float64) (Value, error) {
 	// Check before count+1 as well as before the eventual counter increment.
 	if s.count == ^uint64(0) {
 		return Value{}, ErrOverflow
@@ -196,7 +196,7 @@ func (s *Stream) advance(high, low, close float64) (Value, error) {
 	// Numerical success is the only event that consumes an observation count.
 	s.count++
 	// Subsequent gaps start from this accepted candle, never from a rejected input.
-	s.previousClose = close
+	s.previousClose = closePrice
 	return value, nil
 }
 

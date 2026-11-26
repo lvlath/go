@@ -349,9 +349,9 @@ func push(t testing.TB, s *atr.Stream, bar candle) atr.Value {
 //
 // AI-Hints:
 //   - Expected failures must call the facade directly instead.
-func compute(t testing.TB, high, low, close []float64, period int) *atr.Result {
+func compute(t testing.TB, high, low, closePrices []float64, period int) *atr.Result {
 	t.Helper()
-	r, err := atr.Compute(context.Background(), high, low, close, atr.Options{Period: period})
+	r, err := atr.Compute(context.Background(), high, low, closePrices, atr.Options{Period: period})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -517,13 +517,13 @@ func rationalStep(previous, tr float64, period int) float64 {
 //
 // AI-Hints:
 //   - Seed averages already-rounded TR, not unrounded price differences.
-func rationalHistory(high, low, close []float64, period int) *atr.Result {
+func rationalHistory(high, low, closePrices []float64, period int) *atr.Result {
 	n := len(high)
 	r := &atr.Result{TR: make([]float64, n), ATR: make([]float64, n), Valid: make([]bool, n)}
 	seed := new(big.Rat)
 	var previous, current float64
 	for i := range high {
-		tr := rationalTR(candle{high[i], low[i], close[i]}, previous, i > 0)
+		tr := rationalTR(candle{high[i], low[i], closePrices[i]}, previous, i > 0)
 		r.TR[i] = tr
 		switch {
 		case i < period:
@@ -538,7 +538,7 @@ func rationalHistory(high, low, close []float64, period int) *atr.Result {
 			r.Valid[i] = true
 		}
 		r.ATR[i] = current
-		previous = close[i]
+		previous = closePrices[i]
 	}
 	return r
 }
