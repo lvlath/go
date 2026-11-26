@@ -2,86 +2,162 @@
 // Copyright (C) 2025-2026 katalvlaran
 
 // Package ema provides exact affine exponential moving average smoothing for batch
-// and streaming pipelines. It measures a finite numeric history, not trading decisions.
+// and streaming pipelines over finite binary64 observations of either sign.
+// This file defines the numerical, readiness, ownership, and continuation contracts.
 //
 // # What and why
 //
-// Compute provides aligned values and readiness masks. New creates a constant-state
-// Stream. ComputeSMA/ComputeFirst and NewSMA/NewFirst select a named seed policy
-// while keeping the period explicit and delegating to the canonical facades.
-// Snapshot/Restore preserves exact warmup state for deterministic failover.
-// Typical consumers are noise filters and trend baselines such as a Keltner centerline;
-// this package does not implement channel widths, ATR, execution, or market calendars.
+// [Compute] returns index-aligned values and readiness masks; [New] creates a
+// single-owner stream without retaining input history. [ComputeSMA], [ComputeFirst],
+// [NewSMA], and [NewFirst] select a named seed policy while keeping the period
+// explicit. They delegate to the canonical facades without changing arithmetic,
+// validation precedence, ownership, or result shape. Options{} is invalid.
+//
+// Applications include signed sensor baselines, quote-noise filtering, and an EMA
+// centerline for a separately implemented channel. The package does not compute
+// ATR, channel widths, trading signals, statistical confidence, or safety limits.
+// Timestamps, gaps, revisions, instrument identity, and event availability belong
+// to the caller. The mathematical relationship to MACD is not a shared dependency
+// or a promise of compatibility with its private seed and rounding implementation.
+//
+// # Implementation
+//
+// Compute validates context, options, output capacity, and every input value before
+// allocating its result. A second ascending-index pass uses the same state
+// transition as [Stream.Push]. Push validates first, advances a fixed-size private
+// copy, rechecks context, and commits only on success. [Stream.Restore] validates
+// schema, configuration, numeric fields, and phase before replacing any field.
 //
 // # Mathematical contract
 //
-// SeedSMA first publishes RN64(sum(x[0:P])/P) at index P-1, using an exact sum.
-// SeedFirst publishes x[0] at index zero. Subsequent outputs are
-// RN64(((P-1)*previous+2*x)/(P+1)), with exact represented binary64 operands and
-// exact integer coefficients. RN64 means round-to-nearest, ties-to-even.
-// This is a sequentially rounded recurrence, not an unrounded entire-history formula.
-// Period one directly returns the input. Every zero output is canonical positive zero,
-// so the period-one bit identity excludes the sign of an input negative zero.
+// For period P, SeedSMA first publishes RN64(sum(x[0:P])/P) at index P-1. The sum
+// of the represented binary64 inputs is exact; only the division result is rounded.
+// SeedFirst publishes x[0] at index zero, after canonicalizing zero. Later steps are
+//
+//	RN64(((P-1)*previous + 2*x)/(P+1)).
+//
+// RN64 is round-to-nearest, ties-to-even. Integer weights and the numerator are
+// exact; previous is the already rounded output of the preceding accepted step.
+// This is a sequentially rounded recurrence, not an unrounded entire-history
+// expression and not a rolling window that discards observations after P samples.
+// Period one returns the current input directly. Every zero output is +0, so its
+// bit identity excludes the sign of an input -0. Rounded underflow to +0 succeeds.
 //
 // # Numeric domain and bounded arithmetic
 //
-// All finite binary64 observations are admitted, including negative values and
-// subnormals. A 34-word sign-magnitude accumulator measures units of 2^-1074.
-// MaxFloat64 needs 2098 bits in those units; multiplying by any uint64 count needs
-// at most 2162 bits, below the allocated 2176. Affine weights are nonnegative and
-// sum to their denominator, so a valid result lies within its finite operands.
-// No floating-point difference, epsilon clamp, arbitrary-precision allocation,
-// reflection, panic, or recovery is used by the package.
+// Negative observations, both input zero signs, and finite subnormals are valid.
+// NaN and either infinity are rejected, including during warmup and at period one.
+// A 34-word sign-magnitude accumulator stores integer multiples of 2^-1074.
+// MaxFloat64 needs 2098 bits in these units; multiplication by a uint64 count needs
+// at most 2162 bits, within the 2176-bit array. Nonnegative affine weights sum to
+// their denominator, so an admitted result remains within its finite operands.
+// Neither x-previous nor unbounded floating-point numerator products are formed.
+// No epsilon clamp, reflection, panic/recover, or dynamic big-number storage is used.
 //
-// # Options, shape, and errors
+// # Options, shape, and result interpretation
 //
-// Period must satisfy 1 <= Period < MaxInt; no defaults are applied. Unknown Seed
-// values are errors. Compute checks context, options, output capacity, then input
-// values in ascending order before calculation. Empty input returns non-nil empty
-// channels. Short SMA histories return only +0/false entries, not an error.
-// ErrNilContext, ErrInvalidOption, ErrNonFinite, and ErrOverflow classify batch
-// failures. Push additionally reports ErrNilInput and ErrStateVersion for invalid
-// receivers. Restore uses ErrNilInput or ErrStateVersion. Use errors.Is.
-// ErrShape is deliberately absent: this API has no pair of input lengths to compare.
+// Options require 1 <= Period < MaxInt and SeedSMA or SeedFirst. Period counts
+// accepted observations, not elapsed time. No default period or hidden seed change
+// is applied. On success, Result.Values and Result.Valid both have len(x)
+// entries. A false mask always accompanies +0; a true mask may also accompany +0.
+// Empty and nil input slices produce a non-nil Result with non-nil empty channels.
+// A nonempty SMA history shorter than P succeeds with only +0/false entries.
+// [Result.IsNil] tests pointer presence only; it does not test readiness or shape.
+// [Value] is a detached scalar output, not a reference to the live stream.
 //
-// # Cancellation, ownership, and determinism
+// # Errors and validation precedence
+//
+// Compute checks context, options, output capacity, then finite values in ascending
+// index order, then computes. Its errors are ErrNilContext, ctx.Err(),
+// ErrInvalidOption, ErrNonFinite, and ErrOverflow for output-size admission.
+// Every batch failure returns a nil Result; no partial prefix is published.
+// ErrShape and ErrInsufficient are absent: there is one input channel and short
+// histories are successful. Classify sentinel errors with errors.Is.
+//
+// Push checks context, nil/initialized receiver, finite input, and Count capacity,
+// then computes and checks context again. ErrNilInput identifies a nil receiver;
+// ErrStateVersion identifies Stream{}; ErrOverflow rejects Count==MaxUint64.
+// Any failed Push returns Value{} and leaves every state field unchanged. A
+// successful warmup Push also returns Value{}, but with a nil error and an
+// incremented Count. Check error before interpreting Valid.
+//
+// Restore returns ErrNilInput for a nil receiver and ErrStateVersion for an
+// uninitialized receiver or malformed/incompatible snapshot. A mismatch in saved
+// Options is a state error, not ErrInvalidOption. Reset on nil or Stream{} does
+// nothing; Snapshot on either returns Snapshot{}. Reset on an initialized stream
+// keeps its configuration and clears all history, including an unfinished seed.
+//
+// # Cancellation and publication
 //
 // Context is checked before input access, at least every 1024 observations in each
-// batch pass, and immediately before publication. Push has an initial and a final
-// context check. All errors publish no batch result and change no stream field.
-// Concurrent cancellation and a detected input error have no fixed relative order.
-// A successful final check is a publication boundary, not a scheduler barrier.
-// Results are caller-owned and never alias inputs. One Stream has one owner and
-// requires external synchronization for concurrent calls. Independent streams and
-// independent batch computations may run concurrently.
+// batch pass, and immediately before result publication. Push checks before work
+// and immediately before commit. Concurrent cancellation and an input error after
+// entry have no fixed relative order: the first detected failure is returned.
+// Cancellation after the last check cannot revoke an already completed commit.
+// The caller must supply a valid Context implementation; its own Err method is
+// outside this package's allocation and execution guarantees.
 //
-// # Snapshot ABI
+// # Ownership, concurrency, and determinism
 //
-// Version=1, Algorithm="ema/affine-rn/v1". Options must exactly match New.
-// SMA warmup has Current=+0 and exact SeedSum; outside warmup SeedSum="0".
-// Count zero requires an empty mathematical state. SeedSum is canonical signed
-// decimal ASCII, at most 660 bytes, with magnitude <= Count*MaxBinary64Units.
-// Restore performs no heap allocation, including rejection of oversized numbers.
-// Current is finite and zero-canonical. Count=MaxUint64 is restorable, but another
-// Push fails with ErrOverflow. Persist all scalar bits/counts losslessly and
-// authenticate state externally; validation is not a proof of history provenance.
-// Nil/zero Stream Snapshot returns Snapshot{}; Reset is a no-op on either.
+// Compute reads without retaining input and returns separate caller-owned arrays.
+// Copying Result by value copies slice headers, not the backing arrays; synchronize
+// mutations of shared results. One Stream has one owner. Concurrent mutation or
+// Snapshot during mutation requires external synchronization; there are no locks.
+// Independent streams and batch calls are safe with stable caller-owned inputs.
 //
-// # Complexity and limitations
+// Inputs are consumed in ascending index/acceptance order. For the same represented
+// values, explicit options, and arithmetic version, batch, successive successful
+// Push calls, and a valid Snapshot/Restore continuation have identical output bits
+// and masks. This does not promise equivalence to another EMA with a different
+// seed or rounded alpha, nor bitwise commutation with arbitrary input rescaling.
 //
-// Let W=34 limbs and D<=660 decimal bytes. Push takes O(W) time and fixed O(W)
-// candidate storage, with no internal heap allocation in warmup or maturity.
-// Compute has two linear scans, O(n*W) time and O(n+W) storage. Snapshot and Restore
-// take O(D*W) bounded time; Snapshot may allocate its returned decimal string.
-// An allocating custom context can introduce allocations outside the kernel.
-// Runtime out-of-memory termination is not converted into a recoverable error.
-// Inputs are already ordered observations: timestamps, gaps, revisions, source
-// checkpoints, and event availability are the caller's responsibilities.
+// # Snapshot ABI and trust boundary
+//
+// Version is 1 and Algorithm is "ema/affine-rn/v1". Restore requires a target
+// constructed with exactly the saved Options. Count is the number of accepted
+// observations, not a source sequence number. Current must be finite; zero is +0.
+// SeedSum is an exact integer in 2^-1074 units, encoded as canonical signed decimal
+// ASCII matching 0|-?[1-9][0-9]* with no more than 660 bytes, including the sign.
+//
+// SeedSMA with Count<P requires Current=+0 and the bounded exact SeedSum. Its
+// magnitude must not exceed Count*MaxBinary64Units. Count zero therefore requires
+// SeedSum="0". Mature SMA states and every SeedFirst state require SeedSum="0";
+// an unobserved SeedFirst state also requires Current=+0. Count==MaxUint64 is
+// restorable in the mature phase, but the next Push fails with ErrOverflow.
+// Reset explicitly starts a new history; Restore may select an older saved state.
+//
+// Parsing and rejection use fixed-size local storage, including oversized input
+// rejection. Snapshot returns detached scalar/string state; a nonzero seed may
+// allocate its decimal string. Preserve integer counts and binary64 values exactly
+// in external codecs. Authenticate snapshots and atomically pair them with caller
+// feed identity and offsets; structural validity proves neither authenticity nor
+// historical reachability. Restoring an older accepted state is allowed.
+//
+// # Complexity and resource limits
+//
+// Let W=34 limbs, D<=660 decimal bytes, and n=len(x). New and Reset take O(W)
+// initialization/copy work. Push takes O(W) time and fixed O(W) candidate space,
+// with no internal heap allocation in warmup, seed completion, or maturity.
+// For fixed binary64 and machine-word limits, these bounds are O(1) in n and P,
+// not a claim of one machine instruction or constant timing across branches.
+//
+// Compute has two linear scans, O(n*W) time and O(n+W) total storage, including
+// owning outputs. Snapshot takes O(D*W) bounded work and O(D+W) storage in the
+// nonzero-seed case; Restore takes O(D*W) time and O(W) auxiliary space. Output
+// byte-count checks are not a memory budget or an out-of-memory recovery mechanism.
+// Benchmark constructor, Push, and checkpoint I/O separately on the target toolchain.
 //
 // # AI-Hints
 //
-// Do not reuse the MACD private kernel: its published rounding/seed contract differs.
-// Do not replace exact SMA seeding with a running float mean or first-price shortcut.
-// Do not assume translation commutes bitwise with binary64 rounding; use a rational
-// oracle for the transformed represented inputs. Keep snapshot I/O out of Push loops.
+// Do not substitute a running float mean or first-price shortcut for exact SMA.
+// Do not rewrite the kernel as previous+alpha*(x-previous), including through FMA.
+// Do not drop Valid, treat failed Push as accepted warmup, or change the source
+// offset on error. Do not reuse MACD internals or change continuation arithmetic
+// under the same Algorithm. Keep JSON, logging, and Snapshot outside the Push
+// measurement loop. A previous-state anomaly baseline must be read before Push;
+// the returned value already incorporates the current sample. A corrected history
+// requires replay from a checkpoint preceding the first corrected observation.
+//
+// See docs/EMA.md for proofs, phase tables, complete programs, and operational
+// recipes. The six functions in example_test.go are executable scenario references.
 package ema

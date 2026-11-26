@@ -3,9 +3,9 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/TUTORIAL.md
-  Package reference: matrix, stats, ols, ridge, series, pacf, tfsax, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima, lstm and the wider lvlath package family
+  Package reference: ema, matrix, stats, ols, ridge, series, pacf, tfsax, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima, lstm and the wider lvlath package family
   Contract status: learning guide; package doc.go and source define the public API.
-  Scope: graph, matrix, factorization, statistical and temporal workflows, including causal MACD, rolling MFI, cumulative OBV, Chaikin A/D, reproducible parallel Monte Carlo, exact-in-distribution GBM, experimental Merton jump diffusion, GJR-GARCH causal volatility with constrained Gaussian QMLE, and fixed-order conditional Gaussian ARIMA with anchored forecasts, and frozen IFGO LSTM recurrent inference, and finite-window Durbin-Levinson PACF estimation, and the TFSAX research-only DTW-versus-SAX retrieval gate.
+  Scope: graph, matrix, factorization, statistical and temporal workflows, including exact affine EMA, causal MACD, rolling MFI, cumulative OBV, Chaikin A/D, reproducible parallel Monte Carlo, exact-in-distribution GBM, experimental Merton jump diffusion, GJR-GARCH causal volatility with constrained Gaussian QMLE, and fixed-order conditional Gaussian ARIMA with anchored forecasts, and frozen IFGO LSTM recurrent inference, and finite-window Durbin-Levinson PACF estimation, and the TFSAX research-only DTW-versus-SAX retrieval gate.
   lvlath - Repository Tutorial
 
   Purpose:
@@ -25,7 +25,7 @@
 
 > **hard math on an easy level**
 
-Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fitted feature scaling, covariance PCA, causal Wilder RSI, SMA-seeded MACD, rolling Money Flow Index, compensated On-Balance Volume, Chaikin A/D, reproducible parallel Monte Carlo, exact-lognormal GBM paths, stationary asymmetric GJR-GARCH conditional variance, fixed-order conditional Gaussian ARIMA, frozen LSTM forward inference, time-series alignment, and research-only DTW-versus-SAX retrieval audits.
+Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fitted feature scaling, covariance PCA, exact affine EMA, causal Wilder RSI, SMA-seeded MACD, rolling Money Flow Index, compensated On-Balance Volume, Chaikin A/D, reproducible parallel Monte Carlo, exact-lognormal GBM paths, stationary asymmetric GJR-GARCH conditional variance, fixed-order conditional Gaussian ARIMA, frozen LSTM forward inference, time-series alignment, and research-only DTW-versus-SAX retrieval audits.
 
 This tutorial is the beginning of the learning path. It introduces the objects and ideas that most packages share: graphs, matrices, options, result artifacts, error contracts, and deterministic algorithm execution.
 
@@ -67,6 +67,7 @@ This tutorial is the beginning of the learning path. It introduces the objects a
     11t. [LSTM Foundations: Frozen IFGO Inference and Masked Streaming](#11t-lstm-foundations-frozen-ifgo-inference-and-masked-streaming)
     11u. [PACF Foundations: Partial Dependence and Prediction Variance](#11u-pacf-foundations-partial-dependence-and-prediction-variance)
     11v. [TFSAX Research Gate: Exact DTW Truth, SAX Ranking and Reproducible Evidence](#11v-tfsax-research-gate-exact-dtw-truth-sax-ranking-and-reproducible-evidence)
+    11w. [EMA Foundations: Exact Levels, Readiness, and Replay](#11w-ema-foundations-exact-levels-readiness-and-replay)
 12. [Algorithm Selection Guide](#12-algorithm-selection-guide)
 13. [Professional Best Practices](#13-professional-best-practices)
 14. [Where To Go Next](#14-where-to-go-next)
@@ -101,6 +102,7 @@ The library covers:
 * `hmm` typed categorical/diagonal-Gaussian hidden-state models, causal filtering, noncausal smoothing, Viterbi, and independent-sequence MAP-EM;
 * `acf` scaled direct sample autocorrelation, explicit common versus pair-adjusted denominators, and detached per-lag pair counts;
 * `pacf` finite-window Durbin-Levinson partial autocorrelation with common-denominator covariances and one-step prediction variances;
+* `ema` exact-binary-input exponential levels with SMA/First seeding, aligned readiness, error-atomic streaming and bounded seed checkpoints;
 * `rsi` causal Wilder gain/loss smoothing, index-aligned readiness masks, zero-allocation streaming and versioned scalar checkpoints;
 * `macd` SMA-seeded Appel EMAs with signed Line/Signal/Histogram, separate readiness masks, transactional streaming and detached restart state;
 * `mfi` compensated rolling typical-price money flow over OHLCV, transition-counted zero volumes, batch/stream parity and detached replay state;
@@ -147,6 +149,7 @@ ARIMA forecast levels      *arima.ForecastResult       anchored mean / marginal 
 frozen LSTM features       *lstm.Result                optional zero-padded Sequence / detached Hidden+Cell / ModelID
 sample autocorrelation     *acf.Result                 fixed-window lag coefficients / pair counts
 sample partial ACF         *pacf.Result                lag reflection coefficients / order-wise V_m
+exact affine level         *ema.Result                 original-index Values / Valid; exact seed and rounded recurrence
 Wilder RSI factor          *rsi.Result                 aligned oscillator / Valid mask
 MACD trend difference      *macd.Result                aligned Line / Signal / Histogram masks
 MFI volume-weighted flow   *mfi.Result                 aligned Values / Valid with compensated rolling window
@@ -188,6 +191,7 @@ A shortest-path formula is easy. A reliable Go package must also answer:
 * Are inference features normalized with fixed training parameters, or was the model accidentally refitted?
 * Did a live hidden-state decision accidentally use future-conditioned smoothing instead of filtering?
 * Were independent HMM training sequences illegally concatenated into fabricated transitions?
+* Did an EMA pipeline treat an invalid warmup zero as a measured level, or discard exact unfinished seed state during failover?
 * Did a market-data loader drop a legitimate zero-volume candle and change the MFI rolling window?
 * Did an OBV calculation add the very first candle's volume, lose Neumaier correction, or reuse a mismatched feed cursor after Restore?
 * Did an A/D calculation accidentally discard the first contribution, form 2*Close, divide by a flat spread, or authenticate a public Config digest?
@@ -259,6 +263,7 @@ Read these files as a learning path. `doc.go` files define implemented package c
 | 8t   | [`ARIMA.md`](ARIMA.md)                     | Conditional Gaussian ARIMA, Schur root validation, differenced drift, anchors and innovation-only forecast variance.           |
 | 8u   | [`LSTM.md`](LSTM.md)                       | Frozen PyTorch IFGO weights, tensor masks, streaming equivalence, model identity, arithmetic safety and pinned golden oracle.  |
 | 8v   | [`PACF.md`](PACF.md)                       | Durbin-Levinson PACF, common-n covariance, stable variances, error law and practical applications.                             |
+| 8w   | [`EMA.md`](EMA.md) | Exact affine level smoothing, seed modes, readiness masks, bounded snapshots, cancellation and replay. |
 | 9    | [`DTW.md`](DTW.md)                         | `Align`, `AlignCostMatrix`, `AlignMatrix`, `AlignBounded`, exact `Search`, numeric and path artifacts.                         |
 | 9a   | [`DTW_SEARCH.md`](DTW_SEARCH.md)           | Fixed-length exact top-K, certified LB_Keogh, workers, budgets, and partial-result law.                                        |
 | 10   | [`TSP.md`](TSP.md)                         | Matrix-backed tours, exact regimes, Christofides, Blossom matching, local search, timeouts.                                    |
@@ -288,6 +293,8 @@ Working on numeric/time-series workflows:
   SERIES -> STATS -> HMM.FilterStep -> online regime monitoring (no future data)
   SERIES -> ACF.ComputeDefault -> fixed-window lag diagnostics (NOT causal)
   SERIES -> PACF.ComputeCentered -> partial lag memory / V_m (fixed-window, NOT causal)
+  SERIES -> EMA.ComputeSMA / ComputeFirst -> aligned level and mask
+  source admission -> EMA.NewSMA / NewFirst -> Push -> snapshot + source cursor
   SERIES -> RSI.ComputePeriod / Stream.Push -> causal price-strength factors
   SERIES -> MACD.Compute / Stream.Push -> signed trend-separation features and masks
   SERIES -> MFI.Compute / Stream.Push -> OHLCV volume-weighted transition factor and validity mask
@@ -5211,6 +5218,220 @@ The engineering research gates are **zero certified false exclusions**, strict R
 
 ---
 
+## 11w. EMA Foundations: Exact Levels, Readiness, and Replay
+
+An exponential moving average is a stateful level estimate. It answers
+"what is the smoothed level of the observations accepted so far?" It does not
+answer "what is the next observation?", "is this excursion statistically
+significant?", or "should an action be taken?" Those questions require separate
+models or policies. A signed sensor residual is as valid an EMA input as a
+positive quote; both must be finite.
+
+### 11w.1. Choose the seed before consuming readiness
+
+| Choice | Batch | Stream | First valid output |
+|:--|:--|:--|:--|
+| Exact mean of the first P observations | `ema.ComputeSMA(ctx, x, p)` | `ema.NewSMA(p)` | Original index P-1 |
+| First represented observation | `ema.ComputeFirst(ctx, x, p)` | `ema.NewFirst(p)` | Original index 0 |
+| Explicit policy object | `ema.Compute(ctx, x, opts)` | `ema.New(opts)` | Determined by `opts.Seed` |
+
+Every successful batch has `len(Values)==len(Valid)==len(x)`. Incomplete SMA
+positions are `+0/false`; valid numerical zeros are `+0/true`. Empty input is
+successful with a non-nil result and non-nil empty arrays. `Result.IsNil()` checks
+pointer presence only. It is not an empty-history, shape, or readiness predicate.
+
+The period must satisfy `1 <= P < MaxInt`; no default is applied. `Options{}` is
+invalid. P is an observation count, not a duration. A gap in a one-second feed
+requires an explicit upstream decision: silently dropping a missing interval
+changes the recurrence's meaning in physical time.
+
+### 11w.2. One numerical law, not three almost-equal formulas
+
+The first SMA output is the exact sum of the represented first P values divided
+by P and rounded once. Later outputs in both modes use:
+
+![Sequential exact affine EMA](https://latex.codecogs.com/svg.image?E_t%3D%5Coperatorname%7BRN%7D_%7B64%7D%5Cleft%28%5Cfrac%7B%28P-1%29E_%7Bt-1%7D%2B2x_t%7D%7BP%2B1%7D%5Cright%29)
+
+Here `previous` is the **already rounded** preceding output. The kernel does
+not round alpha first, expand the entire history into one rational expression,
+or form `x-previous`. Exact integer units of `2^-1074` preserve cancellation:
+`[1e308,1,-1e308]` seeded at P3 ends at RN64(1/3), while P3 First on equal
+opposite MaxFloat64 values ends at +0 without overflow. P1 directly selects the
+current input; its only bit-identity exception is canonicalization of -0 to +0.
+
+With P3 and `[1,2,3,4]`, SMA yields `[0,0,2,3]` and `[F,F,T,T]`; First yields
+`[1,1.5,2.25,3.125]` with all positions valid. These seed modes represent different
+histories, not different correctness levels. Keep one policy across comparisons.
+
+### 11w.3. Build, smooth, and consume a previous-baseline diagnostic
+
+This complete program uses twenty synthetic completed-interval latency readings.
+It marks a sustained change relative to the preceding baseline, while checking
+every streamed output against the batch facade. The 15 ms / three-interval rule
+is deliberately application-owned and illustrative, not an EMA parameter, a
+statistical confidence claim, or an operational recommendation.
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"math"
+
+	"github.com/lvlath/go/ema"
+)
+
+// main flags a sustained latency change against the previous EMA level.
+// It verifies streaming parity while keeping the diagnostic threshold outside EMA.
+// Implementation:
+//   - Stage 1: prepare completed intervals and an immediately ready reference.
+//   - Stage 2: score each observation against the previously accepted level.
+//   - Stage 3: consume the new level and verify every step against batch output.
+//
+// Behavior highlights:
+//   - The current observation cannot dilute its own previous-baseline residual.
+//
+// Inputs:
+//   - Twenty synthetic interval means in milliseconds, all at the same cadence.
+//
+// Returns:
+//   - A deterministic review marker and a batch/stream parity summary.
+//
+// Errors:
+//   - Any constructor, batch, or Push error stops consumption immediately.
+//
+// Determinism:
+//   - Original interval order and exact bit/mask comparisons determine output.
+//
+// Complexity:
+//   - Time O(n*W), space O(n+W) including the reference result, W=34.
+//
+// Notes:
+//   - The fixture threshold is not a calibrated incident probability or SLA.
+//
+// AI-Hints:
+//   - Do not calculate this residual using the already updated EMA value.
+func main() {
+	const period = 7             // Choose the smoothing horizon in accepted interval observations.
+	const reviewDeltaMS = 15.0   // An illustrative caller policy, not an EMA default.
+	const sustainedIntervals = 3 // Require consecutive excursions in this fixture.
+	latencyMS := []float64{      // Completed intervals; no partial interval is admitted.
+		48, 50, 49, 51, 48, 50, 49, 51, 50, 48,
+		49, 51, 80, 84, 88, 92, 52, 50, 49, 48,
+	}
+	ctx := context.Background()                                // Reuse context rather than allocating per observation.
+	reference, err := ema.ComputeFirst(ctx, latencyMS, period) // Independent batch facade.
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	stream, err := ema.NewFirst(period) // Cold-start behavior is explicit and immediate.
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	previous := ema.Value{} // No historical baseline exists before the first observation.
+	consecutive := 0        // Diagnostic state belongs to the application, not the stream.
+	identical := true       // Compare every accepted output, not merely the final scalar.
+	for i, measurement := range latencyMS {
+		value, err := stream.Push(ctx, measurement) // An error does not advance any local policy state.
+		if err != nil {
+			fmt.Println("error:", err)
+			return
+		}
+		if previous.Valid && measurement-previous.Value > reviewDeltaMS {
+			consecutive++ // Use the cached level from before the current Push.
+		} else {
+			consecutive = 0 // A normal interval breaks the sustained excursion run.
+		}
+		if consecutive == sustainedIntervals { // Emit once at the beginning of a review run.
+			fmt.Printf("review-start-index=%d consecutive=%d\n", i, consecutive)
+		}
+		identical = identical && value.Valid == reference.Valid[i] &&
+			math.Float64bits(value.Value) == math.Float64bits(reference.Values[i])
+		previous = value // Only now publish the baseline for the next observation.
+	}
+	fmt.Printf("observations=%d first-ready=0 batch-parity=%t\n", len(latencyMS), identical)
+	// Output:
+	// review-start-index=14 consecutive=3
+	// observations=20 first-ready=0 batch-parity=true
+}
+```
+
+The residual subtracts the cached **previous** level, even though the current
+Push has already succeeded. This preserves a causal pre-observation reference
+without adding Snapshot or serialization to every iteration. The subtraction is
+safe for this bounded fixture; a general adapter accepting arbitrary opposite
+extremes must validate its own derived arithmetic independently of EMA.
+
+### 11w.4. A checkpoint is more than the visible level
+
+```text
+Caller: validate identity, cadence, availability, ordering, and event uniqueness
+                              |
+                    finite accepted observations
+                              |
+                   EMA state + readiness mask
+                              |
+         authenticated envelope: Snapshot + last accepted source offset
+                              |
+                 New(same local Options) -> Restore
+                              |
+            skip replay duplicates; continue from the next source event
+```
+
+During SMA warmup, `Snapshot.Current` must remain +0. The real unfinished state
+is the exact `SeedSum` decimal integer in `2^-1074` units. Replacing it with a
+floating-point running mean loses information and breaks exact continuation.
+The v1 identifier is `ema/affine-rn/v1`; mature and First states require
+`SeedSum="0"`. The string grammar is canonical ASCII `0|-?[1-9][0-9]*`, at most
+660 bytes, and its magnitude is bounded by Count times the maximum input units.
+
+Construct the target with expected local options before Restore. Schema,
+configuration, numeric, or phase mismatches return `ErrStateVersion` and leave
+the old target untouched. A snapshot can rewind a stream; it does not enforce
+monotonic source offsets or authenticate history. Typed lossless serialization,
+external authentication, and atomic source-offset persistence remain essential.
+See the [complete failover program](EMA.md#7-complete-checkpoint-and-replay-program).
+
+### 11w.5. Error and ownership boundaries are part of the pipeline
+
+Compute validates context, options, output capacity, then all finite inputs
+before the calculation pass. Any error returns a nil result. Push validates
+context before receiver state and input, computes a private candidate, and checks
+context again before commit. A failed Push returns `Value{}, err` without changing
+Count. A successful warmup returns `Value{}, nil` **and does increment Count**.
+
+Nil Push/Restore receivers return `ErrNilInput` after any earlier Push context
+failure; Stream{} is not constructed and returns `ErrStateVersion`. Reset is a
+no-op for nil/zero streams; Snapshot returns Snapshot{} for either. Classify
+errors with `errors.Is`; do not compare diagnostic text. Count exhaustion at
+MaxUint64 is `ErrOverflow`, never unsigned wraparound.
+
+A result owns its arrays, but copying Result by value shares slice backing
+storage. A stream has one owner; concurrent mutation or Snapshot during mutation
+needs external synchronization. Independent streams and batches may run in
+parallel with stable caller inputs.
+
+### 11w.6. Place EMA correctly in the ecosystem
+
+`series` can validate timestamps before EMA; EMA has no series import and does
+not fill gaps. `stats` normalization is optional caller preprocessing, not a
+hidden step. RSI uses Wilder smoothing and MACD has its own published rounding
+and seed behavior; neither is silently delegated to this package. An EMA
+centerline can be paired with an independently ready width series, but EMA alone
+is not a Keltner channel, ATR, forecast, anomaly probability, or safety controller.
+
+With W=34 words, Push uses O(W) time and fixed storage, with no internal heap
+allocation, including seed completion. Compute uses two linear scans and O(n)
+output arrays. Snapshot/JSON/logging and arbitrary Context implementations have
+separate costs. Full proofs, resource boundaries, and verification commands are
+in [EMA.md](EMA.md); operational failure modes are in the
+[EMA FAQ](FAQ_%26_TIPS.md#13v-ema-faq-exact-smoothing-seeds-and-checkpoints).
+
+---
+
 ## 12. Algorithm Selection Guide
 
 ### If the input is a graph
@@ -5261,6 +5482,7 @@ The engineering research gates are **zero certified false exclusions**, strict R
 | Compatible Euclidean symbolic lower bound                     | `sax.Encoder.Mindist` / `sax.MindistValues`                | Lower-bound dissimilarity in the selected transformed space, never a general DTW bound.                       |
 | Direct sample ACF by integer lag                              | `acf.ComputeDefault` / `acf.Compute`                       | One fitted window, explicit denominator convention and pair counts; not causal streaming.                     |
 | Partial autocorrelation and AR-order screening                | `pacf.ComputeCentered` / `pacf.ComputeAtLag`               | Common-n Durbin-Levinson and in-window prediction variances; no automatic model selection.                    |
+| Smooth a finite signed level with explicit seed/readiness | `ema.ComputeSMA` / `ComputeFirst` | Owning aligned Values/Valid; stream continuation through NewSMA/NewFirst. |
 | Causal Wilder price-strength oscillator                       | `rsi.ComputePeriod` / `rsi.NewPeriod`                      | Aligned Values+Valid or single-owner zero-allocation stream with explicit Reset.                              |
 | SMA-seeded MACD and trend separation                          | `macd.ComputeDefault` / `macd.NewDefault`                  | Three aligned signed outputs; independently gated Line and Signal/Histogram; zero-allocation Push.            |
 | Volume-weighted OHLCV price direction and rolling MFI         | `mfi.ComputeDefault` / `mfi.NewDefault`                    | Finite `[0,100]` feature, one Valid mask, compensated ring and versioned snapshots.                           |
@@ -5514,3 +5736,7 @@ Use this tutorial as the entry point, then move into package-specific material:
 
 **lvlath** teaches algorithms through contracts: every graph option, traversal field, numeric policy, and matrix cell should have a reason you can explain.
 
+For exact exponential levels, follow [EMA foundations](#11w-ema-foundations-exact-levels-readiness-and-replay),
+then [EMA.md](EMA.md) for arithmetic and checkpoint details, and
+[EMA FAQ](FAQ_%26_TIPS.md#13v-ema-faq-exact-smoothing-seeds-and-checkpoints) for
+operational mistakes. Run the real scenarios with `go test ./ema -run Example -count=1`.

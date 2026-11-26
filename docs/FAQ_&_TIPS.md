@@ -3,7 +3,7 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/FAQ_&_TIPS.md
-  Package reference: core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima, lstm, pacf, tfsax and the wider lvlath package family
+  Package reference: ema, core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima, lstm, pacf, tfsax and the wider lvlath package family
   lvlath - FAQ & Tips
 
   Purpose:
@@ -29,6 +29,7 @@
     - Causal hidden-state filtering versus future-conditioned smoothing and MAP-EM training.
     - Fixed-window ACF estimator conventions, numeric safeguards, pair-count diagnostics, and noncausal provenance.
     - Reproducible block-bootstrap indices, unbiased random integers, partial row publication, and resource admission.
+    - Exact affine EMA levels, SMA/First readiness, bounded seed continuation and atomic replay.
     - Wilder RSI warmup masks, deterministic batch/stream semantics, state rollback and checkpoint boundaries.
     - MACD SMA-seeded EMAs, signed features, three readiness masks, checkpoint identity and hot-path ownership.
     - MFI fixed-transition OHLCV windows, zero-volume retention, compensated rebasing and checkpoint authentication.
@@ -96,6 +97,7 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
     13s. [LSTM FAQ](#13s-lstm-faq-ifgo-inference-masking-and-streaming-replay)
     13t. [PACF FAQ](#13t-pacf-faq---covariance-recurrence-and-safe-interpretation)
     13u. [TFSAX FAQ](#13u-tfsax-faq---research-only-dtw-retrieval-and-reproducible-evidence)
+    13v. [EMA FAQ](#13v-ema-faq-exact-smoothing-seeds-and-checkpoints)
 14. [Builder and gridgraph tips](#14-builder-and-gridgraph-tips)
 15. [Errors and diagnostics](#15-errors-and-diagnostics)
 16. [Determinism and concurrency](#16-determinism-and-concurrency)
@@ -136,6 +138,7 @@ Start with the question, not the algorithm name.
 | “How do I fit correlated or wide linear factors with explicit L2 shrinkage?”                                  | `ridge`                               | Augmented QR, positive Lambda, unpenalized intercept and frozen physical predictions.                 |
 | “What serial dependence or cycle repeats at a fixed sample-index lag?”                                        | `acf`                                 | One full-window mean, explicit denominator, exact pair counts.                                        |
 | “Which autoregressive lag adds linear dependence after shorter lags are removed?”                             | `pacf.ComputeCentered`                | Durbin-Levinson common-n PACF with order-wise prediction variances.                                   |
+| "How do I smooth a signed finite level and preserve exact warmup through restart?" | `ema.ComputeSMA` / `ComputeFirst` / `NewSMA` / `NewFirst` | Exact affine updates, explicit readiness and bounded Snapshot/Restore. |
 | “How strong are smoothed up/down changes in an ordered positive price feed?”                                  | `rsi.ComputePeriod` / `Stream.Push`   | Wilder oscillator with a validity mask or zero-allocation, single-owner recurrence.                   |
 | “How do fast and slow price trends diverge and how does that separation change?”                              | `macd.ComputeDefault` / `NewDefault`  | SMA-seeded EMA, three signed aligned series, independent readiness masks and replayable Stream.       |
 | “How much rising versus falling typical-price flow occurred over the most recent candles?”                    | `mfi.ComputeDefault` / `NewDefault`   | Volume-weighted last-P-transition MFI, warmup mask, compensated rolling ring and detached checkpoint. |
@@ -177,6 +180,7 @@ compress latent features               -> PCA (train-only covariance basis; no t
 infer hidden temporal regime           -> HMM FilterStep (causal; no future observations)
 detect fixed-window serial dependence  -> ACF ComputeDefault (not causal)
 screen partial AR lag dependence       -> PACF ComputeCentered (common-n, not causal)
+smooth a causal signed level           -> EMA ComputeSMA / ComputeFirst / Stream.Push
 compute causal Wilder price strength   -> RSI ComputePeriod / Stream.Push
 compute signed trend-separation factor -> MACD ComputeDefault / Stream.Push
 compute volume-weighted OHLCV flow     -> MFI ComputeDefault / Stream.Push
@@ -5193,6 +5197,262 @@ See the [complete TFSAX reference](TFSAX.md), [SAX](SAX.md), [DTW search](DTW_SE
 
 ---
 
+## 13v. EMA FAQ: Exact Smoothing, Seeds, and Checkpoints
+
+### Q13v.1. Which EMA entry point should I use?
+
+Use `ema.ComputeSMA(ctx, values, period)` for a first-P-mean seed and
+`ema.ComputeFirst(ctx, values, period)` for immediate first-observation readiness.
+`Compute(ctx, values, Options{Period: p, Seed: seed})` is the canonical batch
+facade. `NewSMA`, `NewFirst`, and `New` select the same policies for
+`Stream.Push(ctx, value)`. All wrappers delegate without different arithmetic.
+There is no `ComputeDefault`, default period, or `WithAlpha` API. `Options{}`
+returns `ErrInvalidOption`; period must satisfy `1 <= Period < MaxInt`.
+
+### Q13v.2. Why are the first output values zero? Is an empty history an error?
+
+In SMA mode, indexes before `Period-1` contain `+0/false`: the seed is not ready.
+A true zero is `+0/true`. Never infer readiness from payload alone. Nil and empty
+inputs succeed with a non-nil Result and non-nil empty Values/Valid arrays after
+context/options checks. A shorter-than-period SMA history also succeeds, fully
+masked. `Result.IsNil()` returns only `r==nil`, including typed-nil interface use.
+There is no `ErrInsufficient` or single-input `ErrShape` in EMA.
+
+### Q13v.3. Does EMA accept negative values, -0, and subnormals?
+
+Yes. All finite binary64 values are admitted; NaN and either infinity are not.
+Negative values can represent signed residuals, power export, or other physical
+levels. Every zero output is canonical +0. P1 directly returns the current input
+without involving the preceding state; -0 becoming +0 is the explicit bit-identity
+exception. Correctly rounded underflow to +0 is successful and can be valid.
+
+### Q13v.4. Why does another EMA implementation disagree by a few bits?
+
+Compare seed, input domain, period, arithmetic order, and zero policy first.
+This package uses an exact sum for SMA seeding and one nearest-even rounding of
+`((P-1)*previous + 2*x)/(P+1)` at each mature step. `previous` is already rounded.
+Rounded alpha, a running seed mean, FMA grouping, or an unrounded entire-history
+formula need not match. A matching period number does not imply matching bits.
+The private MACD kernel is not silently replaced or imported by EMA.
+
+### Q13v.5. Why not simplify the step to previous + alpha*(x-previous)?
+
+Because `x-previous` can overflow for equal opposite MaxFloat64 inputs even
+when the weighted mean is exactly zero at P3. FMA cannot recover the lost finite
+difference. Naively evaluating the affine numerator in float64 can overflow too.
+The implementation combines exact binary64 integer units and exact integer
+weights; convexity then guarantees a finite result between finite operands.
+See the [numerical proof](EMA.md#3-exact-mathematics-and-finite-range-proof).
+
+### Q13v.6. Is SeedSum just debugging data? Why can its string be so long?
+
+No. During incomplete SMA warmup, Current is deliberately +0 and SeedSum is
+necessary for continuation. It stores an exact signed integer in units of the
+smallest subnormal, `2^-1074`; even ordinary physical values need many decimal
+integer digits in those units. `[1e308,1,-1e308]` retains the unit and seeds to
+RN64(1/3), not zero. At seed completion the accumulator is cleared and SeedSum
+becomes `"0"`; First mode always uses `"0"`.
+
+The format is bounded, not an arbitrary-length rational state: 34 uint64 words,
+a 660-byte maximum ASCII string, grammar `0|-?[1-9][0-9]*`, and the magnitude
+bound `abs(sum) <= Count*MaxBinary64Units`. `+1`, `-0`, leading zeros, Unicode
+digits, whitespace, and exponent notation are rejected.
+
+### Q13v.7. Why does Restore reject a snapshot that looks reasonable?
+
+Check `Version==1`, `Algorithm=="ema/affine-rn/v1"`, and exact Options equality
+with a target already constructed by New. Current must be finite and zero-canonical.
+SMA with Count<Period requires Current=+0 and a valid bounded SeedSum. Count zero
+requires an empty mathematical state; mature SMA and every First state require
+SeedSum="0". Snapshot{} from nil/zero Stream is not an initialized empty snapshot.
+
+Every malformed/incompatible state returns `ErrStateVersion` without changing
+the target. Nil Restore returns `ErrNilInput`; Restore on Stream{} returns
+`ErrStateVersion`. Saved Options mismatch is not a constructor option error.
+Do not change the version label to force acceptance of incompatible arithmetic.
+
+### Q13v.8. Does Restore prove that the checkpoint or its source offset is authentic?
+
+No. Checks validate necessary schema, phase, finite-value, and magnitude conditions;
+they do not reconstruct historical observations or prove provenance. The snapshot
+has no instrument ID, time, feed cursor, signature, or authentication tag. Restore
+can also intentionally rewind an existing stream. Authenticate an outer envelope
+and atomically persist the numeric state with its last accepted source event.
+Read the [failover example](../ema/example_test.go) and
+[complete replay program](EMA.md#7-complete-checkpoint-and-replay-program).
+
+### Q13v.9. How should I serialize a snapshot without losing its meaning?
+
+Use a typed Snapshot or typed envelope with exact uint64 fields and finite binary64
+round trips. Keep SeedSum as a string. Decoding through `map[string]any` converts
+JSON numbers to float64 by default and can lose Count bits above 2^53; formatting
+Current with a display precision can change continuation. Go's typed codec is
+covered by `TestSnapshot_TypedJSONPreservesFiniteBits`; other codecs need their
+own bit/count round-trip checks. [JSON decoding semantics](https://pkg.go.dev/encoding/json#Unmarshal).
+
+Apply input-size limits before decoding untrusted messages. Restore rejects an
+already supplied oversized string without a new allocation, but cannot undo a
+huge allocation performed by your transport. A period outside a 32-bit target's
+int range is not made portable by matching the snapshot version.
+
+### Q13v.10. Can I retry an invalid or canceled observation?
+
+Yes. A failed Push returns Value{} and leaves all recurrence fields untouched.
+Do not advance your source offset on failure. This complete law-demo contrasts
+nonfinite rejection, deterministic cancellation, and one successful retry:
+
+```go
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"math"
+
+	"github.com/lvlath/go/ema"
+)
+
+// main retries a rejected observation without consuming a sample twice.
+// Invalid input and cancellation are distinct errors with the same rollback guarantee.
+// Implementation:
+//   - Stage 1: finish a three-observation SMA seed.
+//   - Stage 2: reject NaN and a deterministically canceled attempt.
+//   - Stage 3: retry with an active context and inspect the accepted count.
+//
+// Behavior highlights:
+//   - Snapshot equality checks all public state fields without reflection.
+//
+// Inputs:
+//   - A small finite sensor fixture plus explicitly invalid attempts.
+//
+// Returns:
+//   - Deterministic error classification, rollback, and final readiness output.
+//
+// Errors:
+//   - Unexpected setup/retry errors are printed before dependent state is read.
+//
+// Determinism:
+//   - Cancellation is explicit, not timeout-based.
+//
+// Complexity:
+//   - Fixed O(W) stream work; snapshots are outside the allocation-sensitive loop.
+//
+// Notes:
+//   - Successful warmup is accepted even though it returns Value{}.
+//
+// AI-Hints:
+//   - Never advance a source offset until Push returns a nil error.
+func main() {
+	const period = 3            // The fixture has a complete seed before failures are injected.
+	ctx := context.Background() // Reuse the same valid context for successful calls.
+	stream, err := ema.NewSMA(period)
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	for _, measurement := range []float64{10, 12, 11} { // Seed equals exactly eleven.
+		if _, err := stream.Push(ctx, measurement); err != nil {
+			fmt.Println("error:", err)
+			return
+		}
+	}
+	before := stream.Snapshot()           // Save state before either unsuccessful attempt.
+	_, err = stream.Push(ctx, math.NaN()) // A nonfinite observation is never accepted.
+	fmt.Printf("nan-rejected=%t rollback=%t\n", errors.Is(err, ema.ErrNonFinite), before == stream.Snapshot())
+	canceled, cancel := context.WithCancel(ctx) // Create deterministic cancellation.
+	cancel()                                    // Cancel before Push, without timing assumptions or sleeps.
+	_, err = stream.Push(canceled, 13)          // The same intended observation has not been consumed.
+	fmt.Printf("cancel-rejected=%t rollback=%t\n", errors.Is(err, context.Canceled), before == stream.Snapshot())
+	value, err := stream.Push(ctx, 13) // Retry the observation once with an active context.
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Printf("retry-count=%d value=%.0f ready=%t\n", stream.Snapshot().Count, value.Value, value.Valid)
+	// Output:
+	// nan-rejected=true rollback=true
+	// cancel-rejected=true rollback=true
+	// retry-count=4 value=12 ready=true
+}
+```
+
+Do not generalize the code into silently discarding all errors. A gap or bad
+measurement may require pausing the feed or replaying corrected history. A
+successful warmup Value{} is different: its nil error means Count did advance.
+
+### Q13v.11. Which error wins when several things are wrong?
+
+Compute: context, options, output-size admission, finite-input scan, calculation.
+Push: context, receiver state, finite input, counter capacity, candidate, final
+context check, commit. Thus nil context wins even with a nil Push receiver.
+After entry, an input error racing cancellation has no fixed ordering beyond
+which is detected first. Restore has no context argument. Use `errors.Is`, not
+string matching. [Complete error table](EMA.md#4-readiness-values-and-error-precedence).
+
+### Q13v.12. Can cancellation arrive after the last check?
+
+Yes. Checks are cooperative, not a scheduling barrier. A cancellation observed
+before publication prevents commit; one arriving after the final check cannot
+retroactively revoke success. Compute checks at least every 1024 observations
+in each of its two scans and immediately before publishing. Push checks at entry
+and just before commit. A custom Context must be a valid implementation; its
+own allocations and work are outside EMA's hot-path guarantee.
+
+### Q13v.13. What does Count exhaustion mean? Does Reset change the period?
+
+Count tracks accepted observations, including SMA warmup. Count==MaxUint64 can
+be restored for a mature stream, but another Push returns ErrOverflow rather
+than wrapping. Reset clears count/current/seed and keeps Options; it deliberately
+starts a new history, not a hidden continuation after overflow. To change period
+or seed, construct a new stream and apply the desired history policy explicitly.
+
+### Q13v.14. May I share a Stream or copy a Result?
+
+One Stream has one owner; concurrent Push/Reset/Restore/Snapshot needs an external
+lock. Error atomicity does not mean thread safety. Independent streams/batches
+are safe with stable inputs. Each successful Compute owns its arrays, but an
+ordinary value-copy of Result shares those arrays. Result.IsNil checks pointer
+presence only and says nothing about safe concurrent mutation or readiness.
+
+### Q13v.15. Why did Push allocate in my service benchmark?
+
+Separate library work from your caller's work. Preconstruct the stream and fixture,
+reuse a context, and exclude JSON, Snapshot, logging, formatting, and transport
+from the timer. Internal Push arithmetic is allocation-free, including warmup and
+seed completion. Snapshot may allocate a nonzero seed string; a custom Context.Err
+can allocate independently. Run `TestStream_ZeroAllocsPush` and the mature,
+warmup, and adversarial Push benchmarks on the deployment toolchain.
+
+### Q13v.16. Does period mean duration? Can I correct or repeatedly push an open bar?
+
+Period counts observations. EMA neither resamples time nor recognizes duplicate
+sequence IDs or bar revisions. Repeated Push calls are new observations. Admit
+only caller-selected available observations, handle gaps explicitly, and keep the
+same cadence/units/instrument. Corrected history requires replay from a checkpoint
+before the first changed observation, or Reset and a complete recomputation.
+
+### Q13v.17. Is the returned level a previous-baseline anomaly score or a Keltner channel?
+
+Neither. Push's returned level includes the current sample. To score against a
+prior baseline, retain the previous accepted Value before calling Push and guard
+its readiness. Thresholds, raw safety checks, calibration, and actions stay
+external. A Keltner centerline still needs a separately defined width calculation
+and aligned readiness; this package provides no ATR, bands, or trading decisions.
+See the [latency tutorial](TUTORIAL.md#11w-ema-foundations-exact-levels-readiness-and-replay).
+
+### Q13v.18. How do I check correctness without a loose floating tolerance?
+
+Use the exact represented inputs in an independent rational oracle, rounding each
+seed and affine step separately. Compare bits, masks, errors, and snapshots; test
+all restart split points and rejected-operation rollback. Do not demand impossible
+bitwise commutation after arbitrary scaling/translation: transform the represented
+inputs first and compare to the corresponding oracle. All package tests are in
+`package ema_test`, with helpers in `test_helper_test.go`. Detailed commands and
+allocation boundaries are in [EMA.md](EMA.md#10-executable-verification-and-benchmarks).
+
+---
+
 ## 14. Builder and gridgraph tips
 
 ### Q14.1. When should I use `builder`?
@@ -5373,6 +5633,11 @@ For `stats`, compare the mean against an independent exact binary-input rational
 For `pca`, verify the original covariance with a high-precision oracle on small matrices; check `C*v=lambda*v`, `VᵀV≈I`, heldout invariance under batch splitting, and `||Y-YVVᵀ||_F²≈(n-1)*sum(discarded eigenvalues)`. Compare projectors over complete repeated-eigenvalue subspaces, not individual eigenvectors. Nonconvergence and material PSD violations must remain classified errors.
 
 For `series`, compare integer timestamps, gap counts, index ranges, and Valid masks **exactly**. For return-value or log-transformation oracles, base high-precision reference calculations on the original binary64 input values, not rounded printed decimals; use justified magnitude-aware error budgets rather than making epsilon a validity policy.
+
+For `ema`, tolerance-based agreement is weaker than its exact-rounding contract.
+Use an independent rational oracle built from the represented binary64 inputs,
+round after each recurrence step, canonicalize zero, and compare bits and masks.
+Do not use epsilon to conceal a different seed or arithmetic order.
 
 ### Q17.5. How should tests handle map output?
 
@@ -5779,6 +6044,21 @@ epsilon-clamps prediction variance or switches to lag-adjusted covariance.
 See [`PACF.md`](PACF.md),
 [`pacf/example_test.go`](../pacf/example_test.go) and the runnable
 `go run ./examples/pacf` example for a fully reproducible diagnostic.
+
+---
+
+### Recipe T. Resume an EMA level without counting replayed or rejected events
+
+Choose `ema.NewSMA(period)` or `ema.NewFirst(period)` explicitly. Admit source
+identity, order, cadence, and duplicate policy before Push. On success, advance
+the caller cursor; on failure, retain the previous state and cursor. Persist the
+complete Snapshot and cursor together under the storage owner's integrity and
+atomicity policy. Restore into a stream with matching Options, then resume at
+the first unprocessed source event. `Count` is not an event identifier.
+
+The [complete replay program](EMA.md#7-complete-checkpoint-and-replay-program)
+and [`ExampleStream_Restore_warmupFailover`](../ema/example_test.go) show the
+numerical continuation. They do not implement a distributed storage transaction.
 
 ---
 

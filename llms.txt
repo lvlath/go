@@ -1,6 +1,6 @@
 # lvlath/go
 
-> lvlath/go is a deterministic, contract-driven, pure-Go library for graph modeling, traversal, shortest paths, spanning trees, network flow, routing, dense matrix computation, combinatorial optimization, grid construction, reproducible fixtures, and time-series alignment.
+> lvlath/go is a deterministic, contract-driven, pure-Go library for graph modeling, traversal, shortest paths, spanning trees, network flow, routing, dense matrix computation, combinatorial optimization, grid construction, reproducible fixtures, time-series alignment, and exact affine exponential level smoothing.
 
 
 Maintained repository: `github.com/lvlath/go`.
@@ -25,7 +25,7 @@ go get github.com/lvlath/go@latest
 
 ## Important usage rules:
 
-- Treat package documentation and the current `pkg.go.dev` API as authoritative. Do not invent exported functions, options, fields, or result methods.
+- Read source and package documentation at the selected repository/module version. `pkg.go.dev` may describe a different published version; do not infer new symbols from an older release page. Do not invent exported functions, options, fields, or result methods.
 - Build graph topology with `core.Graph`; use algorithm packages for computation and `matrix` for dense numeric artifacts.
 - Deterministic ordering and tie-breaking are observable API behavior where documented.
 - Public sentinel errors are checked with `errors.Is`; never match error strings.
@@ -47,6 +47,7 @@ go get github.com/lvlath/go@latest
 - Use `matrix` for dense matrices, graph adapters, metric closure, algebra, statistics, and factorization workflows.
 - Use `tsp` for exact, approximate, heuristic, and local-search tour construction under documented assumptions.
 - Use `dtw` for deterministic scalar, multivariate, or cost-matrix dynamic time warping.
+- Use `ema.ComputeSMA` / `ComputeFirst` for owning, index-aligned smoothed levels with an explicit period, or `NewSMA` / `NewFirst` and `Stream.Push(ctx,x)` for recoverable streaming. Canonical `Compute` and `New` accept full `ema.Options`.
 
 ## Critical semantic boundaries:
 
@@ -59,6 +60,12 @@ go get github.com/lvlath/go@latest
 - `matrix`: metric closure stores derived all-pairs distances and must not be exported as if those distances were literal graph edges.
 - `tsp`: exactness, metric assumptions, matching policy, time limits, and incumbent optimality are explicit contracts.
 - `dtw`: alignment cost and recovered alignment path are different result products; path recovery depends on memory policy.
+- `ema`: require `1 <= Period < MaxInt`; there is no default period. Finite negative values and subnormals are valid. Nil/empty slices succeed after context/options checks; a short SMA history has +0/false entries.
+- `ema`: exact represented-input SMA sum/P at index P-1, or first-value seeding at index zero; then one nearest-even rounding of `((P-1)*previous+2*x)/(P+1)`. Do not use rounded alpha, an overflowing difference, a floating numerator, or MACD's private kernel. P1 returns x except that -0 becomes +0.
+- `ema`: check error before Valid. Failed Push returns Value{} and changes no state; successful warmup also returns Value{} but advances Count. Result.IsNil checks pointer presence, not readiness. Result copies share slice backing arrays.
+- `ema`: Snapshot Version=1, Algorithm="ema/affine-rn/v1"; restore only into a constructed stream with matching Options. Warmup SeedSum is exact signed decimal in 2^-1074 units, at most 660 bytes and bounded by Count*MaxBinary64Units. Outside SMA warmup it is "0". Current is finite and zero-canonical.
+- `ema`: one owner per Stream, no internal locks or retained history. Caller owns cadence, duplicates, corrections, source cursor, checkpoint authentication, and lossless numeric serialization. EMA is not ATR, a full Keltner channel, a prediction interval, or a trading/safety decision.
+- `ema`: Push uses fixed O(34) arithmetic and no internal heap allocation. Compute performs two linear passes and owns O(n) output; Snapshot may allocate its decimal seed string. Keep persistence, logging, and custom context costs outside Push claims.
 
 ## Canonical project resources:
 
@@ -84,6 +91,7 @@ go get github.com/lvlath/go@latest
 - [matrix](https://pkg.go.dev/github.com/lvlath/go/matrix): Dense matrices, graph adapters, zero-weight policy, metric closure, algebra, statistics, and factorizations.
 - [tsp](https://pkg.go.dev/github.com/lvlath/go/tsp): Exact, approximate, heuristic, and local-search tours with explicit assumptions and stopping policy.
 - [dtw](https://pkg.go.dev/github.com/lvlath/go/dtw): Dynamic time warping, windows, slope penalties, memory modes, costs, and optional path recovery.
+- [ema](https://pkg.go.dev/github.com/lvlath/go/ema): Exact affine exponential levels, explicit seed policies, Values/Valid, transactional streaming and bounded continuation. Use the source links below when the selected published version predates the package.
 
 ## Detailed guides:
 
@@ -97,12 +105,17 @@ go get github.com/lvlath/go@latest
 - [TSP guide](https://github.com/lvlath/go/blob/main/docs/TSP.md): Exactness, approximation assumptions, local search, limits, and result interpretation.
 - [DTW guide](https://github.com/lvlath/go/blob/main/docs/DTW.md): Alignment cost, path recovery, windows, penalties, and memory modes.
 - [Grid graph guide](https://github.com/lvlath/go/blob/main/docs/GRID_GRAPH.md): Lattice construction, connectivity, obstacles, and routing scenarios.
+- [EMA guide](https://github.com/lvlath/go/blob/main/docs/EMA.md): Correct rounding, seed and error tables, lossless warmup replay, complete programs, complexity, and pitfalls.
+- [Documentation routes](https://github.com/lvlath/go/blob/main/docs/README.md): Learning routes and EMA's actual standard-library imports.
 
 ## Numerical representations and alignment:
 
 - [Matrix contract](https://raw.githubusercontent.com/lvlath/go/main/matrix/doc.go): Dense storage, numeric policies and graph representations.
 - [Matrix API](https://raw.githubusercontent.com/lvlath/go/main/matrix/api.go): Implemented constructors and operations.
 - [DTW](https://raw.githubusercontent.com/lvlath/go/main/dtw/doc.go): Sequence alignment, cost models, windows and memory policies.
+- [EMA contract](https://raw.githubusercontent.com/lvlath/go/main/ema/doc.go): Numeric domain, readiness, errors, ownership, cancellation, and snapshot ABI.
+- [EMA API](https://raw.githubusercontent.com/lvlath/go/main/ema/api.go): Compute/New and the four named seed wrappers; no implicit period defaults.
+- [EMA types](https://raw.githubusercontent.com/lvlath/go/main/ema/types.go): Options, Result.IsNil, Value, and Snapshot fields.
 
 ## Examples and verification:
 
@@ -110,6 +123,9 @@ go get github.com/lvlath/go@latest
 - [Package tests](https://github.com/lvlath/go): Validation, medium, edge, adversarial, deterministic, and concurrency tests live beside each package.
 - [GitHub Actions](https://github.com/lvlath/go/actions): Continuous integration status and workflow history.
 - [Codecov](https://codecov.io/github/lvlath/go): Repository coverage reporting.
+- [EMA executable scenarios](https://github.com/lvlath/go/blob/main/ema/example_test.go): Centerline, tick-noise admission, seed failover, prior-baseline incident review, rejected telemetry, and extreme cancellation. Run `go test ./ema -run Example -count=1` from the repository root.
+- [EMA rational oracle](https://github.com/lvlath/go/blob/main/ema/test_helper_test.go): Independent represented-input reference arithmetic and typed comparison helpers; tests use `package ema_test`.
+- [EMA benchmarks](https://github.com/lvlath/go/blob/main/ema/bench_test.go): Batch sizes 1e3/1e5/1e6 and periods 14/64/512; separate steady-state, warmup, and adversarial Push regimes. Report the actual toolchain and machine; no universal timing guarantee.
 
 ## Optional:
 
