@@ -3,7 +3,7 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/FAQ_&_TIPS.md
-  Package reference: donchian, atr, ema, core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima, lstm, pacf, tfsax and the wider lvlath package family
+  Package reference: vwap, donchian, atr, ema, core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima, lstm, pacf, tfsax and the wider lvlath package family
   lvlath - FAQ & Tips
 
   Purpose:
@@ -31,6 +31,7 @@
     - Reproducible block-bootstrap indices, unbiased random integers, partial row publication, and resource admission.
     - Exact affine EMA levels, SMA/First readiness, bounded seed continuation and atomic replay.
     - Donchian current/prior windows, shared readiness, finite midpoint, derived-width safety and batch correction boundaries.
+    - Exact anchored VWAP, positive-weight readiness, rejected-reset rollback and authenticated source-bound continuation.
     - Wilder RSI warmup masks, deterministic batch/stream semantics, state rollback and checkpoint boundaries.
     - MACD SMA-seeded EMAs, signed features, three readiness masks, checkpoint identity and hot-path ownership.
     - MFI fixed-transition OHLCV windows, zero-volume retention, compensated rebasing and checkpoint authentication.
@@ -72,6 +73,7 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
 8. [DTW FAQ](#8-dtw-faq)
 9. [MST FAQ](#9-mst-faq)
 10. [TSP FAQ](#10-tsp-faq)
+
     10a. [Match FAQ](#10a-match-faq)
 11. [Series FAQ](#11-series-faq)
 12. [Stats FAQ](#12-stats-faq)
@@ -101,6 +103,7 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
     13v. [EMA FAQ](#13v-ema-faq-exact-smoothing-seeds-and-checkpoints)
     13w. [ATR FAQ](#13w-atr-faq-signed-candles-readiness-and-replay)
     13x. [Donchian FAQ](#13x-donchian-faq-windows-errors-and-range-safety)
+    13y. [VWAP FAQ](#13y-vwap-faq-anchors-exact-means-and-continuation)
 14. [Builder and gridgraph tips](#14-builder-and-gridgraph-tips)
 15. [Errors and diagnostics](#15-errors-and-diagnostics)
 16. [Determinism and concurrency](#16-determinism-and-concurrency)
@@ -117,50 +120,51 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
 
 Start with the question, not the algorithm name.
 
-| Question                                                                                                      | Use                                                       | Reason                                                                                                |
-|:--------------------------------------------------------------------------------------------------------------|:----------------------------------------------------------|:------------------------------------------------------------------------------------------------------|
-| “How many hops away is this vertex?”                                                                          | `bfs`                                                     | BFS minimizes edge count.                                                                             |
-| “Which vertices are in the same weak island?”                                                                 | `bfs.Components`                                          | Weak membership ignores direction for component grouping.                                             |
-| “What is a deterministic deep traversal?”                                                                     | `dfs`                                                     | DFS gives post-order and forest-style structure.                                                      |
-| “Does this graph contain a cycle?”                                                                            | `dfs.DetectCycles`                                        | Returns deterministic witness cycles.                                                                 |
-| “What order can I execute a DAG?”                                                                             | `dfs.TopologicalSort`                                     | Topological order is a directed acyclic graph contract.                                               |
-| “What is the cheapest route by weight?”                                                                       | `dijkstra`                                                | Dijkstra minimizes non-negative total cost.                                                           |
-| “What is the cheapest connected backbone?”                                                                    | `mst`                                                     | MST solves minimum connected spanning structure.                                                      |
-| “What is the maximum throughput?”                                                                             | `flow`                                                    | Flow solves capacity-constrained source-to-sink movement.                                             |
-| “How do I turn graph topology into numeric features?”                                                         | `matrix`                                                  | Adjacency, incidence, degree vector, metric closure, algebra.                                         |
-| “How do I inspect singular directions of a rectangular dataset?”                                              | `matrix.SVDDefault`                                       | Direct economy Jacobi; numerical rank and full singular modes without normal equations.               |
-| “How do I model a grid map?”                                                                                  | `gridgraph`                                               | Generates lattice topology instead of manual wiring.                                                  |
-| “How do I build repeatable fixtures?”                                                                         | `builder`                                                 | Deterministic graph/data generation.                                                                  |
-| “How do I compress a fixed-size scalar time-series window?”                                                   | `paa`                                                     | Exact fractional PAA averages with rational boundaries and no dropped tail.                           |
-| “How do I encode a fixed-length symbolic signature?”                                                          | `sax`                                                     | Fractional PAA + right-bin quantization, compatible Euclidean MINDIST.                                |
-| “How do I audit exact DTW recall versus a SAX heuristic without claiming a TFSAX encoder?”                    | `tfsax` research gate                                     | Separate exact full scan, TopM SAX ranking and strict-ID family metrics; not production TFSAX.        |
-| “How do I align two time series?”                                                                             | `dtw`                                                     | Dynamic Time Warping handles local timing drift.                                                      |
-| “How do I compute robust moments or merge workers?”                                                           | `stats`                                                   | Welford/Chan moments, exact mean sum, scaled M2.                                                      |
-| “How do I normalize heldout features without refit?”                                                          | `stats`                                                   | Immutable fitted model over matrix columns.                                                           |
-| “How do I estimate linear factor coefficients and reuse them?”                                                | `ols`                                                     | Full-rank QR, original-unit beta/intercept, immutable prediction.                                     |
-| “How do I fit correlated or wide linear factors with explicit L2 shrinkage?”                                  | `ridge`                                                   | Augmented QR, positive Lambda, unpenalized intercept and frozen physical predictions.                 |
-| “What serial dependence or cycle repeats at a fixed sample-index lag?”                                        | `acf`                                                     | One full-window mean, explicit denominator, exact pair counts.                                        |
-| “Which autoregressive lag adds linear dependence after shorter lags are removed?”                             | `pacf.ComputeCentered`                                    | Durbin-Levinson common-n PACF with order-wise prediction variances.                                   |
-| "How do I smooth a signed finite level and preserve exact warmup through restart?"                            | `ema.ComputeSMA` / `ComputeFirst` / `NewSMA` / `NewFirst` | Exact affine updates, explicit readiness and bounded Snapshot/Restore.                                |
-| "How do I measure gap-aware ranges for signed candle prices?"                                                 | `atr.ComputePeriod` / `NewPeriod`                         | Exact TR, Wilder ATR, independent readiness and exact seed continuation.                              |
-| "How do I compare a close against preceding observed highs and lows?"                                         | `donchian.ComputeExcludeCurrent`                          | Explicit prior window; owning Upper/Middle/Lower and one mask; no execution assumptions.              |
-| “How strong are smoothed up/down changes in an ordered positive price feed?”                                  | `rsi.ComputePeriod` / `Stream.Push`                       | Wilder oscillator with a validity mask or zero-allocation, single-owner recurrence.                   |
-| “How do fast and slow price trends diverge and how does that separation change?”                              | `macd.ComputeDefault` / `NewDefault`                      | SMA-seeded EMA, three signed aligned series, independent readiness masks and replayable Stream.       |
-| “How much rising versus falling typical-price flow occurred over the most recent candles?”                    | `mfi.ComputeDefault` / `NewDefault`                       | Volume-weighted last-P-transition MFI, warmup mask, compensated rolling ring and detached checkpoint. |
-| “What signed volume has accumulated since a chosen session origin?”                                           | `obv.ComputeCandles` / `New`                              | Closing-price direction, seed zero, Neumaier compensation, transactional replayable stream.           |
-| “How does close location inside each candle weight cumulative volume?”                                        | `ad.ComputeCandles` / `New`                               | Chaikin multiplier times current base volume, first-bar inclusion, Neumaier and snapshot replay.      |
-| “How do I build deterministic Monte Carlo, GBM or sensor-noise paths?”                                        | `rng.Factory.Stream`                                      | Pinned PCG-DXSM, logical path IDs and cached normals; not a cryptographic PRNG.                       |
-| “How do I execute many independent stochastic paths with identical full-run statistics across worker counts?” | `montecarlo.Run` / `EstimateParallel`                     | Per-path RNG, ordered `stats.Moments`, bounded 2W dispatch and strict error/prefix law.               |
-| “How do I sample positive GBM prices at irregular explicit times?”                                            | `gbm.Simulate` / `SimulateSeeded`                         | Exact-in-distribution lognormal endpoints, no implicit annualization, complete or valid prefix.       |
-| “How do I simulate compensated Poisson jump risk over GBM?”                                                   | `jumpdiffusion.Simulate`                                  | Discrete Poisson counts and aggregated normal log jumps; experimental scenario model.                 |
-| “How does a negative return shock change the next conditional variance?”                                      | `gjrgarch`                                                | Immutable asymmetric variance, causal `Step`/`Filter`, first-shock forecast and constrained QMLE.     |
-| “How do I estimate and forecast fixed-order nonseasonal ARIMA levels?”                                        | `arima.Fit` / `Model.Forecast`                            | Conditional Gaussian estimand, strict Schur roots, anchored levels and marginal innovation variance.  |
-| “How do I extract recurrent features from a frozen network over variable-length sessions?”                    | `lstm.Import` / `Model.InferSequence`                     | Immutable IFGO weights, length-masked `[B,T,D]`, zero padding, detached `Final`.                      |
-| “How do I build dependent-data bootstrap index ensembles?”                                                    | `bootstrap.SampleIndices`                                 | Moving/Circular/Stationary blocks, replay ID and only complete rows.                                  |
-| “How do I infer a hidden operating regime from time-ordered observations?”                                    | `hmm`                                                     | Typed causal filtering, smoothing, Viterbi, and independent-sequence EM.                              |
-| “How do I reduce multivariate dimensions without a response variable?”                                        | `pca`                                                     | Validated covariance spectrum and a frozen loadings model for holdout inference.                      |
-| “How do I pair an ordered even subset at minimum total cost?”                                                 | `match.Perfect`                                           | Exact weighted Blossom, detached original-index pairs; explicit Greedy is weaker.                     |
-| “How do I visit all cities in a route?”                                                                       | `tsp`                                                     | Tour construction/improvement/exact-small-instance routing.                                           |
+| Question                                                                                                      | Use                                                       | Reason                                                                                                        |
+|:--------------------------------------------------------------------------------------------------------------|:----------------------------------------------------------|:--------------------------------------------------------------------------------------------------------------|
+| “How many hops away is this vertex?”                                                                          | `bfs`                                                     | BFS minimizes edge count.                                                                                     |
+| “Which vertices are in the same weak island?”                                                                 | `bfs.Components`                                          | Weak membership ignores direction for component grouping.                                                     |
+| “What is a deterministic deep traversal?”                                                                     | `dfs`                                                     | DFS gives post-order and forest-style structure.                                                              |
+| “Does this graph contain a cycle?”                                                                            | `dfs.DetectCycles`                                        | Returns deterministic witness cycles.                                                                         |
+| “What order can I execute a DAG?”                                                                             | `dfs.TopologicalSort`                                     | Topological order is a directed acyclic graph contract.                                                       |
+| “What is the cheapest route by weight?”                                                                       | `dijkstra`                                                | Dijkstra minimizes non-negative total cost.                                                                   |
+| “What is the cheapest connected backbone?”                                                                    | `mst`                                                     | MST solves minimum connected spanning structure.                                                              |
+| “What is the maximum throughput?”                                                                             | `flow`                                                    | Flow solves capacity-constrained source-to-sink movement.                                                     |
+| “How do I turn graph topology into numeric features?”                                                         | `matrix`                                                  | Adjacency, incidence, degree vector, metric closure, algebra.                                                 |
+| “How do I inspect singular directions of a rectangular dataset?”                                              | `matrix.SVDDefault`                                       | Direct economy Jacobi; numerical rank and full singular modes without normal equations.                       |
+| “How do I model a grid map?”                                                                                  | `gridgraph`                                               | Generates lattice topology instead of manual wiring.                                                          |
+| “How do I build repeatable fixtures?”                                                                         | `builder`                                                 | Deterministic graph/data generation.                                                                          |
+| “How do I compress a fixed-size scalar time-series window?”                                                   | `paa`                                                     | Exact fractional PAA averages with rational boundaries and no dropped tail.                                   |
+| “How do I encode a fixed-length symbolic signature?”                                                          | `sax`                                                     | Fractional PAA + right-bin quantization, compatible Euclidean MINDIST.                                        |
+| “How do I audit exact DTW recall versus a SAX heuristic without claiming a TFSAX encoder?”                    | `tfsax` research gate                                     | Separate exact full scan, TopM SAX ranking and strict-ID family metrics; not production TFSAX.                |
+| “How do I align two time series?”                                                                             | `dtw`                                                     | Dynamic Time Warping handles local timing drift.                                                              |
+| “How do I compute robust moments or merge workers?”                                                           | `stats`                                                   | Welford/Chan moments, exact mean sum, scaled M2.                                                              |
+| “How do I normalize heldout features without refit?”                                                          | `stats`                                                   | Immutable fitted model over matrix columns.                                                                   |
+| “How do I estimate linear factor coefficients and reuse them?”                                                | `ols`                                                     | Full-rank QR, original-unit beta/intercept, immutable prediction.                                             |
+| “How do I fit correlated or wide linear factors with explicit L2 shrinkage?”                                  | `ridge`                                                   | Augmented QR, positive Lambda, unpenalized intercept and frozen physical predictions.                         |
+| “What serial dependence or cycle repeats at a fixed sample-index lag?”                                        | `acf`                                                     | One full-window mean, explicit denominator, exact pair counts.                                                |
+| “Which autoregressive lag adds linear dependence after shorter lags are removed?”                             | `pacf.ComputeCentered`                                    | Durbin-Levinson common-n PACF with order-wise prediction variances.                                           |
+| "How do I smooth a signed finite level and preserve exact warmup through restart?"                            | `ema.ComputeSMA` / `ComputeFirst` / `NewSMA` / `NewFirst` | Exact affine updates, explicit readiness and bounded Snapshot/Restore.                                        |
+| "How do I measure gap-aware ranges for signed candle prices?"                                                 | `atr.ComputePeriod` / `NewPeriod`                         | Exact TR, Wilder ATR, independent readiness and exact seed continuation.                                      |
+| "How do I compare a close against preceding observed highs and lows?"                                         | `donchian.ComputeExcludeCurrent`                          | Explicit prior window; owning Upper/Middle/Lower and one mask; no execution assumptions.                      |
+| "How do I calculate an exact price-volume mean from explicit session/news origins?"                           | `vwap.ComputeDefault` / `NewDefault`                      | Exact binary-input weights/products, positive-weight readiness, transactional reset and bounded continuation. |
+| “How strong are smoothed up/down changes in an ordered positive price feed?”                                  | `rsi.ComputePeriod` / `Stream.Push`                       | Wilder oscillator with a validity mask or zero-allocation, single-owner recurrence.                           |
+| “How do fast and slow price trends diverge and how does that separation change?”                              | `macd.ComputeDefault` / `NewDefault`                      | SMA-seeded EMA, three signed aligned series, independent readiness masks and replayable Stream.               |
+| “How much rising versus falling typical-price flow occurred over the most recent candles?”                    | `mfi.ComputeDefault` / `NewDefault`                       | Volume-weighted last-P-transition MFI, warmup mask, compensated rolling ring and detached checkpoint.         |
+| “What signed volume has accumulated since a chosen session origin?”                                           | `obv.ComputeCandles` / `New`                              | Closing-price direction, seed zero, Neumaier compensation, transactional replayable stream.                   |
+| “How does close location inside each candle weight cumulative volume?”                                        | `ad.ComputeCandles` / `New`                               | Chaikin multiplier times current base volume, first-bar inclusion, Neumaier and snapshot replay.              |
+| “How do I build deterministic Monte Carlo, GBM or sensor-noise paths?”                                        | `rng.Factory.Stream`                                      | Pinned PCG-DXSM, logical path IDs and cached normals; not a cryptographic PRNG.                               |
+| “How do I execute many independent stochastic paths with identical full-run statistics across worker counts?” | `montecarlo.Run` / `EstimateParallel`                     | Per-path RNG, ordered `stats.Moments`, bounded 2W dispatch and strict error/prefix law.                       |
+| “How do I sample positive GBM prices at irregular explicit times?”                                            | `gbm.Simulate` / `SimulateSeeded`                         | Exact-in-distribution lognormal endpoints, no implicit annualization, complete or valid prefix.               |
+| “How do I simulate compensated Poisson jump risk over GBM?”                                                   | `jumpdiffusion.Simulate`                                  | Discrete Poisson counts and aggregated normal log jumps; experimental scenario model.                         |
+| “How does a negative return shock change the next conditional variance?”                                      | `gjrgarch`                                                | Immutable asymmetric variance, causal `Step`/`Filter`, first-shock forecast and constrained QMLE.             |
+| “How do I estimate and forecast fixed-order nonseasonal ARIMA levels?”                                        | `arima.Fit` / `Model.Forecast`                            | Conditional Gaussian estimand, strict Schur roots, anchored levels and marginal innovation variance.          |
+| “How do I extract recurrent features from a frozen network over variable-length sessions?”                    | `lstm.Import` / `Model.InferSequence`                     | Immutable IFGO weights, length-masked `[B,T,D]`, zero padding, detached `Final`.                              |
+| “How do I build dependent-data bootstrap index ensembles?”                                                    | `bootstrap.SampleIndices`                                 | Moving/Circular/Stationary blocks, replay ID and only complete rows.                                          |
+| “How do I infer a hidden operating regime from time-ordered observations?”                                    | `hmm`                                                     | Typed causal filtering, smoothing, Viterbi, and independent-sequence EM.                                      |
+| “How do I reduce multivariate dimensions without a response variable?”                                        | `pca`                                                     | Validated covariance spectrum and a frozen loadings model for holdout inference.                              |
+| “How do I pair an ordered even subset at minimum total cost?”                                                 | `match.Perfect`                                           | Exact weighted Blossom, detached original-index pairs; explicit Greedy is weaker.                             |
+| “How do I visit all cities in a route?”                                                                       | `tsp`                                                     | Tour construction/improvement/exact-small-instance routing.                                                   |
 
 ### Q1.2. How do I avoid using the wrong algorithm?
 
@@ -188,6 +192,7 @@ screen partial AR lag dependence       -> PACF ComputeCentered (common-n, not ca
 smooth a causal signed level           -> EMA ComputeSMA / ComputeFirst / Stream.Push
 measure gap-aware candle ranges        -> ATR ComputePeriod / Stream.Push (not EMA or NATR)
 select an observed prior-bar range     -> DONCHIAN ComputeExcludeCurrent (not a smoothed range)
+compute explicit-origin weighted price -> VWAP ComputeDefault / Stream.Push (not rolling, HLC3 or a calendar)
 compute causal Wilder price strength   -> RSI ComputePeriod / Stream.Push
 compute signed trend-separation factor -> MACD ComputeDefault / Stream.Push
 compute volume-weighted OHLCV flow     -> MFI ComputeDefault / Stream.Push
@@ -5717,6 +5722,266 @@ and deliberately corrupted data are separately labeled. Tests use donchian_test,
 public calls, and bitwise comparisons rather than blanket tolerances. Report
 coverage for each executable file, and distinguish local package checks from
 full CI. See [DONCHIAN.md](DONCHIAN.md#testing-and-verification) for commands.
+
+---
+
+## 13y. VWAP FAQ: Anchors, Exact Means, and Continuation
+
+### Q13y.1. Which facade should I use, and what do default options select?
+
+Use `Compute(ctx,price,volume,reset,opts)` for a complete history and `New(opts)`
+for a single-owner Stream. `ComputeDefault` and `NewDefault` merely supply
+`Options{}`. Options has no fields or invalid value; there is no option-error
+sentinel, implicit anchor, period, calendar, price-proxy mode, or tolerance.
+The default wrappers preserve all output channels, errors, context polls, and
+ownership of their canonical calls.
+
+### Q13y.2. Why does the first record fail with ErrAnchor?
+
+Every nonempty batch requires reset[0]=true. After New/NewDefault or Reset, the
+first successful Push also requires reset=true. The package will not infer a
+session origin. A failed first call does not start the stream or consume a
+pending application anchor. The shape check precedes batch reset[0] access;
+anchor validation precedes first-row finite/domain checks.
+
+### Q13y.3. Why can Count be positive while Valid is false?
+
+Count includes all accepted records of the current segment, including zero
+volume. Readiness needs **positive cumulative volume**. Until then payload is
++0 with Valid=false. Once ready, a non-reset zero-volume row retains the preceding
+VWAP bits and Valid=true, but still increments Count. A successful zero-volume
+reset starts a new masked segment, not a carried ready mean. An exact weighted
+cancellation can instead yield +0/true; numerical zero alone says nothing about
+readiness. `Result.IsNil()` tests only whether its pointer is nil.
+
+### Q13y.4. Are empty input, negative prices, and negative zero permitted?
+
+Three empty channels, including nil/empty combinations, succeed after context
+checks with a non-nil Result and non-nil empty Values/Valid. A nonempty channel
+mixed with a nil one is a shape failure. Any finite price sign is legal, including
+zero. Volume must be finite and nonnegative; both zero signs are treated as zero
+weight. Exact mathematical zero is canonical +0; a negative nonzero exact mean
+may correctly round to -0, and a later zero-weight row preserves those bits.
+
+### Q13y.5. Which error wins, and why can a shape error have two identities?
+
+Compute checks context, shape, first anchor, then increasing-index rows; within
+each row it checks finiteness before the volume domain. An earlier finite negative
+weight beats a later NaN. Do not copy Donchian's whole-array nonfinite priority.
+A nil channel mixed with a nonempty channel matches both ErrShape and ErrNilInput
+through errors.Is. Ordinary non-nil length mismatches match ErrShape only.
+
+```go
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2025-2026 katalvlaran
+
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"math"
+
+	"github.com/lvlath/go/vwap"
+)
+
+// main demonstrates overlapping error identities and per-index validation order.
+// Deliberately rejected inputs never produce a partial Result.
+// Implementation:
+//   - Stage 1: submit a mixed nil/nonempty shape and a missing first anchor.
+//   - Stage 2: submit an earlier negative weight followed by a later NaN price.
+//   - Stage 3: classify failures with errors.Is and pointer-only IsNil.
+//
+// Behavior highlights:
+//   - A later nonfinite row does not override an earlier finite negative volume.
+//
+// Inputs:
+//   - Fixed invalid records used only to demonstrate public failure classes.
+//
+// Returns:
+//   - Deterministic error-category booleans; no successful measurements are consumed.
+//
+// Errors:
+//   - ErrShape/ErrNilInput, ErrAnchor, and ErrVolume are expected here.
+//
+// Determinism:
+//   - Active context, fixed index order, and no concurrent cancellation.
+//
+// Complexity:
+//   - O(n) validation, O(1) numerical workspace; all examples reject before output allocation.
+//
+// Notes:
+//   - IsNil is safe for a nil *Result and says nothing about readiness on a non-nil Result.
+//
+// AI-Hints:
+//   - Do not copy Donchian's whole-array nonfinite priority into VWAP handling.
+func main() {
+	ctx := context.Background() // Keep cancellation out of this precedence demonstration.
+	// A nil channel in a nonempty shape has two machine-readable classifications.
+	missing, err := vwap.ComputeDefault(ctx, nil, []float64{1}, []bool{true})
+	fmt.Printf("shape=%t nil-input=%t result-nil=%t\n",
+		errors.Is(err, vwap.ErrShape), errors.Is(err, vwap.ErrNilInput), missing.IsNil())
+	// The missing first anchor wins before the deliberately nonfinite price is read.
+	unanchored, err := vwap.ComputeDefault(ctx, []float64{math.NaN()}, []float64{1}, []bool{false})
+	fmt.Printf("anchor=%t nonfinite=%t result-nil=%t\n",
+		errors.Is(err, vwap.ErrAnchor), errors.Is(err, vwap.ErrNonFinite), unanchored.IsNil())
+	// Row zero's finite negative weight is detected before row one's NaN.
+	rejected, err := vwap.ComputeDefault(ctx, []float64{1, math.NaN()}, []float64{-1, 1}, []bool{true, false})
+	fmt.Printf("volume=%t nonfinite=%t result-nil=%t\n",
+		errors.Is(err, vwap.ErrVolume), errors.Is(err, vwap.ErrNonFinite), rejected.IsNil())
+}
+```
+
+Output:
+
+```text
+shape=true nil-input=true result-nil=true
+anchor=true nonfinite=false result-nil=true
+volume=true nonfinite=false result-nil=true
+```
+
+Push checks context before receiver construction, then anchor, current-row
+finiteness, volume, non-reset count exhaustion, and final context before commit.
+Restore has no context parameter. Context cancellation observed after start can
+race input failure; no deterministic ordering of two concurrent events is promised.
+
+### Q13y.6. Can I ignore a NaN price when its volume is zero?
+
+No. Every supplied row must be finite, including masked, zero-weight, and later
+reset rows. Invalid observations are not repaired, skipped, or replaced by zero.
+All batch errors return nil; an invalid later record can reject the entire batch
+even though admitted future records cannot change an earlier numerical prefix.
+There is no partial-prefix result mode. Keep an existing artifact until a full
+replacement has succeeded.
+
+### Q13y.7. How can 1e308 times 1e308 remain usable?
+
+The kernel never forms that product in float64. It accumulates exact represented
+weights in units of 2^-1074 and products in 2^-2148 integer units, then rounds the
+scaled ratio once. A mean with nonnegative weights lies between its positive-weight
+finite prices. Huge exact sums do not cause ErrOverflow merely because a float
+sum would fail. `[1e308,1,-1e308]` with unit weights retains the residual and returns
+RN64(1/3), not zero. See [the exact proof](VWAP.md#mathematical-contract).
+
+### Q13y.8. Does exact arithmetic recover trade VWAP from HLC3 or bar closes?
+
+No. The caller chooses the supplied price; there is no OHLC adapter inside VWAP.
+A close-volume or HLC3-volume benchmark is a volume-weighted **bar proxy**. Missing
+within-bar trade prices cannot be reconstructed. Decimal-to-binary conversion and
+any upstream HLC3/spread arithmetic have already occurred before this kernel.
+Use actual admitted trade prices/quantities when that is the intended estimand,
+and separately establish feed completeness, revisions, and price/volume units.
+
+### Q13y.9. Why is Reset followed by Push not an atomic replacement?
+
+`Reset()` immediately discards the old segment and has no subsequent rollback
+relationship with another call. `Reset(); Push(badRow)` therefore leaves the stream
+reset. Use `Push(ctx,price,volume,true)` for atomic reset-plus-observation: the
+candidate includes the reset and current row, and only a successful final context
+check allows commit. Any error returns Value{} and leaves the old state intact.
+Update an application's pending-reset latch only after that success.
+
+### Q13y.10. What do nil and zero-value stream methods do?
+
+Push/Restore on nil return ErrNilInput; on unconstructed Stream{} they return
+ErrStateVersion. For Push, nil/canceled context wins before receiver inspection.
+Reset on either receiver is a no-op and does not construct it. Snapshot returns
+Snapshot{} on either. New/NewDefault instead produces a constructed unstarted
+stream whose snapshot is versioned with Count=0, Started=false and "0" sum strings.
+A valid Restore must target such a constructed stream, not a zero struct.
+
+### Q13y.11. What must be persisted, and does Restore authenticate history?
+
+Snapshot v1 (`vwap/exact-weighted/v1`) stores Options, Count, Started, VolumeSum,
+and WeightedSum. Both sum strings are canonical ASCII decimal, at most 1300 bytes;
+volume is nonnegative. Restore validates phase, bit bounds and the inequalities
+V<=Count*Umax and abs(W)<=V*Umax before one assignment. It reconstructs the cached
+mean/readiness; there is no serialized Current value to trust.
+
+These are structural continuation checks, not proof of a real sequence of trades.
+Store source identity/revision, cursor, instrument/units, and anchor-policy identity
+atomically with state; authenticate the envelope externally. Bound untrusted
+transport size before JSON decoding. Use typed uint64 handling: a float64 JSON
+intermediate can lose Count bits. See [snapshot details](VWAP.md#snapshotrestore-and-trust-boundaries).
+
+### Q13y.12. Why is Count not a source sequence number or a restart offset?
+
+Count resets per segment, grows on zero-weight rows, and does not identify duplicate
+messages. Store the next source offset or sequence separately. Resume only the unread
+suffix; overlapping replay without admission control adds duplicate weights. A saved
+Count at MaxUint64 is structurally permitted: a non-reset Push returns ErrOverflow,
+while a valid reset starts Count=1. Invalid input still prevents that reset.
+
+### Q13y.13. Does an explicit reset flag prevent look-ahead bias?
+
+It prevents the library from inventing an origin; it cannot prove how the caller
+selected that flag. There are no timestamps or AvailableAt fields in this API.
+An event-time origin backfilled after late delivery is not the same live feature
+as an origin chosen when the event becomes available. Pivot confirmation,
+bar finality, historical revisions, ordering and calendars belong to admission.
+A current-inclusive VWAP is available after its accepted record, not a pre-record
+baseline or permission to execute at that already observed price.
+
+### Q13y.14. Can I run independent batch chunks or subtract corrected trades?
+
+Independent Compute calls start fresh and require their own first anchors; they
+do not continue an old segment. Retain a Stream or Restore the matching state and
+Push the unread suffix. There is no public Merge or inverse/removal operation;
+negative volume is not a correction mechanism. Replay a correction from before
+the affected observation. With unchanged resets, only that segment's later
+prefixes may change; a later unchanged reset isolates following values. Changes
+to resets, insertion/deletion, or availability require rebuilding segmentation
+and source offsets as well. See [composition and corrections](VWAP.md#composition-corrections-and-application-boundaries).
+
+### Q13y.15. Can I divide by VWAP or subtract independent leg benchmarks?
+
+Those are consumer definitions, not output guarantees. A ready signed/zero mean
+is not a safe positive-price bps divisor; a difference between finite means can
+still overflow. Check units, masks, information sets, denominator domain, and
+finite arithmetic. For a paired spread, align both legs and weight each paired
+price by its matched quantity. Independent leg VWAPs generally have different
+weights and do not define that paired basis. A market/fill price comparison does
+not estimate fees, market impact attribution, or complete implementation shortfall.
+
+### Q13y.16. What are the actual complexity and concurrency limits?
+
+One Stream has one owner, including Snapshot reads. Error atomicity supplies no
+mutex or concurrent snapshot isolation. Independent instances and stable-input
+batch calls are independent. With L=67 fixed limbs, Push uses O(L) work and no
+internal heap allocation, while Compute performs two linear scans with O(n*L)
+time, O(n) owning output and O(L) workspace. Snapshot/Restore use bounded O(D*L)
+work, D<=1300; returned strings, external decoding, logs and custom contexts have
+separate costs. Byte checks do not guarantee RAM availability, and periodic context
+polls are not a hard real-time deadline. Copying Result shares its slice arrays;
+a value copy of the constructed Stream instead has detached fixed state.
+
+### Q13y.17. Where are the real scenarios and the pure-Go coverage check?
+
+Run `go test ./vwap -run '^Example' -count=1 -v`. The five
+[examples](../vwap/example_test.go) use a frozen vendor-demo IBM bar subset and
+four separately labeled engineered market/fill, event-delivery, failover and paired-
+spread tapes. The [shared helpers](../vwap/test_helper_test.go) preserve provenance
+and independent rational oracles; no live requests, go:embed or data-file dependency
+is needed. A frozen demo is not a current quote or independently audited tick feed.
+
+The optional coverage gate is also in `package vwap_test`. From the repository root:
+
+```sh
+# Build fresh evidence without inheriting an old gate request.
+unset LVLATH_VWAP_COVERPROFILE
+go test ./vwap -count=1 -covermode=atomic -coverprofile=vwap.coverage.out
+# Use an absolute path because the package test working directory is vwap/.
+LVLATH_VWAP_COVERPROFILE="$PWD/vwap.coverage.out" \
+  go test ./vwap -run '^TestVWAP_CoverageThreshold$' -count=1 -v
+```
+
+The gate skips only when that variable is unset. An explicitly missing or malformed
+profile fails; per-file and overall statement coverage must each reach 92%.
+Files with no instrumented statements are N/A. CI must generate the profile from
+the same checkout immediately first; the parser cannot authenticate freshness.
+This test infrastructure does not enter the production package or add a Python tool.
+See [the complete verification commands](VWAP.md#verification-commands-and-integration).
 
 ---
 

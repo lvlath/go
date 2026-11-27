@@ -7,7 +7,7 @@
   Purpose:
     This README is the public face of lvlath. It presents the library as a
     deterministic, contract-driven Go toolkit for graph algorithms, flow networks,
-    dense graph algebra, routing, exact timestamp grids, causal time-series primitives, exact affine EMA, exact True Range and Wilder ATR, causal Donchian ranges, Wilder RSI batch/stream filtering, SMA-seeded MACD, compensated MFI, compensated cumulative OBV, Chaikin A/D, fixed-window ACF and Durbin-Levinson PACF, fractional PAA,
+    dense graph algebra, routing, exact timestamp grids, causal time-series primitives, exact affine EMA, exact True Range and Wilder ATR, causal Donchian ranges, exact anchored VWAP, Wilder RSI batch/stream filtering, SMA-seeded MACD, compensated MFI, compensated cumulative OBV, Chaikin A/D, fixed-window ACF and Durbin-Levinson PACF, fractional PAA,
     symbolic SAX encoding, research-only TFSAX exact-DTW/SAX retrieval audits, dependent-data block-index resampling, path-indexed parallel Monte Carlo simulation, exact-in-distribution GBM and Merton jump-diffusion paths, causal GJR-GARCH volatility, fixed-order conditional Gaussian ARIMA with anchored forecasts, frozen IFGO LSTM recurrent inference, alignment, and reproducible algorithm engineering. It should give a new reader immediate confidence in
     what lvlath can solve, how packages compose, where the formal contracts live,
     and why this repository is engineered beyond ad-hoc algorithm snippets.
@@ -48,11 +48,13 @@
 
 # lvlath
 
-**lvlath** is a pure-Go algorithm engineering library for graphs, flows, dense graph algebra, routing, exact timestamp grids, causal series transforms, fractional PAA, symbolic SAX time-series signatures, TFSAX research-only retrieval comparisons, stable statistical moments, fitted feature scaling, sample autocorrelation and partial autocorrelation, exact affine EMA, exact True Range and Wilder ATR, causal Donchian ranges, Wilder RSI, SMA-seeded MACD, compensated OHLCV Money Flow Index, cumulative On-Balance Volume, Chaikin Accumulation/Distribution, covariance PCA, causal Hidden Markov Models, version-pinned PCG-DXSM stochastic streams, time-series alignment, reproducible parallel Monte Carlo drivers, exact-in-distribution geometric Brownian motion and Merton jump-diffusion paths, asymmetric stationary GJR-GARCH conditional volatility, fixed-order conditional Gaussian ARIMA level forecasts, deterministic single-layer IFGO LSTM inference, and reproducible test fixtures.
+**lvlath** is a pure-Go algorithm engineering library for graphs, flows, dense graph algebra, routing, exact timestamp grids, causal series transforms, fractional PAA, symbolic SAX time-series signatures, TFSAX research-only retrieval comparisons, stable statistical moments, fitted feature scaling, sample autocorrelation and partial autocorrelation, exact affine EMA, exact True Range and Wilder ATR, causal Donchian ranges, exact anchored VWAP, Wilder RSI, SMA-seeded MACD, compensated OHLCV Money Flow Index, cumulative On-Balance Volume, Chaikin Accumulation/Distribution, covariance PCA, causal Hidden Markov Models, version-pinned PCG-DXSM stochastic streams, time-series alignment, reproducible parallel Monte Carlo drivers, exact-in-distribution geometric Brownian motion and Merton jump-diffusion paths, asymmetric stationary GJR-GARCH conditional volatility, fixed-order conditional Gaussian ARIMA level forecasts, deterministic single-layer IFGO LSTM inference, and reproducible test fixtures.
 
 It is built for people who need algorithmic tools they can explain in a code review, trust in CI, compose across packages, and debug from deterministic artifacts instead of guessing why an answer changed.
 
 For observed rolling ranges and previous-bar comparison thresholds, see the [Donchian guide](docs/DONCHIAN.md) and [five executable scenarios](donchian/example_test.go).
+
+For exact volume-weighted price benchmarks with explicit reset origins, see the [VWAP guide](docs/VWAP.md) and [five offline executable scenarios](vwap/example_test.go).
 
 **The core promise:**
 
@@ -68,6 +70,7 @@ For observed rolling ranges and previous-bar comparison thresholds, see the [Don
 * `ema` computes exact-binary-input SMA seeds and correctly rounded affine level updates, with explicit seed modes, aligned readiness masks and bounded replayable state;
 * `atr` measures exact True Range and Wilder-smoothed ranges over signed finite candles, with separate ATR readiness, atomic zero-allocation Push and lossless seed continuation; it does not size positions or place stops.
 * `donchian` selects observed rolling extrema with explicit include/exclude-current windows, an exact-mean midpoint, bounded deques, and a shared readiness mask;
+* `vwap` computes exact represented-input price-volume means across explicit reset segments, preserving positive-weight readiness and atomic exact-sum continuation without a floating price-volume product;
 * `paa` compresses every sample of a finite series into exact fractional equal-duration averages, without dropped tails or padding;
 * `sax` quantizes fractional PAA to compatible symbolic words with Euclidean MINDIST; it never promotes that bound to a DTW pruning certificate;
 * `tfsax` supplies an **unapproved research gate** for independent exact-DTW versus classical SAX TopM retrieval evaluation, synthetic stress data and temporal leakage audits; it does **not** supply a new TFSAX encoder or proven DTW pruning;
@@ -122,6 +125,7 @@ The common failures are familiar:
 * EMA uses a rounded alpha or an overflowing price difference, loses small seed contributions, or restores a rounded mean instead of the exact unfinished seed;
 * ATR can be corrupted by a synthetic first previous close, an EMA coefficient, a masked warmup TR, or a restored seed mean instead of the exact seed integer.
 * Donchian comparisons can be corrupted by current-bar threshold contamination, omitted masks, giant period-sized buffers, or overflowing derived widths.
+* VWAP loses meaning when the first anchor is implicit, a zero-weight prefix is called ready, overflowing float products replace exact sums, or a failed reset destroys the preceding segment.
 * RSI warmup placeholders are read as genuine oscillator zeros, invalid quotes advance stream state, or a config hash is mistaken for checkpoint authentication;
 * MACD is seeded from the first price instead of initial SMA, Signal is seeded with invalid Line zeros, or a checkpoint is replayed from the wrong source offset.
 * a zero-volume MFI bar is dropped, shifting the rolling window, or a configuration hash is mistaken for authenticating mutable checkpoint content.
@@ -198,69 +202,39 @@ The common failures are familiar:
 
 16. **Jump-model drift and entropy are explicit contracts**
 
-    `jumpdiffusion` distinguishes the log-jump mean `m` from the arithmetic
-    price compensator `k=expm1(m+s^2/2)`, uses bounded discrete Poisson
-    inversion/PTRS rather than Gaussian count approximation, and delegates
-    `Intensity=0` to GBM for exact path/draw parity. It never turns an
-    interrupted interval into a complete terminal payoff; the model remains
-    experimental until its parameters and use case are independently validated.
+    `jumpdiffusion` distinguishes the log-jump mean `m` from the arithmetic price compensator `k=expm1(m+s^2/2)`, uses bounded discrete Poisson inversion/PTRS rather than Gaussian count approximation, and delegates `Intensity=0` to GBM for exact path/draw parity. It never turns an interrupted interval into a complete terminal payoff; the model remains experimental until its parameters and use case are independently validated.
 
 17. **Conditional volatility is not a look-ahead price scenario**
 
-    `gjrgarch` assigns `h[t]` before seeing `r[t]`, updates from the prior residual,
-    and estimates parameters with an explicit deterministic QMLE start. A forecast
-    variance is not a VaR tail quantile; a nonconverged `FitResult` is not an
-    approved model. Feed cadence, training/holdout separation and model review
-    belong to the application.
+    `gjrgarch` assigns `h[t]` before seeing `r[t]`, updates from the prior residual, and estimates parameters with an explicit deterministic QMLE start. A forecast variance is not a VaR tail quantile; a nonconverged `FitResult` is not an approved model. Feed cadence, training/holdout separation and model review belong to the application.
 
 18. **ARIMA conditional likelihood is not exact diffuse Kalman MLE**
 
-    `arima` conditions on the first `max(p,q)` differenced observations,
-    profiles innovation variance only from later residuals, rejects unit
-    roots rather than clipping them, and reconstructs integrated levels
-    using historical anchors. Marginal innovation variance is not full
-    predictive parameter uncertainty or a risk quantile.
+    `arima` conditions on the first `max(p,q)` differenced observations, profiles innovation variance only from later residuals, rejects unit roots rather than clipping them, and reconstructs integrated levels using historical anchors. Marginal innovation variance is not full predictive parameter uncertainty or a risk quantile.
 
 19. **Recurrent inference separates model identity, numerical computation, and decision policy**
 
-    `lstm` imports finite IFGO weights into an immutable model with a canonical
-    numerical fingerprint. Masked timesteps never modify hidden/cell state;
-    canceled or failed inference returns no partial result. The caller owns
-    validated preprocessing, model provenance, trained heads and alert policy.
+    `lstm` imports finite IFGO weights into an immutable model with a canonical numerical fingerprint. Masked timesteps never modify hidden/cell state; canceled or failed inference returns no partial result. The caller owns validated preprocessing, model provenance, trained heads and alert policy.
 
 20. **Partial autocorrelation has one explicit estimator, not a hidden AR model**
 
-    `pacf` uses biased/common-`n` autocovariance and a single Durbin-Levinson
-    recursion. Centering is caller-controlled and uses the full supplied window.
-    Two coefficient rows protect mirrored recurrence operands; nonpositive
-    prediction variance and nonrepresentable arithmetic fail without a partial
-    result. PACF supports diagnostic order screening, not automatic AR fitting
-    or statistical significance claims.
+    `pacf` uses biased/common-`n` autocovariance and a single Durbin-Levinson recursion. Centering is caller-controlled and uses the full supplied window. Two coefficient rows protect mirrored recurrence operands; nonpositive prediction variance and nonrepresentable arithmetic fail without a partial result. PACF supports diagnostic order screening, not automatic AR fitting or statistical significance claims.
 
 21. **Exponential levels preserve arithmetic, readiness, and continuation together**
 
-    `ema` accepts finite signed observations, computes an exact SMA seed or an
-    explicit first-value seed, and rounds each exact affine update once. Invalid
-    warmup cells are +0/false, not measurements. Failed Push/Restore calls do not
-    change state; the bounded `SeedSum` preserves unfinished warmup. Neither
-    a valid snapshot nor an EMA baseline authenticates source history or defines
-    a trading, anomaly-detection, or safety decision.
+    `ema` accepts finite signed observations, computes an exact SMA seed or an explicit first-value seed, and rounds each exact affine update once. Invalid warmup cells are +0/false, not measurements. Failed Push/Restore calls do not change state; the bounded `SeedSum` preserves unfinished warmup. Neither a valid snapshot nor an EMA baseline authenticates source history or defines a trading, anomaly-detection, or safety decision.
 
 22. **A range measurement keeps its origin, readiness, and continuation explicit**
 
-    `atr` starts with the first candle's own range, includes later prior-close
-    gaps, accepts signed finite prices, and rejects invalid candle geometry.
-    TR is present during ATR warmup; a ready zero stays valid. Exact Wilder
-    seeding and affine rounding are not EMA or a rounded-alpha shortcut.
-    Snapshot stores continuation, not authenticated source history or a risk rule.
+    `atr` starts with the first candle's own range, includes later prior-close gaps, accepts signed finite prices, and rejects invalid candle geometry. TR is present during ATR warmup; a ready zero stays valid. Exact Wilder seeding and affine rounding are not EMA or a rounded-alpha shortcut. Snapshot stores continuation, not authenticated source history or a risk rule.
 
 23. **Observed range boundaries keep the current-bar policy explicit**
 
-    `donchian` separates a finalized-bar overlay from a previous-bar comparison
-    range. Latest equal extrema, nearest-even midpoint, and shared readiness are
-    deterministic. A huge period never allocates a huge ring for a short input.
-    A valid boundary is not a fill, a calendar, a safe width divisor, or source
-    provenance; those meanings remain with the consumer.
+    `donchian` separates a finalized-bar overlay from a previous-bar comparison range. Latest equal extrema, nearest-even midpoint, and shared readiness are deterministic. A huge period never allocates a huge ring for a short input. A valid boundary is not a fill, a calendar, a safe width divisor, or source provenance; those meanings remain with the consumer.
+
+24. **A weighted benchmark preserves its anchor, units, and exact continuation**
+
+    `vwap` accumulates exact binary64 weights and products, then rounds each ready prefix ratio once. Resets are explicit and occur before accepted observations; errors commit neither the row nor its reset. Count includes zero-weight rows but is not a source cursor. A bar-price proxy is not tick VWAP, and structural checkpoint validity is not authenticated provenance.
 
 ---
 
@@ -291,6 +265,7 @@ lvlath/
 ├── ema/                   # exact affine levels, dual seed modes, bounded restart state
 ├── atr/                   # exact True Range, Wilder ATR, signed candles and replay
 ├── donchian/              # observed ranges, explicit current-bar policy, bounded deques
+├── vwap/                  # exact anchored weighted means, masks and bounded replay
 ├── paa/                   # fractional PAA, exact rational geometry, detached averages
 ├── sax/                   # symbolic PAA words, SHA-256 policy identity, Euclidean MINDIST
 ├── tfsax/                 # research-only exact-DTW/SAX comparison; no TFSAX encoder or certified pruning
@@ -333,6 +308,7 @@ lvlath/
 │   ├── SERIES.md
 │   ├── EMA.md
 │   ├── ATR.md
+│   ├── VWAP.md
 │   ├── DONCHIAN.md
 │   ├── STATS.md
 │   ├── OLS.md
@@ -536,6 +512,8 @@ Composition rule:
  - matrix owns dense graph/numeric artifacts.
  - dtw owns temporal alignment artifacts.
  - series owns exact-grid validation and causal array artifacts.
+ - vwap owns exact cumulative price-volume means over explicit segments, positive-weight
+   readiness and exact continuation; calendars, source cursors, revisions and fills stay external.
  - donchian owns observed high/low ranges, exact-mean midpoints and explicit current-bar
    policy; grids, source identity, derived widths and execution remain external.
  - atr owns exact candle ranges and Wilder smoothing; source identity, channel
@@ -670,6 +648,7 @@ approves risk-model deployment. Details follow in the
 | `ema`           | Exact SMA or first-value seed, sequentially correctly rounded affine levels, owning Values/Valid and bounded snapshots.                        | Finite signed inputs, P1 identity except zero sign, atomic zero-allocation Push and lossless warmup restart.               | Quote-noise smoothing, telemetry baselines, centerlines and checkpointed analytics.                            |
 | `atr`           | Exact True Range at every index and Wilder ATR after an exact mean seed.                                                                       | Signed finite candles, strict ErrBar, P1 bit identity, bounded exact checkpoints and zero-allocation Push.                 | Gap-aware range audit, prior-baseline monitoring and recoverable volatility features.                          |
 | `donchian`      | Observed Upper/Lower, correctly rounded Middle and one input-aligned Valid mask.                                                               | Explicit current/prior windows, latest ties, O(n) time and O(min(P,n)) workspace.                                          | Finalized-bar overlays, prior-range event audits, signed spreads and range-compression features.               |
+| `vwap`          | Owning Values/Valid for exact anchored price-volume means; single-owner Stream and exact-sum Snapshot.                                         | Explicit first anchor, one-round ratios, bounded 67-limb arithmetic and transactional reset.                               | Session benchmarks, fill-price comparisons, available-at AVWAP and replayable signed bases.                    |
 | `rsi`           | Deterministic Wilder RSI over finite-positive prices: batch mask, streaming Push and snapshot continuation.                                    | One shared scalar recurrence, explicit warmup, atomic failed Push, detached checkpoints, no signal thresholds.             | Portfolio momentum-factor extraction, feed monitoring, authenticated hot-failover analytics.                   |
 | `macd`          | SMA-seeded fast/slow EMAs, signed Line/Signal/Histogram, batch and single-owner streaming.                                                     | Shared kernel, separate warmup masks, bitwise batch/stream parity and detached state snapshots.                            | Trend-feature pipelines, bar-feed monitoring, replayable analytics failover.                                   |
 | `mfi`           | Volume-weighted typical-price Money Flow Index over a fixed transition window.                                                                 | Neumaier ring, deterministic rebase, zero-volume retention, atomic Push and detached snapshots.                            | OHLCV research features, market-feed reconciliation and checkpointed streaming analytics.                      |
@@ -930,7 +909,7 @@ func main() {
 		return
 	}
 	for row := 0; row < 3; row++ {
-		if err := training.Set(row, 0, 5); err != nil {
+		if err = training.Set(row, 0, 5); err != nil {
 			fmt.Println(err)
 			return
 		}
@@ -945,7 +924,7 @@ func main() {
 		fmt.Println(err)
 		return
 	}
-	if err := heldout.Set(0, 0, 7); err != nil {
+	if err = heldout.Set(0, 0, 7); err != nil {
 		fmt.Println(err)
 		return
 	}
@@ -1006,7 +985,7 @@ func main() {
 		fmt.Println("design:", err)
 		return
 	}
-	if err := design.Fill([]float64{1, 0, 1, 1, 1, 2}); err != nil {
+	if err = design.Fill([]float64{1, 0, 1, 1, 1, 2}); err != nil {
 		fmt.Println("design data:", err)
 		return
 	}
@@ -1015,7 +994,7 @@ func main() {
 		fmt.Println("rhs:", err)
 		return
 	}
-	if err := rhs.Fill([]float64{8, 11, 14}); err != nil {
+	if err = rhs.Fill([]float64{8, 11, 14}); err != nil {
 		fmt.Println("rhs data:", err)
 		return
 	}
@@ -1549,6 +1528,7 @@ package main
 import (
     "context"
     "fmt"
+
     "github.com/lvlath/go/atr"
 )
 
@@ -1671,6 +1651,138 @@ quarantine. Frozen vendor-demo provenance and synthetic fixtures remain distinct
 
 ```sh
 go test ./donchian -run '^Example' -count=1 -v
+```
+
+### VWAP: exact weighted prices with explicit segment origins
+
+`vwap` computes the cumulative price-volume mean within explicitly supplied
+segments. Session VWAP and anchored VWAP use one algorithm: only the caller's
+reset schedule differs. Use `Compute`/`New` with an explicit `Options` value or
+`ComputeDefault`/`NewDefault` for the same empty configuration. No wrapper
+chooses `reset[0]`, a period, calendar, or price proxy.
+
+This complete example distinguishes undefined prefixes, a ready weighted mean,
+and a new signed-price segment. The small engineered tape demonstrates the phase
+law; the linked five-scenario suite covers the operational workflows.
+
+```go
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2025-2026 katalvlaran
+
+package main
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/lvlath/go/vwap"
+)
+
+// main reports two explicit, independently anchored price-volume segments.
+// The engineered records distinguish undefined zeros from valid signed prices.
+// Implementation:
+//   - Stage 1: define aligned price, volume, and reset channels.
+//   - Stage 2: call the default facade without inferring any anchor.
+//   - Stage 3: consume only values whose readiness mask is true.
+//
+// Behavior highlights:
+//   - The second segment starts with zero volume and becomes ready later.
+//
+// Inputs:
+//   - Fixed in-memory records with compatible price and volume units.
+//
+// Returns:
+//   - Deterministic stdout; no caller or package state is retained.
+//
+// Errors:
+//   - A failed computation is reported before reading result fields.
+//
+// Determinism:
+//   - Original row order and six-decimal presentation are fixed.
+//
+// Complexity:
+//   - O(n*L) time and O(n+L) space, with fixed L=67.
+//
+// Notes:
+//   - These records illustrate behavior; they are not historical market quotes.
+//
+// AI-Hints:
+//   - Never infer readiness from Value==0 or fabricate reset[0] inside a wrapper.
+func main() {
+	// The application chooses both origins; negative finite prices remain legal.
+	price := []float64{10, 20, 30, -5, -7, -9}
+	volume := []float64{0, 2, 1, 0, 3, 0}
+	reset := []bool{true, false, false, true, false, false}
+	// The wrapper only supplies Options{} to the canonical Compute call.
+	result, err := vwap.ComputeDefault(context.Background(), price, volume, reset)
+	if err != nil {
+		fmt.Println("VWAP:", err) // A failure publishes no usable result.
+		return
+	}
+	// Preserve the original row mapping even for undefined prefixes.
+	for i, ready := range result.Valid {
+		if !ready {
+			fmt.Printf("row=%d undefined\n", i) // A mask is not a numerical zero measurement.
+			continue
+		}
+		fmt.Printf("row=%d VWAP=%.6f\n", i, result.Values[i])
+	}
+}
+```
+
+Output:
+
+```text
+row=0 undefined
+row=1 VWAP=20.000000
+row=2 VWAP=23.333333
+row=3 undefined
+row=4 VWAP=-7.000000
+row=5 VWAP=-7.000000
+```
+
+Every nonempty batch requires `reset[0]=true`. A new/reset stream requires
+`reset=true` on its first accepted Push. Finite signed prices and finite
+nonnegative volumes are valid. Zero weight before the first positive segment
+weight is +0/false; later zero weight retains the ready mean's bits and still
+increments Count. Empty histories succeed with non-nil empty channels. `IsNil`
+checks pointer presence only. Each Result owns its slices; copying it is shallow.
+
+The kernel stores exact binary64 products in 2^-2148 units and volume in
+2^-1074 units, then rounds the ratio once to nearest-even. It does not form a
+floating `price*volume`: `price=volume=1e308` remains a finite benchmark, and
+cancellation retains small contributions. Exact zero is +0; negative nonzero
+underflow can be -0. A close-volume or HLC3-volume input remains a bar proxy,
+not the mean of unknown within-bar trades.
+
+Batch validation is context, shape, first anchor, then per-index finite/domain
+checks. A finite negative weight at an earlier row wins over a later NaN.
+Mixed nil/nonempty shape matches both `ErrShape` and `ErrNilInput`. Every batch
+error returns nil. Failed Push/Restore leaves state unchanged; use
+`Push(..., true)`, not a separate `Reset(); Push(...)`, for atomic reset-plus-row.
+
+One Stream has one owner. Snapshot v1 (`vwap/exact-weighted/v1`) retains exact
+canonical ASCII sums, each bounded to 1300 bytes, and the current-segment Count.
+Restore validates phase/magnitude invariants, not trade provenance. Persist the
+source cursor, revision, instrument/units, and anchor policy atomically with the
+state outside VWAP. Count is not a duplicate-detection or source-offset field.
+
+Two batch scans use O(n*L) time and O(n) owning output, with fixed L=67 workspace.
+Push has O(L) work independent of history length and no internal heap allocation;
+Snapshot may allocate returned strings. Context implementations and persistence
+costs are separate. No other lvlath package is imported, and there is no rolling
+window, execution simulator, merge API, or liquidity/profit guarantee.
+
+Read the [guide](docs/VWAP.md), [charter](vwap/doc.go),
+[tutorial](docs/TUTORIAL.md#11z-vwap-foundations-exact-weights-explicit-anchors-and-replay),
+and [FAQ](docs/FAQ_%26_TIPS.md#13y-vwap-faq-anchors-exact-means-and-continuation).
+The five [executable scenarios](vwap/example_test.go) cover a frozen IBM
+vendor-demo bar proxy, separate market/fill tapes, an available-at news anchor,
+checkpoint/cursor failover, and a signed matched-pair basis. Frozen and engineered
+data remain explicitly distinguished in [their helpers](vwap/test_helper_test.go).
+
+```sh
+go test ./vwap -run '^Example' -count=1 -v
 ```
 
 ### RSI: one Wilder recurrence for batch factors and online price streams
@@ -2864,6 +2976,7 @@ for masked streaming from a frozen model.
 | Exact affine EMA                | [`docs/EMA.md`](docs/EMA.md)                     | Two seed modes, one-round affine arithmetic, readiness, error precedence, lossless bounded snapshots and executable replay.      |
 | Exact True Range and Wilder ATR | [`docs/ATR.md`](docs/ATR.md)                     | First-bar range, signed candles, independent ATR readiness, exact seed/affine arithmetic and source-bound replay.                |
 | Donchian observed ranges        | [`docs/DONCHIAN.md`](docs/DONCHIAN.md)           | Current/prior windows, nearest-even midpoint, masks, ring bounds, source timing and executable consumers.                        |
+| Exact anchored VWAP             | [`docs/VWAP.md`](docs/VWAP.md)                   | Exact products and weights, first anchors, positive-weight readiness, error-atomic replay and Go-only verification.              |
 | Wilder RSI                      | [`docs/RSI.md`](docs/RSI.md)                     | Stable ratio math, exact seed/warmup, batch/stream equivalence, sentinels and checkpoint ABI.                                    |
 | SMA-seeded MACD                 | [`docs/MACD.md`](docs/MACD.md)                   | Appel EMA seed/recurrence, signed values, aligned masks, batch/stream parity, checkpoint safety.                                 |
 | Compensated MFI                 | [`docs/MFI.md`](docs/MFI.md)                     | Typical-price OHLCV flow, transition windows, Neumaier rebase, warmup masks and versioned state.                                 |
@@ -3298,6 +3411,7 @@ Determinism is not "sort something at the end." It is a cross-package contract.
 * `matrix` uses fixed row-major loops and deterministic graph-adapter publication; LU/QR pivot ties prefer the smallest original index.
 * `stats` visits scalar samples in input order and matrix cells row-major; a caller fixes the merge-tree order when grouping floating-point moments.
 * `donchian` scans indices ascending and retains the latest equal high/low; masks, selected boundary bits, and midpoint rounding are observable contracts.
+* `vwap` uses one accepted-row transition and exact integer sums for batch/stream/restart parity; permutation preserves the final mean within a fixed segment, not every prefix or error order.
 * `ols` validates rows and features ascending, inherits QR deterministic pivot tie rules and predicts with original columns in the given order.
 * `dtw` runs row-major DP and backtracks ties as diagonal, then vertical/up, then horizontal/left.
 * `series` scans samples in index order, reports gaps and ranges in that order, and preserves length and validity masks.
@@ -3350,6 +3464,7 @@ Exact timestamp grid / causal sample features? series
 Rolling typical-price money flow?              mfi
 Close-change-signed cumulative volume?         obv
 Candle-close-location cumulative volume?       ad
+Exact price-volume mean from explicit origin?  vwap.ComputeDefault / vwap.NewDefault
 Symbolic Euclidean screening of windows?       sax
 Temporal alignment with phase drift?           dtw
 Closed tour through every vertex?              tsp
@@ -3367,6 +3482,7 @@ Important distinctions:
 * DTW aligns time-warped sequences, not graph routes.
 * `series` operates on supplied sample indices and exact nanosecond checks; it does not fill missing timestamp slots.
 * `donchian` consumes those ordered H/L positions but neither validates a time grid nor turns an observed range into an execution rule.
+* `vwap` consumes admitted price/weight/reset positions; calendars, source revisions, correction replay and safe consumer ratios remain outside its exact-mean kernel.
 * `stats` aggregates finite observations and transforms features with parameters learned on training data only; it does not interpret series validity masks or refit.
 * `ols` uses pivoted QR to fit finite, full-rank linear models and returns frozen original-unit coefficients; it never substitutes normal equations, drops rank-deficient factors or refits at inference.
 * `ridge` uses loss-preserving augmented QR with mandatory positive Lambda and no intercept penalty; its physical Model remains immutable even when the original design is collinear or wide.
@@ -3389,6 +3505,10 @@ incidence matrix:       columns are edge identities, not vertex-pair weights
 ### Concurrency
 
 `core` is thread-safe for graph storage and controlled mutation. Algorithm packages should be run against topology that is stable for the duration of the call unless the package explicitly documents otherwise. `matrix.Dense` does not contain locks; concurrent writes require external synchronization. The `montecarlo` coordinator owns mutable `stats.Moments` while workers must receive independent RNG streams and a concurrency-safe `Sampler`; full-run numerical parity does not make an arbitrary sampler safe for shared mutation. Successfully built LU/QR/Cholesky factors retain detached immutable storage and support concurrent `Solve` with private per-call workspaces when RHS inputs remain stable.
+
+`vwap.Stream` is single-owner, including Snapshot reads. A failed numerical
+update is error-atomic, not concurrently synchronized. Independent streams and
+stable-input batch calls are independent; synchronize shared result mutation.
 
 ---
 
@@ -3413,6 +3533,7 @@ incidence matrix:       columns are edge identities, not vertex-pair weights
 | "How do I compute causal lag, differences, or returns?"                                        | `series.Lag` / `Difference` / `SimpleReturns` / `LogReturns`       | Length-preserving values and validity masks.                                                          |
 | "How do I smooth a finite signed level without losing an unfinished seed on restart?"          | `ema.ComputeSMA` / `ComputeFirst` / `NewSMA` / `NewFirst`          | Exact affine recurrence, original-index masks and bounded transactional checkpoints.                  |
 | "How do I compare with a previous-bar range or draw a current range?"                          | `donchian.ComputeExcludeCurrent` / `ComputeIncludeCurrent`         | Explicit information set, shared mask, signed finite inputs and exact-mean midpoint.                  |
+| "How do I calculate a price-volume mean from explicit session/news origins?"                   | `vwap.ComputeDefault` / `NewDefault`                               | Exact represented-input products, readiness by positive weight, and recoverable single-owner state.   |
 | "How do I compute Wilder relative strength on an ordered positive price feed?"                 | `rsi.ComputePeriod` / `rsi.NewPeriod`                              | Aligned Values+Valid or single-owner zero-allocation streaming; caller handles gaps.                  |
 | "How do fast and slow price trends diverge, and what is their smoothed separation?"            | `macd.ComputeDefault` / `macd.NewDefault`                          | Three signed aligned series with readiness masks and transactional single-owner streaming.            |
 | "Which typical-price directions received more traded volume in the last P transitions?"        | `mfi.ComputeDefault` / `mfi.NewDefault`                            | Bounded OHLCV MFI, explicit warmup validity and compensated rolling state.                            |

@@ -23,7 +23,7 @@ package vwap
 //   - A comparable, immutable configuration value.
 //
 // Errors:
-//   - None in v1; ErrInvalidOption is retained for API compatibility and has no reachable v1 condition.
+//   - None: the empty options domain has no invalid value and no option-error sentinel.
 //
 // Determinism:
 //   - All Options values are equal and choose the same kernel.

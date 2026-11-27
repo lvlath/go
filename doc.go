@@ -4,7 +4,7 @@
 // Package main documents the lvlath repository, a deterministic, contract-driven
 // Go toolkit for graph algorithms, dense graph algebra, routing, network optimization,
 // time-series alignment, exact affine levels, exact candle ranges, observed rolling
-// Donchian boundaries, tours, and reproducible fixtures.
+// Donchian boundaries, exact anchored volume-weighted means, tours, and reproducible fixtures.
 // This file is the repository overview, not a re-exporting algorithm facade.
 // Import the owning subpackage, for example github.com/lvlath/go/ema.
 //
@@ -33,6 +33,8 @@
 //     independent ATR readiness, atomic streams, and bounded exact seed replay.
 //   - donchian  - observed high/low ranges with include/exclude-current policy,
 //     nearest-even boundary midpoints, shared readiness and bounded monotonic deques.
+//   - vwap      - exact price-volume means with explicit reset origins, positive-weight
+//     readiness, atomic streams, and bounded exact rational continuation.
 //   - dtw       - deterministic Dynamic Time Warping for scalar, cost-matrix,
 //     and multivariate sequence alignment.
 //   - tsp       - matrix-backed TSP/ATSP solvers: exact, approximate, matching,
@@ -47,7 +49,8 @@
 //	algorithm packages own explicit result contracts;
 //	ema owns signed finite level smoothing, not timestamps or execution policy;
 //	atr owns candle range measurement, not channel widths, NATR, or risk decisions;
-//	donchian owns observed range boundaries, not source timing or execution rules.
+//	donchian owns observed range boundaries, not source timing or execution rules;
+//	vwap owns exact anchored weighted means, not calendars, source admission, or fills.
 //
 // Each package documents implemented API behavior in its own doc.go. Repository
 // theory, diagrams, pitfalls, and operational recipes live in docs/{PACKAGE}.md.
@@ -71,7 +74,11 @@
 // returned error distinguishes those two outcomes.
 // Donchian nil/nonempty mismatches match both ErrShape and ErrNilInput. Its complete
 // finiteness scan precedes any finite ErrBar, including for a wholly masked history.
-// Do not infer another package's validation order from a familiar sentinel name.
+// VWAP instead checks rows in increasing index order: a finite negative volume
+// precedes a later NaN. Its nil/nonempty shape also matches both ErrShape and
+// ErrNilInput; its nonempty first row requires an explicit reset before row-domain
+// checks. Empty options have no invalid value. Do not infer another package's
+// validation order from a familiar sentinel name.
 //
 // Policy:
 //   - Validate inputs early and explicitly (shape, bounds, NaN, ±Inf).
@@ -97,6 +104,10 @@
 //     Its exact-zero midpoint is +0; a negative nonzero mean may round to -0.
 //     Invalid rows have +0 payloads and false masks. A finite midpoint does not
 //     imply a representable Upper-Lower width or a safe ratio denominator.
+//   - VWAP accumulates exact represented-binary64 products and weights, then rounds
+//     each prefix ratio once. Exact zero is +0; negative nonzero underflow may be -0.
+//     The first anchor is mandatory; positive cumulative weight, not Count alone,
+//     controls readiness. No floating price*volume product is formed.
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // Package overview (balanced highlights)
@@ -238,6 +249,35 @@
 //	on stable input are safe; shared result mutation needs synchronization.
 //	See docs/DONCHIAN.md and the five offline donchian/example_test.go scenarios.
 //
+// vwap
+//
+//	Compute(ctx,price,volume,reset,Options) owns aligned Values/Valid. ComputeDefault
+//	and NewDefault delegate with Options{}, without choosing an anchor or calendar.
+//	New constructs a single-owner Stream. A nonempty batch requires reset[0]=true;
+//	a fresh/reset stream requires reset=true on its first accepted Push.
+//
+//	Finite signed prices and nonnegative weights are valid. No positive segment
+//	weight means +0/false; later zero-weight rows retain the preceding ready value
+//	and still increment Count. Reset occurs before the accepted row. Failed
+//	Push/Restore cannot erase an active segment; a separate Reset is unconditional.
+//
+//	Two fixed 67-limb magnitudes hold VolumeSum in 2^-1074 units and signed
+//	WeightedSum in 2^-2148 units. One nearest-even rounding publishes the exact
+//	ratio. Extreme products and cancellation preserve a representable mean;
+//	bar close/HLC3 weighting remains a proxy for missing underlying trade prices.
+//
+//	Snapshot v1, vwap/exact-weighted/v1, carries exact ASCII decimal sums, each
+//	bounded to 1300 bytes. Restore checks phase, bit lengths, Count-based volume
+//	and convexity bounds before one assignment. It does not authenticate history.
+//	Count is not a feed cursor; persist source/revision, cursor, and anchor policy
+//	atomically outside the package. Corrections require verified prefix replay.
+//
+//	No other lvlath package is imported. Caller-side composition with ATR,
+//	Donchian, or series must preserve units, aligned masks, source availability,
+//	and finite consumer arithmetic. No rolling window, merge, trade simulation,
+//	liquidity inference, or execution-quality guarantee is supplied. See
+//	docs/VWAP.md and the five offline vwap/example_test.go scenarios.
+//
 // dtw
 //
 //	Implements Dynamic Time Warping through canonical Result-returning facades:
@@ -298,6 +338,11 @@
 //     owning output and O(min(P,n)) index workspace. One insertion can remove
 //     O(P) candidates; per-bar O(1) is amortized. Cancellation polling has
 //     phase-local iteration bounds, not a hard real-time latency guarantee.
+//   - vwap: two batch scans use O(n*L) time, O(n) owning output, and O(L)
+//     workspace, L=67. Push uses O(L) work independent of history length and no
+//     internal heap allocation. Snapshot/Restore use bounded O(D*L) work,
+//     D<=1300; returned decimal strings, JSON, logging, and custom contexts have
+//     separate allocation costs. This is not a hard real-time latency guarantee.
 //   - dtw: scalar Align is O(n*m); AlignMatrix adds O(n*m*d) local-cost
 //     construction. Rolling-row distance mode uses O(m) DP memory; path or
 //     accumulated-matrix output requires O(n*m) memory.
@@ -335,6 +380,10 @@
 //   - donchian: no Stream, Snapshot, implicit period, timestamps, close validation,
 //     execution, or width/ratio calculation. Batch errors never publish a prefix.
 //     Caller-side width or division can overflow despite finite channel values.
+//   - vwap: no timestamp or event-availability check, implicit HLC3, order book,
+//     rolling period, automatic correction, or checkpoint authentication. Explicit
+//     anchors do not prove causal selection; ready means do not approve trades,
+//     percentage denominators, or mixing incompatible instrument/volume units.
 //   - dtw: exact DTW is not generally a metric and does not imply triangle
 //     inequality. Path recovery requires full accumulated storage. AlignMatrix
 //     uses squared L2 row costs, so feature scale is caller responsibility.
@@ -357,7 +406,9 @@
 //   - docs/ATR.md - exact range/seed proofs, signed candle domain, masks, and replay.
 //   - docs/DONCHIAN.md - observed windows, exact midpoint, error/mask tables,
 //     bounded rings, correction horizons and caller-owned range comparisons.
-//   - docs/README.md - documentation routes and package dependency boundaries.
+//   - docs/VWAP.md - exact weights, anchor/readiness laws, transactional replay,
+//     snapshot trust, typed checkpoints, and Go-native verification.
+//   - README.md - repository package map and current contract documentation routes.
 //   - docs/{ALGORITHM}.md - compact backgrounders with formulas, diagrams,
 //     and runnable examples for each algorithm.
 //

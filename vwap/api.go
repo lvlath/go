@@ -124,7 +124,7 @@ func Compute(ctx context.Context, price, volume []float64, reset []bool, opts Op
 //
 // AI-Hints:
 //   - Do not use Stream{} as an alternative constructor.
-//   - Do not add a fake invalid option to exercise ErrInvalidOption.
+//   - Do not treat the error return as evidence that Options{} can be invalid.
 func New(opts Options) (*Stream, error) {
 	// The initialized marker is the sole distinction between a fresh stream and Stream{}.
 	return &Stream{initialized: true, options: opts}, nil
