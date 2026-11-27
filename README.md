@@ -7,7 +7,7 @@
   Purpose:
     This README is the public face of lvlath. It presents the library as a
     deterministic, contract-driven Go toolkit for graph algorithms, flow networks,
-    dense graph algebra, routing, exact timestamp grids, causal time-series primitives, exact affine EMA, exact True Range and Wilder ATR, causal Donchian ranges, exact anchored VWAP, previous completed session levels, Wilder RSI batch/stream filtering, SMA-seeded MACD, compensated MFI, compensated cumulative OBV, Chaikin A/D, fixed-window ACF and Durbin-Levinson PACF, fractional PAA,
+    dense graph algebra, routing, exact timestamp grids, causal time-series primitives, exact affine EMA, exact True Range and Wilder ATR, causal Donchian ranges, exact anchored VWAP, previous completed session levels, sampled equity drawdown, Wilder RSI batch/stream filtering, SMA-seeded MACD, compensated MFI, compensated cumulative OBV, Chaikin A/D, fixed-window ACF and Durbin-Levinson PACF, fractional PAA,
     symbolic SAX encoding, research-only TFSAX exact-DTW/SAX retrieval audits, dependent-data block-index resampling, path-indexed parallel Monte Carlo simulation, exact-in-distribution GBM and Merton jump-diffusion paths, causal GJR-GARCH volatility, fixed-order conditional Gaussian ARIMA with anchored forecasts, frozen IFGO LSTM recurrent inference, alignment, and reproducible algorithm engineering. It should give a new reader immediate confidence in
     what lvlath can solve, how packages compose, where the formal contracts live,
     and why this repository is engineered beyond ad-hoc algorithm snippets.
@@ -48,7 +48,7 @@
 
 # lvlath
 
-**lvlath** is a pure-Go algorithm engineering library for graphs, flows, dense graph algebra, routing, exact timestamp grids, causal series transforms, fractional PAA, symbolic SAX time-series signatures, TFSAX research-only retrieval comparisons, stable statistical moments, fitted feature scaling, sample autocorrelation and partial autocorrelation, exact affine EMA, exact True Range and Wilder ATR, causal Donchian ranges, exact anchored VWAP, previous completed session levels, Wilder RSI, SMA-seeded MACD, compensated OHLCV Money Flow Index, cumulative On-Balance Volume, Chaikin Accumulation/Distribution, covariance PCA, causal Hidden Markov Models, version-pinned PCG-DXSM stochastic streams, time-series alignment, reproducible parallel Monte Carlo drivers, exact-in-distribution geometric Brownian motion and Merton jump-diffusion paths, asymmetric stationary GJR-GARCH conditional volatility, fixed-order conditional Gaussian ARIMA level forecasts, deterministic single-layer IFGO LSTM inference, and reproducible test fixtures.
+**lvlath** is a pure-Go algorithm engineering library for graphs, flows, dense graph algebra, routing, exact timestamp grids, causal series transforms, fractional PAA, symbolic SAX time-series signatures, TFSAX research-only retrieval comparisons, stable statistical moments, fitted feature scaling, sample autocorrelation and partial autocorrelation, exact affine EMA, exact True Range and Wilder ATR, causal Donchian ranges, exact anchored VWAP, previous completed session levels, sampled equity drawdown, Wilder RSI, SMA-seeded MACD, compensated OHLCV Money Flow Index, cumulative On-Balance Volume, Chaikin Accumulation/Distribution, covariance PCA, causal Hidden Markov Models, version-pinned PCG-DXSM stochastic streams, time-series alignment, reproducible parallel Monte Carlo drivers, exact-in-distribution geometric Brownian motion and Merton jump-diffusion paths, asymmetric stationary GJR-GARCH conditional volatility, fixed-order conditional Gaussian ARIMA level forecasts, deterministic single-layer IFGO LSTM inference, and reproducible test fixtures.
 
 It is built for people who need algorithmic tools they can explain in a code review, trust in CI, compose across packages, and debug from deterministic artifacts instead of guessing why an answer changed.
 
@@ -57,6 +57,8 @@ For observed rolling ranges and previous-bar comparison thresholds, see the [Don
 For exact volume-weighted price benchmarks with explicit reset origins, see the [VWAP guide](docs/VWAP.md) and [five offline executable scenarios](vwap/example_test.go).
 
 For fixed prior-day or prior-week high/low/final-close references, see the [SessionLevels guide](docs/SESSIONLEVELS.md) and [five executable scenarios](sessionlevels/example_test.go).
+
+For observed equity risk, see the [Drawdown guide](docs/DRAWDOWN.md) and [five executable scenarios](drawdown/example_test.go).
 
 **The core promise:**
 
@@ -74,6 +76,7 @@ For fixed prior-day or prior-week high/low/final-close references, see the [Sess
 * `donchian` selects observed rolling extrema with explicit include/exclude-current windows, an exact-mean midpoint, bounded deques, and a shared readiness mask;
 * `vwap` computes exact represented-input price-volume means across explicit reset segments, preserving positive-weight readiness and atomic exact-sum continuation without a floating price-volume product;
 * `sessionlevels` selects the previous completed session's high, low and exact last close over caller-supplied intervals, with one aligned readiness mask and no calendar inference;
+* `drawdown` measures each observed equity loss from its running peak, rounds depth once, selects the exact maximum witness and finds its first recovery;
 * `paa` compresses every sample of a finite series into exact fractional equal-duration averages, without dropped tails or padding;
 * `sax` quantizes fractional PAA to compatible symbolic words with Euclidean MINDIST; it never promotes that bound to a DTW pruning certificate;
 * `tfsax` supplies an **unapproved research gate** for independent exact-DTW versus classical SAX TopM retrieval evaluation, synthetic stress data and temporal leakage audits; it does **not** supply a new TFSAX encoder or proven DTW pruning;
@@ -130,6 +133,7 @@ The common failures are familiar:
 * Donchian comparisons can be corrupted by current-bar threshold contamination, omitted masks, giant period-sized buffers, or overflowing derived widths.
 * VWAP loses meaning when the first anchor is implicit, a zero-weight prefix is called ready, overflowing float products replace exact sums, or a failed reset destroys the preceding segment.
 * Previous-session levels leak future information if current-session totals are broadcast backward, if a partial predecessor is labeled complete, or if fixed UTC bins replace the supplied trading calendar.
+* Drawdown becomes misleading when cashflows are treated as investment performance, rounded depth ties replace exact witness selection, or an unrecovered episode is reported as a duration.
 * RSI warmup placeholders are read as genuine oscillator zeros, invalid quotes advance stream state, or a config hash is mistaken for checkpoint authentication;
 * MACD is seeded from the first price instead of initial SMA, Signal is seeded with invalid Line zeros, or a checkpoint is replayed from the wrong source offset.
 * a zero-volume MFI bar is dropped, shifting the rolling window, or a configuration hash is mistaken for authenticating mutable checkpoint content.
@@ -244,6 +248,13 @@ The common failures are familiar:
 
     `sessionlevels` accepts explicit nonempty adjacent intervals and publishes only the preceding completed session's selected extrema and final close. The first interval is masked; the final incomplete interval can be ready. No rolling window, calendar, inferred observations, or Stream is provided. Caller-side provenance and as-of availability determine whether an otherwise causal feature is usable at decision time.
 
+26. **Observed equity risk is not a price indicator or an intrabar estimate**
+
+    `drawdown` requires a positive first equity mark and finite nonnegative later marks.
+    Each depth is correctly rounded, and the exact maximum determines the witness before
+    rounding. Recovery is the first subsequent mark at or above that peak, or -1.
+    Cashflow adjustment, calendars, execution and risk limits remain caller-owned.
+
 ---
 
 ## Installation
@@ -275,6 +286,7 @@ lvlath/
 ├── donchian/              # observed ranges, explicit current-bar policy, bounded deques
 ├── vwap/                  # exact anchored weighted means, masks and bounded replay
 ├── sessionlevels/         # prior completed session H/L/last close and shared readiness
+├── drawdown/              # observed equity depth, exact maximum witness and recovery
 ├── paa/                   # fractional PAA, exact rational geometry, detached averages
 ├── sax/                   # symbolic PAA words, SHA-256 policy identity, Euclidean MINDIST
 ├── tfsax/                 # research-only exact-DTW/SAX comparison; no TFSAX encoder or certified pruning
@@ -320,6 +332,7 @@ lvlath/
 │   ├── ATR.md
 │   ├── VWAP.md
 │   ├── SESSIONLEVELS.md
+│   ├── DRAWDOWN.md
 │   ├── DONCHIAN.md
 │   ├── STATS.md
 │   ├── OLS.md
@@ -525,6 +538,8 @@ Composition rule:
  - series owns exact-grid validation and causal array artifacts.
  - sessionlevels owns exact previous completed session H/L/final-close selection
    over explicit partitions; calendars, coverage evidence and decision policy stay external.
+ - drawdown owns sampled equity Depth and exact maximum witness; a caller ledger
+   admits cashflow-adjusted NAV, marks, timestamps and revision policy. No graph or price-feature import.
  - vwap owns exact cumulative price-volume means over explicit segments, positive-weight
    readiness and exact continuation; calendars, source cursors, revisions and fills stay external.
  - donchian owns observed high/low ranges, exact-mean midpoints and explicit current-bar
@@ -663,6 +678,7 @@ approves risk-model deployment. Details follow in the
 | `donchian`      | Observed Upper/Lower, correctly rounded Middle and one input-aligned Valid mask.                                                               | Explicit current/prior windows, latest ties, O(n) time and O(min(P,n)) workspace.                                          | Finalized-bar overlays, prior-range event audits, signed spreads and range-compression features.               |
 | `vwap`          | Owning Values/Valid for exact anchored price-volume means; single-owner Stream and exact-sum Snapshot.                                         | Explicit first anchor, one-round ratios, bounded 67-limb arithmetic and transactional reset.                               | Session benchmarks, fill-price comparisons, available-at AVWAP and replayable signed bases.                    |
 | `sessionlevels` | PreviousHigh/PreviousLow/PreviousClose and shared Valid; batch-only.                                                                           | Explicit half-open partitions; earliest equal extrema, exact final close, O(n+s) time/O(1) auxiliary state.                | Opening-risk references, holiday-week levels, causal replay and signed spreads.                                |
+| `drawdown`      | Owning positive-relative Depth, rounded Maximum and exact peak/trough/recovery witness.                                                        | Correct nearest-even binary64 depths, exact ties, O(n) time/O(1) workspace.                                                | NAV risk audits, stress-path comparisons and sampled trailing reviews.                                         |
 | `rsi`           | Deterministic Wilder RSI over finite-positive prices: batch mask, streaming Push and snapshot continuation.                                    | One shared scalar recurrence, explicit warmup, atomic failed Push, detached checkpoints, no signal thresholds.             | Portfolio momentum-factor extraction, feed monitoring, authenticated hot-failover analytics.                   |
 | `macd`          | SMA-seeded fast/slow EMAs, signed Line/Signal/Histogram, batch and single-owner streaming.                                                     | Shared kernel, separate warmup masks, bitwise batch/stream parity and detached state snapshots.                            | Trend-feature pipelines, bar-feed monitoring, replayable analytics failover.                                   |
 | `mfi`           | Volume-weighted typical-price Money Flow Index over a fixed transition window.                                                                 | Neumaier ring, deterministic rebase, zero-volume retention, atomic Push and detached snapshots.                            | OHLCV research features, market-feed reconciliation and checkpointed streaming analytics.                      |
@@ -1837,6 +1853,39 @@ and [five examples](sessionlevels/example_test.go) cover operational boundaries.
 ```sh
 go test ./sessionlevels -run '^Example' -count=1 -v
 go run ./examples/sessionlevels
+```
+
+### Drawdown: sampled equity depth and exact recovery evidence
+
+Use `github.com/lvlath/go/drawdown` after the caller has admitted a chronological,
+unit-consistent equity or cashflow-adjusted NAV history. The metric measures
+observed losses, not intrabar excursions or return volatility.
+
+| Need                                    | Public API                                  |
+|-----------------------------------------|---------------------------------------------|
+| Complete audit/profile and witness      | `drawdown.Compute(ctx, equity)`             |
+| Historical MDD only                     | `drawdown.ComputeMaximum(ctx, equity)`      |
+| Current loss at the final admitted mark | `drawdown.ComputeCurrentDepth(ctx, equity)` |
+
+The two scalar wrappers delegate to the complete batch; both still use O(n)
+transient output. When a report needs both values, call `Compute` once and read
+`Maximum` and the final `Depth` element. All errors preserve sentinel identity;
+scalar zero on error is not a valid measurement. No Options, Stream or Snapshot.
+
+`Depth` has one valid nearest-even binary64 fraction per mark. Exact ratios,
+not rounded depths, select the earliest equal trough and earliest equal running
+peak. `Maximum` is bit-identical to `Depth[TroughIndex]`. The first full recovery
+after that trough is `RecoveryIndex`; -1 means not observed. A no-drawdown
+history has witness 0/0/0. A rounded depth of 1 is not proof of total loss.
+
+For NAV admission, error precedence and proofs, see the [guide](docs/DRAWDOWN.md),
+[tutorial](docs/TUTORIAL.md#11ab-drawdown-foundations-sampled-equity-risk-and-recovery),
+[FAQ](docs/FAQ_%26_TIPS.md#13aa-drawdown-faq-exact-witness-and-nav-boundaries)
+and [package charter](drawdown/doc.go).
+
+```sh
+go test ./drawdown -run '^Example' -count=1 -v
+go run ./examples/drawdown
 ```
 
 ### RSI: one Wilder recurrence for batch factors and online price streams
@@ -3034,6 +3083,7 @@ See also the [documentation index](docs/README.md) for guide discovery and impor
 | Donchian observed ranges          | [`docs/DONCHIAN.md`](docs/DONCHIAN.md)           | Current/prior windows, nearest-even midpoint, masks, ring bounds, source timing and executable consumers.                        |
 | Exact anchored VWAP               | [`docs/VWAP.md`](docs/VWAP.md)                   | Exact products and weights, first anchors, positive-weight readiness, error-atomic replay and Go-only verification.              |
 | Previous completed session levels | [`docs/SESSIONLEVELS.md`](docs/SESSIONLEVELS.md) | Explicit manifests, causal H/L/final close, exact selection, readiness, errors and correction replay.                            |
+| Sampled equity drawdown           | [`docs/DRAWDOWN.md`](docs/DRAWDOWN.md)           | Exact rounded depth, witness ordering, recovery, cashflow boundary and audits.                                                   |
 | Wilder RSI                        | [`docs/RSI.md`](docs/RSI.md)                     | Stable ratio math, exact seed/warmup, batch/stream equivalence, sentinels and checkpoint ABI.                                    |
 | SMA-seeded MACD                   | [`docs/MACD.md`](docs/MACD.md)                   | Appel EMA seed/recurrence, signed values, aligned masks, batch/stream parity, checkpoint safety.                                 |
 | Compensated MFI                   | [`docs/MFI.md`](docs/MFI.md)                     | Typical-price OHLCV flow, transition windows, Neumaier rebase, warmup masks and versioned state.                                 |
@@ -3470,6 +3520,7 @@ Determinism is not "sort something at the end." It is a cross-package contract.
 * `donchian` scans indices ascending and retains the latest equal high/low; masks, selected boundary bits, and midpoint rounding are observable contracts.
 * `vwap` uses one accepted-row transition and exact integer sums for batch/stream/restart parity; permutation preserves the final mean within a fixed segment, not every prefix or error order.
 * `sessionlevels` selects earliest equal extrema and copies the final close bit for bit; a valid correction within a session affects at most its immediate successor with fixed segmentation.
+* `drawdown` retains the earliest equal exact trough, never selects a witness from rounded Depth, and preserves every valid prefix depth under extension.
 * `ols` validates rows and features ascending, inherits QR deterministic pivot tie rules and predicts with original columns in the given order.
 * `dtw` runs row-major DP and backtracks ties as diagonal, then vertical/up, then horizontal/left.
 * `series` scans samples in index order, reports gaps and ranges in that order, and preserves length and validity masks.
@@ -3524,6 +3575,7 @@ Close-change-signed cumulative volume?         obv
 Candle-close-location cumulative volume?       ad
 Exact price-volume mean from explicit origin?  vwap.ComputeDefault / vwap.NewDefault
 Fixed prior completed day/week H/L/close?      sessionlevels.ComputeDaily / ComputeWeekly
+Sampled NAV drawdown and recovery?             drawdown.Compute / ComputeMaximum / ComputeCurrentDepth
 Symbolic Euclidean screening of windows?       sax
 Temporal alignment with phase drift?           dtw
 Closed tour through every vertex?              tsp
@@ -3543,6 +3595,7 @@ Important distinctions:
 * `donchian` consumes those ordered H/L positions but neither validates a time grid nor turns an observed range into an execution rule.
 * `vwap` consumes admitted price/weight/reset positions; calendars, source revisions, correction replay and safe consumer ratios remain outside its exact-mean kernel.
 * `sessionlevels` consumes admitted H/L/C with explicit non-overlapping sessions; use separate partitions for day and week, preserve source availability and do not infer finality from a bar count.
+* `drawdown` consumes admitted equity/NAV, not H/L/C or returns; keep sampling and cashflow policy outside the metric and distinguish current depth from historical MDD.
 * `stats` aggregates finite observations and transforms features with parameters learned on training data only; it does not interpret series validity masks or refit.
 * `ols` uses pivoted QR to fit finite, full-rank linear models and returns frozen original-unit coefficients; it never substitutes normal equations, drops rank-deficient factors or refits at inference.
 * `ridge` uses loss-preserving augmented QR with mandatory positive Lambda and no intercept penalty; its physical Model remains immutable even when the original design is collinear or wide.
@@ -3595,6 +3648,7 @@ stable-input batch calls are independent; synchronize shared result mutation.
 | "How do I compare with a previous-bar range or draw a current range?"                          | `donchian.ComputeExcludeCurrent` / `ComputeIncludeCurrent`         | Explicit information set, shared mask, signed finite inputs and exact-mean midpoint.                    |
 | "How do I calculate a price-volume mean from explicit session/news origins?"                   | `vwap.ComputeDefault` / `NewDefault`                               | Exact represented-input products, readiness by positive weight, and recoverable single-owner state.     |
 | "How do I compare with the last completed day or week?"                                        | `sessionlevels.ComputeDaily` / `ComputeWeekly`                     | Explicit session partition and fixed previous H/L/last close; no current-session data in its reference. |
+| "How deep was the worst sampled capital loss, and did it recover?"                             | `drawdown.Compute`                                                 | Owning profile, exact witness and first recovery; no inferred cashflows or intrabar path.               |
 | "How do I compute Wilder relative strength on an ordered positive price feed?"                 | `rsi.ComputePeriod` / `rsi.NewPeriod`                              | Aligned Values+Valid or single-owner zero-allocation streaming; caller handles gaps.                    |
 | "How do fast and slow price trends diverge, and what is their smoothed separation?"            | `macd.ComputeDefault` / `macd.NewDefault`                          | Three signed aligned series with readiness masks and transactional single-owner streaming.              |
 | "Which typical-price directions received more traded volume in the last P transitions?"        | `mfi.ComputeDefault` / `mfi.NewDefault`                            | Bounded OHLCV MFI, explicit warmup validity and compensated rolling state.                              |
@@ -3704,6 +3758,7 @@ symmetric **metric** TSP matrix; matching alone does not establish metricity.
 | Range monitoring invents a previous close, hides warmup TR, or treats zero ATR as missing      | `atr` preserves first-bar TR, separate ATR readiness and exact Wilder continuation.                             |
 | A prior-range test uses the current high, or a midpoint is treated as proof of finite width    | Select `ComputeExcludeCurrent`; check masks and separately validate width/ratio arithmetic.                     |
 | A previous-session threshold uses current-session totals or an unverified predecessor          | `sessionlevels` selects only the completed predecessor; validate the manifest and source availability upstream. |
+| Rounded equal drawdowns choose the wrong trough, or an unrecovered loss is shown as a duration | Use `drawdown.Compute` witness, handle RecoveryIndex=-1, and do not argmax rounded Depth.                       |
 | A failed EMA event is counted or replayed twice                                                | Check errors before advancing source offsets; persist the exact Snapshot and offset together.                   |
 | Missing timestamps silently treated as samples                                                 | `series.Validate` reports whole-slot gaps; no values or time slots are synthesized.                             |
 | PAA fractional remainder dropped or padded with zeros                                          | `paa.Transform` uses integer exact-overlap geometry; neither truncation nor padding occurs.                     |
@@ -3779,6 +3834,10 @@ Run `go test ./donchian -run '^Example' -count=1`; no live feed is required.
 For SessionLevels, follow [`sessionlevels/doc.go`](sessionlevels/doc.go) ->
 [`docs/SESSIONLEVELS.md`](docs/SESSIONLEVELS.md) -> [`sessionlevels/example_test.go`](sessionlevels/example_test.go).
 Run `go test ./sessionlevels -run '^Example' -count=1` and `go run ./examples/sessionlevels`; both use offline engineered data.
+
+For Drawdown, follow [`drawdown/doc.go`](drawdown/doc.go) ->
+[`docs/DRAWDOWN.md`](docs/DRAWDOWN.md) -> [`drawdown/example_test.go`](drawdown/example_test.go).
+Run `go test ./drawdown -run '^Example' -count=1` and `go run ./examples/drawdown`.
 
 For ATR, follow [`atr/doc.go`](atr/doc.go) -> [`docs/ATR.md`](docs/ATR.md) ->
 [`atr/example_test.go`](atr/example_test.go), with bounded CSV replay in

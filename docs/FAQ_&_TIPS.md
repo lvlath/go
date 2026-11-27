@@ -3,7 +3,7 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/FAQ_&_TIPS.md
-  Package reference: sessionlevels, vwap, donchian, atr, ema, core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima, lstm, pacf, tfsax and the wider lvlath package family
+  Package reference: drawdown, sessionlevels, vwap, donchian, atr, ema, core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima, lstm, pacf, tfsax and the wider lvlath package family
   lvlath - FAQ & Tips
 
   Purpose:
@@ -33,6 +33,7 @@
     - Donchian current/prior windows, shared readiness, finite midpoint, derived-width safety and batch correction boundaries.
     - Exact anchored VWAP, positive-weight readiness, rejected-reset rollback and authenticated source-bound continuation.
     - Previous completed session levels, manifest admission, independent day/week readiness, exact selection and causal correction replay.
+    - Sampled equity drawdown, exact rational witness ordering, rounded thresholds and censored recovery.
     - Wilder RSI warmup masks, deterministic batch/stream semantics, state rollback and checkpoint boundaries.
     - MACD SMA-seeded EMAs, signed features, three readiness masks, checkpoint identity and hot-path ownership.
     - MFI fixed-transition OHLCV windows, zero-volume retention, compensated rebasing and checkpoint authentication.
@@ -106,6 +107,7 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
     13x. [Donchian FAQ](#13x-donchian-faq-windows-errors-and-range-safety)
     13y. [VWAP FAQ](#13y-vwap-faq-anchors-exact-means-and-continuation)
     13z. [SessionLevels FAQ](#13z-sessionlevels-faq-manifests-readiness-and-causality)
+    13aa. [Drawdown FAQ](#13aa-drawdown-faq-exact-witness-and-nav-boundaries)
 14. [Builder and gridgraph tips](#14-builder-and-gridgraph-tips)
 15. [Errors and diagnostics](#15-errors-and-diagnostics)
 16. [Determinism and concurrency](#16-determinism-and-concurrency)
@@ -151,6 +153,7 @@ Start with the question, not the algorithm name.
 | "How do I compare a close against preceding observed highs and lows?"                                         | `donchian.ComputeExcludeCurrent`                          | Explicit prior window; owning Upper/Middle/Lower and one mask; no execution assumptions.                      |
 | "How do I calculate an exact price-volume mean from explicit session/news origins?"                           | `vwap.ComputeDefault` / `NewDefault`                      | Exact binary-input weights/products, positive-weight readiness, transactional reset and bounded continuation. |
 | "How do I compare against a previous completed trading day or week?"                                          | `sessionlevels.ComputeDaily` / `ComputeWeekly`            | Caller-prepared intervals, exact prior H/L/last close and shared readiness.                                   |
+| "How large was the observed equity loss from its peak, and when did it recover?"                              | `drawdown.Compute`                                        | Correctly rounded profile and exact witness, no inferred cashflows.                                           |
 | “How strong are smoothed up/down changes in an ordered positive price feed?”                                  | `rsi.ComputePeriod` / `Stream.Push`                       | Wilder oscillator with a validity mask or zero-allocation, single-owner recurrence.                           |
 | “How do fast and slow price trends diverge and how does that separation change?”                              | `macd.ComputeDefault` / `NewDefault`                      | SMA-seeded EMA, three signed aligned series, independent readiness masks and replayable Stream.               |
 | “How much rising versus falling typical-price flow occurred over the most recent candles?”                    | `mfi.ComputeDefault` / `NewDefault`                       | Volume-weighted last-P-transition MFI, warmup mask, compensated rolling ring and detached checkpoint.         |
@@ -197,6 +200,7 @@ measure gap-aware candle ranges        -> ATR ComputePeriod / Stream.Push (not E
 select an observed prior-bar range     -> DONCHIAN ComputeExcludeCurrent (not a smoothed range)
 compute explicit-origin weighted price -> VWAP ComputeDefault / Stream.Push (not rolling, HLC3 or a calendar)
 fixed previous session H/L/last close  -> SESSIONLEVELS ComputeDefault / ComputeDaily / ComputeWeekly
+sampled equity risk / witness          -> DRAWDOWN Compute / ComputeMaximum / ComputeCurrentDepth
 compute causal Wilder price strength   -> RSI ComputePeriod / Stream.Push
 compute signed trend-separation factor -> MACD ComputeDefault / Stream.Push
 compute volume-weighted OHLCV flow     -> MFI ComputeDefault / Stream.Push
@@ -6125,6 +6129,81 @@ and [the tutorial's complete example](TUTORIAL.md#11aa-sessionlevels-foundations
 
 ---
 
+## 13aa. Drawdown FAQ: Exact Witness and NAV Boundaries
+
+### Q13aa.1. Can I pass account balances or price candles directly?
+
+Pass a finite nonnegative chronological equity history with a strictly positive
+first mark. Raw balances describe balance drawdown, not necessarily investment
+performance. If subscriptions, redemptions or transfers occur, prepare a
+cashflow-adjusted NAV externally. SessionLevels, VWAP, Donchian and ATR measure
+price features; they cannot replace a marked equity ledger. The package neither
+uses OHLC intrabar extrema nor reconstructs returns or positions.
+
+### Q13aa.2. Why does a displayed tie choose the later trough?
+
+The exact ratio determines the witness. For `[1, 0x1p-55, 2, 0x1p-55, 2]`,
+indices 1 and 3 both round to depth 1, but the latter has the smaller exact
+residual equity ratio. The result is peak 2, trough 3, recovery 4. Only an exact
+rational tie keeps the first trough. The peak is the earliest occurrence of its
+running maximum, even across previously recovered losses. Use the witness
+indices, not `argmax(Depth)` or a tolerance. Test true total loss using the
+original admitted equity at TroughIndex, not Maximum==1.
+
+### Q13aa.3. Is zero valid, and what does -1 recovery mean?
+
+| Observed situation                                   | Interpretation                                        |
+|------------------------------------------------------|-------------------------------------------------------|
+| Initial zero (either sign) or finite negative equity | `ErrEquity`; no result                                |
+| Later zero                                           | Valid depth 1; a recovery can still be observed later |
+| Nondecreasing history                                | Maximum +0; witness 0/0/0                             |
+| Positive drawdown, recovery absent                   | `RecoveryIndex == -1`, successful censored episode    |
+| Positive drawdown, recovery observed                 | First subsequent index at or above the selected peak  |
+
+Subtract recovery and peak indices only after checking that a positive episode
+recovered. Indices count observation intervals, not calendar time. Map them to
+admitted timestamps externally.
+
+### Q13aa.4. Which facade should a risk dashboard use?
+
+`Compute` provides the complete profile and evidence. `ComputeMaximum` projects
+historical MDD; `ComputeCurrentDepth` projects the final sampled loss. Both
+wrappers delegate to the full batch and retain its O(n) transient allocation.
+For both scalars in one report, run `Compute` once. On error the scalar wrappers
+return +0 with the original error, not a valid zero observation. A limit applied
+to a rounded depth is a rounded threshold policy, not exact-rational certification.
+No risk thresholds or automatic resets exist in the package.
+
+### Q13aa.5. Can I compute the final result once for every earlier decision?
+
+No. Earlier `Depth` cells are invariant under history extension, but a final
+maximum witness or its recovery may require later observations. For an as-of
+review supply only the admitted prefix. A rolling prefix origin changes the
+historical peak unless the caller intentionally defines a new history. Repeated
+calls over all increasing prefixes cost O(n^2) total work. No Stream/Snapshot
+or calendar-based rolling mode is supplied.
+
+### Q13aa.6. Why did Compute fail even after a complete recovery?
+
+Every observation is validated in increasing index order. Context precedes
+empty-history admission; within a row NaN/Inf precedes sign. For example,
+`[1,-1,NaN]` gives `ErrEquity`, not `ErrNonFinite`. A late invalid observation
+rejects the entire batch, including any earlier recovered episode. Check
+`errors.Is`, never diagnostic strings. Cancellation is polled by phase and before
+publication; errors return nil Result. `IsNil` is a pointer test, not evidence of
+field integrity or successful source admission.
+
+### Q13aa.7. How do I verify a precision-sensitive change?
+
+Run the independent rational oracle and adversarial binary64 fixtures, all five
+examples, external-package tests, race checks, coverage and benchmarks. The
+[guide](DRAWDOWN.md#verification-and-benchmarks) lists the relevant commands and
+workload regimes. Statement coverage is not a mathematical proof; the exact
+nearest-even contract requires bit equality, not a universal epsilon. Never
+change the witness law to obtain a desired coverage number.
+
+---
+
 ## 14. Builder and gridgraph tips
 
 ### Q14.1. When should I use `builder`?
@@ -6759,6 +6838,17 @@ Retain policy, provenance, revision and availability metadata alongside the
 output. Never use current-session totals at its opening or treat a close-based
 observation as a guaranteed fill. See [the guide](SESSIONLEVELS.md) and
 [the standalone scenario](../examples/sessionlevels/main.go).
+
+---
+
+### Recipe W. Audit sampled NAV before publishing a risk report
+
+Admit one ordered, consistent-unit NAV history with positive origin and a known
+sampling/revision policy. Call `drawdown.Compute`, check err, then consume
+Maximum and the exact witness. Map indices to original mark IDs, check -1 before
+reporting recovery duration, and keep the causal Depth profile for charts and
+as-of analysis. Do not use raw deposit-inflated balances as a return-adjusted
+NAV or equate sampled MDD with intrabar execution risk. See [DRAWDOWN.md](DRAWDOWN.md).
 
 ---
 

@@ -3,7 +3,7 @@
 
 // Package main documents lvlath, a deterministic, contract-driven Go toolkit for
 // graph topology, routing, optimization, dense algebra, time-series analysis,
-// statistical inference, stochastic simulation, econometrics and causal indicators.
+// statistical inference, stochastic simulation, econometrics, causal indicators and sampled equity risk.
 // This is a repository overview, not a re-exporting algorithm facade. Import the
 // owning subpackage (for example github.com/lvlath/go/dtw).
 //
@@ -98,7 +98,7 @@
 //   - arima: Fixed nonseasonal conditional Gaussian ARIMA with anchored level forecasts and marginal
 //     innovation variance.
 //
-// E. Indicators: readiness, arithmetic and recovery (10 packages)
+// E. Indicators: readiness, arithmetic and recovery (11 packages)
 //
 //   - ema: Exact affine exponential levels with explicit SMA or First seed and recoverable streams.
 //   - atr: Exact signed-candle True Range and Wilder ATR with independent readiness and replay.
@@ -108,6 +108,7 @@
 //     reset.
 //   - sessionlevels: Previous completed session high, low and final close over explicit
 //     observed-index partitions, with a shared readiness mask.
+//   - drawdown: Correctly rounded sampled equity Depth, exact maximum witness and first recovery.
 //   - rsi: Wilder gain/loss oscillator over ordered finite positive prices, batch and checkpointable
 //     stream.
 //   - macd: SMA-seeded fast/slow Appel EMAs, signed Line/Signal/Histogram and separate masks.
@@ -202,6 +203,8 @@
 //     allocation; bounded decimal continuation.
 //   - sessionlevels: O(n+s) batch including validation, O(n) owning output, O(1) scalar
 //     workspace; four independent output buffers, no per-session allocation.
+//   - drawdown: At most two linear scans, O(n) owning Depth and O(1) auxiliary space;
+//     scalar projections delegate to the full batch and retain its transient output cost.
 //   - rsi: Linear batch and fixed-state Push; no internal heap allocation in documented hot path.
 //   - macd: Linear batch, fixed-state streaming; no hidden history retention.
 //   - mfi: Linear total window updates with periodic rebasing and O(P) rolling state where
@@ -325,6 +328,11 @@
 //     fails; non-nil empty prices with no sessions succeed. Context, nil, shape, session
 //     structure, global nonfinite before finite geometry; all errors return nil.
 //     Daily/weekly wrappers require explicit manifests, not inferred time.
+//   - drawdown: First finite equity >0, later finite >=0; no warmup. Exact ratios choose
+//     the earliest tied trough and earliest equal running peak; RecoveryIndex=-1 if
+//     unrecovered, witness 0/0/0 without loss. Context/shape/row-order errors, finite
+//     before sign in each row. All failures nil for Compute; scalar wrappers +0/error.
+//     Cashflows, intrabar equity, thresholds, durations and Stream/Snapshot are external.
 //   - rsi: Period counts changes, not candles; warmup mask is not an oscillator zero. Keep shared
 //     batch/stream recurrence and flat-price convention; reject invalid rows without state advance.
 //   - macd: Signal starts from ready Line, not warmup zeros; preserve signed outputs and distinct
@@ -345,7 +353,9 @@
 // be substituted by approximate accumulators. EMA uses a signed seed, ATR an
 // unsigned seed and previous close (each decimal <=660 bytes); VWAP retains two
 // sums (each <=1300 bytes), with fixed magnitude/count/convexity constraints.
-// SessionLevels and Donchian have no stream/snapshot. SessionLevels needs an
+// Drawdown, SessionLevels and Donchian have no stream/snapshot. Drawdown Depth
+// is prefix invariant, but final Maximum and recovery may depend on later marks.
+// Feed externally prepared NAV, not price features or raw cashflow changes. SessionLevels needs an
 // admitted complete predecessor for ready levels, not a saved incremental state.
 // It validates all supplied bars, including masked and incomplete intervals,
 // and leaves calendar coverage, corrections and as-of availability to callers.

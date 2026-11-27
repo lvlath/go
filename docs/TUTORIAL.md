@@ -3,9 +3,9 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/TUTORIAL.md
-  Package reference: sessionlevels, vwap, donchian, atr, ema, matrix, stats, ols, ridge, series, pacf, tfsax, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima, lstm and the wider lvlath package family
+  Package reference: drawdown, sessionlevels, vwap, donchian, atr, ema, matrix, stats, ols, ridge, series, pacf, tfsax, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima, lstm and the wider lvlath package family
   Contract status: learning guide; package doc.go and source define the public API.
-  Scope: graph, matrix, factorization, statistical and temporal workflows, including previous completed session levels, exact anchored VWAP, causal Donchian ranges, exact affine EMA, causal MACD, rolling MFI, cumulative OBV, Chaikin A/D, reproducible parallel Monte Carlo, exact-in-distribution GBM, experimental Merton jump diffusion, GJR-GARCH causal volatility with constrained Gaussian QMLE, and fixed-order conditional Gaussian ARIMA with anchored forecasts, and frozen IFGO LSTM recurrent inference, and finite-window Durbin-Levinson PACF estimation, and the TFSAX research-only DTW-versus-SAX retrieval gate.
+  Scope: graph, matrix, factorization, statistical and temporal workflows, including sampled equity drawdown and recovery, previous completed session levels, exact anchored VWAP, causal Donchian ranges, exact affine EMA, causal MACD, rolling MFI, cumulative OBV, Chaikin A/D, reproducible parallel Monte Carlo, exact-in-distribution GBM, experimental Merton jump diffusion, GJR-GARCH causal volatility with constrained Gaussian QMLE, and fixed-order conditional Gaussian ARIMA with anchored forecasts, and frozen IFGO LSTM recurrent inference, and finite-window Durbin-Levinson PACF estimation, and the TFSAX research-only DTW-versus-SAX retrieval gate.
   lvlath - Repository Tutorial
 
   Purpose:
@@ -25,7 +25,7 @@
 
 > **hard math on an easy level**
 
-Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fitted feature scaling, covariance PCA, exact affine EMA, causal Donchian ranges, exact anchored VWAP, previous completed session levels, causal Wilder RSI, SMA-seeded MACD, rolling Money Flow Index, compensated On-Balance Volume, Chaikin A/D, reproducible parallel Monte Carlo, exact-lognormal GBM paths, stationary asymmetric GJR-GARCH conditional variance, fixed-order conditional Gaussian ARIMA, frozen LSTM forward inference, time-series alignment, and research-only DTW-versus-SAX retrieval audits.
+Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fitted feature scaling, covariance PCA, exact affine EMA, causal Donchian ranges, exact anchored VWAP, previous completed session levels, sampled equity drawdown, causal Wilder RSI, SMA-seeded MACD, rolling Money Flow Index, compensated On-Balance Volume, Chaikin A/D, reproducible parallel Monte Carlo, exact-lognormal GBM paths, stationary asymmetric GJR-GARCH conditional variance, fixed-order conditional Gaussian ARIMA, frozen LSTM forward inference, time-series alignment, and research-only DTW-versus-SAX retrieval audits.
 
 This tutorial is the beginning of the learning path. It introduces the objects and ideas that most packages share: graphs, matrices, options, result artifacts, error contracts, and deterministic algorithm execution.
 
@@ -72,6 +72,7 @@ This tutorial is the beginning of the learning path. It introduces the objects a
     11y. [Donchian Foundations: Observed Ranges and Information Sets](#11y-donchian-foundations-observed-ranges-and-information-sets)
     11z. [VWAP Foundations: Exact Weights, Explicit Anchors, and Replay](#11z-vwap-foundations-exact-weights-explicit-anchors-and-replay)
     11aa. [SessionLevels Foundations: Previous Completed Session Levels](#11aa-sessionlevels-foundations-previous-completed-session-levels)
+    11ab. [Drawdown Foundations: Sampled Equity Risk and Recovery](#11ab-drawdown-foundations-sampled-equity-risk-and-recovery)
 12. [Algorithm Selection Guide](#12-algorithm-selection-guide)
 13. [Professional Best Practices](#13-professional-best-practices)
 14. [Where To Go Next](#14-where-to-go-next)
@@ -111,6 +112,7 @@ The library covers:
 * `donchian` observed high/low ranges, explicit current-bar inclusion, correctly rounded midpoint and one aligned readiness mask;
 * `vwap` exact represented-input price-volume means with explicit anchors, positive-weight readiness, transactional streams and bounded exact-sum continuation;
 * `sessionlevels` exact previous completed session high, low and final close over explicit partitions, with one aligned readiness mask and no calendar inference;
+* `drawdown` nearest-even sampled equity depth with an exact maximum witness and first full recovery; no cashflow or intrabar inference;
 * `rsi` causal Wilder gain/loss smoothing, index-aligned readiness masks, zero-allocation streaming and versioned scalar checkpoints;
 * `macd` SMA-seeded Appel EMAs with signed Line/Signal/Histogram, separate readiness masks, transactional streaming and detached restart state;
 * `mfi` compensated rolling typical-price money flow over OHLCV, transition-counted zero volumes, batch/stream parity and detached replay state;
@@ -162,6 +164,7 @@ exact candle range         *atr.Result                 always-present TR / indep
 observed rolling range     *donchian.Result            Upper / Middle / Lower / shared Valid; explicit current-bar policy
 exact anchored price mean  *vwap.Result                Values / Valid; explicit resets and positive-weight readiness
 prior completed session    *sessionlevels.Result       PreviousHigh / PreviousLow / PreviousClose / shared Valid
+sampled equity risk        *drawdown.Result            Depth / Maximum / exact peak, trough and first recovery
 Wilder RSI factor          *rsi.Result                 aligned oscillator / Valid mask
 MACD trend difference      *macd.Result                aligned Line / Signal / Histogram masks
 MFI volume-weighted flow   *mfi.Result                 aligned Values / Valid with compensated rolling window
@@ -207,6 +210,7 @@ A shortest-path formula is easy. A reliable Go package must also answer:
 * Did a previous-range comparison accidentally include the current high, or normalize by a scale that already includes the same shock?
 * Did a VWAP consumer assume a first anchor, lose a small product through cancellation, reset on a rejected row, or mistake Count for the persisted source cursor?
 * Did a prior-session feature use a developing current-session extreme, mark an incomplete predecessor complete, or confuse a trading session with a UTC day?
+* Did a risk report feed raw balances containing cashflows, pick a rounded argmax instead of the exact drawdown witness, or use final recovery at an earlier decision time?
 * Did a market-data loader drop a legitimate zero-volume candle and change the MFI rolling window?
 * Did an OBV calculation add the very first candle's volume, lose Neumaier correction, or reuse a mismatched feed cursor after Restore?
 * Did an A/D calculation accidentally discard the first contribution, form 2*Close, divide by a flat spread, or authenticate a public Config digest?
@@ -285,6 +289,7 @@ Read these files as a learning path. `doc.go` files define implemented package c
 | 8y   | [`DONCHIAN.md`](DONCHIAN.md)               | Observed rolling ranges, current-bar policy, exact midpoint, masks, bounded deques and consumer arithmetic.                    |
 | 8z   | [`VWAP.md`](VWAP.md)                       | Exact products/weights, explicit first anchors, zero-weight phases, error-atomic restart and source-bound replay.              |
 | 8aa  | [`SESSIONLEVELS.md`](SESSIONLEVELS.md)     | Explicit day/week manifests, causal reference levels, exact selection, readiness and replay.                                   |
+| 8ab  | [`DRAWDOWN.md`](DRAWDOWN.md)               | Observed NAV depth, exact witness ordering, first recovery, errors and caller-side risk audit.                                 |
 | 9    | [`DTW.md`](DTW.md)                         | `Align`, `AlignCostMatrix`, `AlignMatrix`, `AlignBounded`, exact `Search`, numeric and path artifacts.                         |
 | 9a   | [`DTW_SEARCH.md`](DTW_SEARCH.md)           | Fixed-length exact top-K, certified LB_Keogh, workers, budgets, and partial-result law.                                        |
 | 10   | [`TSP.md`](TSP.md)                         | Matrix-backed tours, exact regimes, Christofides, Blossom matching, local search, timeouts.                                    |
@@ -321,6 +326,7 @@ Working on numeric/time-series workflows:
   prior DONCHIAN[t] + separately ready ATR[t-1] -> caller-owned normalized feature (check units and arithmetic)
   admitted price/quantity/reset -> VWAP.ComputeDefault -> owning weighted levels + mask
   admitted H/L/C + day/week partitions -> SESSIONLEVELS.ComputeDaily / ComputeWeekly -> prior triples + shared masks
+  caller ledger + admitted NAV -> DRAWDOWN.Compute -> causal Depth + retrospective maximum witness
   source admission -> VWAP.NewDefault -> Push -> exact Snapshot + separate source cursor
   SERIES -> RSI.ComputePeriod / Stream.Push -> causal price-strength factors
   SERIES -> MACD.Compute / Stream.Push -> signed trend-separation features and masks
@@ -504,6 +510,30 @@ caller-admitted H/L/C + source revision
 Donchian chooses a moving observed-bar window. VWAP chooses a weighted prefix
 from an explicit reset. SessionLevels chooses the strictly previous completed
 interval. These are data-composition alternatives, not a dependency chain.
+
+### Observed equity risk branch
+
+Price-reference features and account risk have different inputs. No session,
+Donchian or VWAP result is an account balance. A caller may compose features
+with an execution simulator or ledger, then audit the resulting NAV independently:
+
+```text
+admitted H/L/C and optional causal features
+                 |
+        caller execution / ledger + cashflow policy
+                 |
+          sampled, admitted equity/NAV
+                 |
+            drawdown.Compute
+                 |
+       Depth + exact maximum witness
+                 |
+       caller report / rounded risk policy
+```
+
+These arrows describe data flow, not imports. The caller owns timestamps,
+revision evidence, executions and NAV admission. Drawdown does not consume
+future feature rows or reconstruct intrabar capital paths.
 
 ### Anchored weighted-price branch
 
@@ -5615,7 +5645,6 @@ The following complete program uses synthetic bounded candles to isolate the
 information-set choice. Closes are finite and inside the corresponding candles;
 Donchian validates only H/L, so the application must establish that close contract.
 
-<!-- donchian-example: tutorial-information-set -->
 ```go
 package main
 
@@ -5789,7 +5818,6 @@ resumed output bit and mask against the batch route. Source offset and segment
 Count diverge after the second reset. All tape data are engineered, not exchange
 history. The in-memory JSON round trip does not implement durable storage.
 
-<!-- vwap-example: tutorial-checkpoint -->
 ```go
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2025-2026 katalvlaran
@@ -6032,8 +6060,6 @@ no cross-frequency alignment is hidden. These are reproducible teaching values,
 not exchange-audited historical prices. The consumer reports whether a finalized
 close is strictly above both ready reference highs.
 
-<!-- sessionlevels-example: dual-manifest -->
-
 ```go
 package main
 
@@ -6141,6 +6167,78 @@ For the proof, exact error precedence and resource accounting, see
 
 ---
 
+## 11ab. Drawdown Foundations: Sampled Equity Risk and Recovery
+
+A gain from the initial mark does not prove small risk along the path. At each
+observation the reference is the maximum of the supplied equity prefix, not the
+initial balance. `drawdown.Compute` returns the owning relative-depth profile and
+one exact maximum episode. Use a pre-admitted cashflow-adjusted NAV in consistent
+units if measuring investment performance; do not infer cashflows from balance changes.
+
+Consider the following cashflow-neutral USD NAV marks. The second correction
+occurs after recovery of the first and is smaller. The final loss is not the MDD.
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+
+    "github.com/lvlath/go/drawdown"
+)
+
+func main() {
+    equity := []float64{100000, 110000, 120000, 105000, 90000, 112000,
+        120000, 125000, 130000, 127000, 117000, 123500}
+    result, err := drawdown.Compute(context.Background(), equity)
+    if err != nil {
+        log.Fatal(err)
+    }
+    // One canonical result suffices when both historical and current risk are needed.
+    fmt.Printf("MDD=%.1f%% current=%.1f%%\n", 100*result.Maximum,
+        100*result.Depth[len(result.Depth)-1])
+    fmt.Printf("peak=%d trough=%d recovery=%d\n", result.PeakIndex,
+        result.TroughIndex, result.RecoveryIndex)
+    if result.RecoveryIndex >= 0 && result.TroughIndex != 0 {
+        fmt.Printf("peak-to-recovery=%d observation intervals\n",
+            result.RecoveryIndex-result.PeakIndex)
+    }
+}
+```
+
+```text
+MDD=25.0% current=5.0%
+peak=2 trough=4 recovery=6
+peak-to-recovery=4 observation intervals
+```
+
+**Interpretation.** `Depth` is a positive fraction, including valid +0 with no
+warmup. Maximum is the depth at the exact-ratio-selected trough. Exact ties keep
+the earliest trough and earliest equal peak; different ratios may round to the
+same depth. A rounded 100% loss does not prove zero equity. A valid `RecoveryIndex`
+of -1 means recovery was not observed, whereas a no-drawdown witness is 0/0/0.
+
+`ComputeMaximum` and `ComputeCurrentDepth` return scalar projections of the same
+batch. They preserve the validation order and O(n) transient output, not a
+constant-memory or streaming mode. Check err before using a scalar; +0 on error
+is not a measurement. Use the complete `Compute` result when both are needed.
+
+For a live decision at observation t, supply only the admitted prefix through t.
+The Depth prefix is invariant under extension; final Maximum and RecoveryIndex
+are retrospective and may change. Repeatedly recomputing every prefix costs
+quadratic total work. After a source correction, recompute the affected history
+from an appropriate admitted origin; the running peak cannot be reconstructed
+from an arbitrary later chunk. No calendar, cashflow adjustment, risk limit or
+intrabar interpolation is inferred.
+
+See [DRAWDOWN.md](DRAWDOWN.md) for the exact rounding proof and
+[the five executable scenarios](../drawdown/example_test.go) for NAV accounting,
+backtest reporting, trailing review, stress recovery and precision certification.
+
+---
+
 ## 12. Algorithm Selection Guide
 
 ### If the input is a graph
@@ -6167,57 +6265,58 @@ For the proof, exact error precedence and resource accounting, see
 
 ### If the input is numeric data
 
-| Problem                                                       | Package                                                     | Main output                                                                                                   |
-|:--------------------------------------------------------------|:------------------------------------------------------------|:--------------------------------------------------------------------------------------------------------------|
-| Dense algebra                                                 | `matrix`                                                    | matrix result with shape/error policy.                                                                        |
-| Stable mean and population/sample variance                    | `stats.Summarize`                                           | detached `Summary`, exact binary-input mean and scaled variance.                                              |
-| Streaming/partitioned moments                                 | `stats.Moments`                                             | error-atomic Welford updates and Chan merges.                                                                 |
-| Training-only feature scaling                                 | `stats.FitStandardizer`                                     | immutable model and detached fit metadata.                                                                    |
-| Numeric cleaning                                              | `matrix`                                                    | sanitized matrix.                                                                                             |
-| Matrix-native normalization                                   | `matrix`                                                    | matrix-specific transforms under their own contract.                                                          |
-| Covariance/correlation                                        | `matrix`                                                    | stable sample moments and direct Pearson coefficients.                                                        |
-| Fitted PCA subspace and reconstruction                        | `pca.FitWithComponents` / `Model.Reconstruct`               | Frozen orthogonal basis, strict eigenpair gate, original-unit reconstruction.                                 |
-| Square linear solve with pivoting                             | `matrix.FactorLU`                                           | reusable factor, `P*A=L*U`, exact residual diagnostics.                                                       |
-| Tall full-column-rank least squares                           | `matrix.SolveLeastSquares` / `FactorQR`                     | Householder QR; numerical rank and `kappa_1(R)` measurement.                                                  |
-| Regularized regression for collinear/wide features            | `ridge.Fit` / `ridge.FitStandardized`                       | Positive-Lambda slope shrinkage, unpenalized intercept, frozen original-unit coefficients.                    |
-| Fitted regression for future physical inputs                  | `ols.Fit` / `ols.FitStandardized`                           | Immutable Model, original-unit coefficients, training SSE, no refit.                                          |
-| Symmetric positive-definite system                            | `matrix.FactorCholesky`                                     | accepted symmetric midpoint, SPD check, reusable solves.                                                      |
-| Symmetric spectral analysis                                   | `matrix`                                                    | eigenvalues/eigenvectors.                                                                                     |
-| Exact nanosecond cadence checks                               | `series.Validate`                                           | sample count + ordered gap metadata.                                                                          |
-| Dependent-data resampling index ensembles                     | `bootstrap.SampleIndices`                                   | Detached Moving/Circular/Stationary `[][]int`, replay ID, partial completion law.                             |
-| Causal lag/difference/returns                                 | `series`                                                    | length-preserving values + validity mask.                                                                     |
-| Fractional equal-duration scalar compression                  | `paa.Transform` / `paa.TransformRange`                      | Detached PAA means, exact rational intervals, original window length.                                         |
-| Fixed-alphabet symbolic window encoding                       | `sax.Encode` / `sax.Encoder.Encode`                         | Detached symbol word, policy identity and optional transformed PAA.                                           |
-| Compatible Euclidean symbolic lower bound                     | `sax.Encoder.Mindist` / `sax.MindistValues`                 | Lower-bound dissimilarity in the selected transformed space, never a general DTW bound.                       |
-| Direct sample ACF by integer lag                              | `acf.ComputeDefault` / `acf.Compute`                        | One fitted window, explicit denominator convention and pair counts; not causal streaming.                     |
-| Partial autocorrelation and AR-order screening                | `pacf.ComputeCentered` / `pacf.ComputeAtLag`                | Common-n Durbin-Levinson and in-window prediction variances; no automatic model selection.                    |
-| Smooth a finite signed level with explicit seed/readiness     | `ema.ComputeSMA` / `ComputeFirst`                           | Owning aligned Values/Valid; stream continuation through NewSMA/NewFirst.                                     |
-| Observed range including or excluding the current bar         | `donchian.ComputeIncludeCurrent` / `ComputeExcludeCurrent`  | Exact selected extrema, nearest-even midpoint, shared readiness; no default period or Stream. |
-| Exact price-volume mean within explicit segments              | `vwap.ComputeDefault` / `NewDefault` / `Stream.Push`        | Owning Values/Valid, positive-weight readiness, exact products and recoverable state; no rolling period. |
-| Fixed previous completed trading day/week H/L/close | `sessionlevels.ComputeDaily` / `ComputeWeekly` | Explicit partitions, one mask, exact selected extrema and final close; no calendar or stream. |
-| Causal Wilder price-strength oscillator                       | `rsi.ComputePeriod` / `rsi.NewPeriod`                       | Aligned Values+Valid or single-owner zero-allocation stream with explicit Reset.                              |
-| SMA-seeded MACD and trend separation                          | `macd.ComputeDefault` / `macd.NewDefault`                   | Three aligned signed outputs; independently gated Line and Signal/Histogram; zero-allocation Push.            |
-| Volume-weighted OHLCV price direction and rolling MFI         | `mfi.ComputeDefault` / `mfi.NewDefault`                     | Finite `[0,100]` feature, one Valid mask, compensated ring and versioned snapshots.                           |
-| Cumulative volume signed by close direction                   | `obv.ComputeCandles` / `obv.New`                            | Valid-first-bar zero, Neumaier state, unbounded finite balance and externally protected snapshots.            |
-| Cumulative volume weighted by close position                  | `ad.ComputeCandles` / `ad.New`                              | Valid first-bar contribution, bounded multiplier, Neumaier and external replay trust.                         |
-| Reproducible stochastic simulation paths                      | `rng.NewFactory().Stream` / `rng.NewStream`                 | Pinned PCG-DXSM, logical path IDs, one goroutine owner per stream.                                            |
-| Independent Monte Carlo paths and exact outcome quantiles     | `montecarlo.Run` / `RunWithQuantiles`                       | Path-indexed RNG streams, ordered vector sample moments, bounded worker window and explicit memory admission. |
-| Exact-in-distribution GBM on a chosen time grid               | `gbm.Simulate` / `gbm.SimulateSeeded`                       | Detached strictly positive prices, explicit years/days/seconds and complete/prefix status.                    |
-| Causal asymmetric return variance and bounded forecast        | `gjrgarch.FilterStationary` / `Step` / `ForecastVariance`   | One-shock next variance, then stationary expected-variance curve; no price path or VaR guarantee.             |
-| Fixed-order nonseasonal conditional mean and level forecast   | `arima.Fit` / `Model.Forecast`                              | Schur-stable ARMA, anchored d=1/2 levels, marginal innovation-only variance.                                  |
-| Frozen neural recurrent features with unequal session lengths | `lstm.Import` / `Model.InferSequence` / `Model.InferChunk`  | Immutable IFGO model, exact-zero padding and detached ModelID-tagged Hidden/Cell state.                       |
-| Deterministic constrained Gaussian volatility QMLE            | `gjrgarch.Fit` / `EvaluateGaussianQMLE`                     | Explicit Initial, hard variance floor, analytic score and nonconvergence candidate policy.                    |
-| Compensated Poisson-jump price paths over GBM                 | `jumpdiffusion.Simulate` / `SimulateSeeded`                 | Exact-in-distribution grid endpoints; bounded Poisson and complete-prefix policy.                             |
-| Complete fixed index windows                                  | `series.WindowRanges`                                       | ordered half-open sample-index intervals.                                                                     |
-| Hidden-state streaming causal filtering                       | `hmm.FilterStep` / `FilterDefault`                          | P(z_t given observations through t), no future-sample leakage.                                                |
-| Retrospective hidden-state attribution                        | `hmm.Smooth` / `hmm.Decode`                                 | Full-sequence state marginals vs one optimal joint path; different contracts.                                 |
-| Independent categorical/Gaussian sequence training            | `hmm.FitCategorical` / `hmm.FitGaussian`                    | MAP Baum-Welch with no cross-sequence transitions and explicit convergence diagnostics.                       |
-| Scalar sequence alignment                                     | `dtw.Align`                                                 | DTW `Result` with distance/reachability.                                                                      |
-| Inclusive-limit scalar alignment                              | `dtw.AlignBounded`                                          | Exact/above-limit/unreachable status.                                                                         |
-| Globally exact window top-K                                   | `dtw.Search`                                                | Sorted fixed-length squared-DTW matches.                                                                      |
-| Precomputed local-cost alignment                              | `dtw.AlignCostMatrix`                                       | DTW over caller-owned finite cost surface.                                                                    |
-| Multivariate time-series alignment                            | `dtw.AlignMatrix`                                           | squared-L2 row-cost alignment result.                                                                         |
-| Complete route matrix optimization                            | `tsp.SolveMatrix`                                           | tour, cost, exactness/timeout/ratio metadata.                                                                 |
+| Problem                                                       | Package                                                       | Main output                                                                                                   |
+|:--------------------------------------------------------------|:--------------------------------------------------------------|:--------------------------------------------------------------------------------------------------------------|
+| Dense algebra                                                 | `matrix`                                                      | matrix result with shape/error policy.                                                                        |
+| Stable mean and population/sample variance                    | `stats.Summarize`                                             | detached `Summary`, exact binary-input mean and scaled variance.                                              |
+| Streaming/partitioned moments                                 | `stats.Moments`                                               | error-atomic Welford updates and Chan merges.                                                                 |
+| Training-only feature scaling                                 | `stats.FitStandardizer`                                       | immutable model and detached fit metadata.                                                                    |
+| Numeric cleaning                                              | `matrix`                                                      | sanitized matrix.                                                                                             |
+| Matrix-native normalization                                   | `matrix`                                                      | matrix-specific transforms under their own contract.                                                          |
+| Covariance/correlation                                        | `matrix`                                                      | stable sample moments and direct Pearson coefficients.                                                        |
+| Fitted PCA subspace and reconstruction                        | `pca.FitWithComponents` / `Model.Reconstruct`                 | Frozen orthogonal basis, strict eigenpair gate, original-unit reconstruction.                                 |
+| Square linear solve with pivoting                             | `matrix.FactorLU`                                             | reusable factor, `P*A=L*U`, exact residual diagnostics.                                                       |
+| Tall full-column-rank least squares                           | `matrix.SolveLeastSquares` / `FactorQR`                       | Householder QR; numerical rank and `kappa_1(R)` measurement.                                                  |
+| Regularized regression for collinear/wide features            | `ridge.Fit` / `ridge.FitStandardized`                         | Positive-Lambda slope shrinkage, unpenalized intercept, frozen original-unit coefficients.                    |
+| Fitted regression for future physical inputs                  | `ols.Fit` / `ols.FitStandardized`                             | Immutable Model, original-unit coefficients, training SSE, no refit.                                          |
+| Symmetric positive-definite system                            | `matrix.FactorCholesky`                                       | accepted symmetric midpoint, SPD check, reusable solves.                                                      |
+| Symmetric spectral analysis                                   | `matrix`                                                      | eigenvalues/eigenvectors.                                                                                     |
+| Exact nanosecond cadence checks                               | `series.Validate`                                             | sample count + ordered gap metadata.                                                                          |
+| Dependent-data resampling index ensembles                     | `bootstrap.SampleIndices`                                     | Detached Moving/Circular/Stationary `[][]int`, replay ID, partial completion law.                             |
+| Causal lag/difference/returns                                 | `series`                                                      | length-preserving values + validity mask.                                                                     |
+| Fractional equal-duration scalar compression                  | `paa.Transform` / `paa.TransformRange`                        | Detached PAA means, exact rational intervals, original window length.                                         |
+| Fixed-alphabet symbolic window encoding                       | `sax.Encode` / `sax.Encoder.Encode`                           | Detached symbol word, policy identity and optional transformed PAA.                                           |
+| Compatible Euclidean symbolic lower bound                     | `sax.Encoder.Mindist` / `sax.MindistValues`                   | Lower-bound dissimilarity in the selected transformed space, never a general DTW bound.                       |
+| Direct sample ACF by integer lag                              | `acf.ComputeDefault` / `acf.Compute`                          | One fitted window, explicit denominator convention and pair counts; not causal streaming.                     |
+| Partial autocorrelation and AR-order screening                | `pacf.ComputeCentered` / `pacf.ComputeAtLag`                  | Common-n Durbin-Levinson and in-window prediction variances; no automatic model selection.                    |
+| Smooth a finite signed level with explicit seed/readiness     | `ema.ComputeSMA` / `ComputeFirst`                             | Owning aligned Values/Valid; stream continuation through NewSMA/NewFirst.                                     |
+| Observed range including or excluding the current bar         | `donchian.ComputeIncludeCurrent` / `ComputeExcludeCurrent`    | Exact selected extrema, nearest-even midpoint, shared readiness; no default period or Stream.                 |
+| Exact price-volume mean within explicit segments              | `vwap.ComputeDefault` / `NewDefault` / `Stream.Push`          | Owning Values/Valid, positive-weight readiness, exact products and recoverable state; no rolling period.      |
+| Fixed previous completed trading day/week H/L/close           | `sessionlevels.ComputeDaily` / `ComputeWeekly`                | Explicit partitions, one mask, exact selected extrema and final close; no calendar or stream.                 |
+| Observed equity/NAV loss from running peak                    | `drawdown.Compute` / `ComputeMaximum` / `ComputeCurrentDepth` | Owning exact-rounded Depth and maximum witness; no warmup, no intrabar model.                                 |
+| Causal Wilder price-strength oscillator                       | `rsi.ComputePeriod` / `rsi.NewPeriod`                         | Aligned Values+Valid or single-owner zero-allocation stream with explicit Reset.                              |
+| SMA-seeded MACD and trend separation                          | `macd.ComputeDefault` / `macd.NewDefault`                     | Three aligned signed outputs; independently gated Line and Signal/Histogram; zero-allocation Push.            |
+| Volume-weighted OHLCV price direction and rolling MFI         | `mfi.ComputeDefault` / `mfi.NewDefault`                       | Finite `[0,100]` feature, one Valid mask, compensated ring and versioned snapshots.                           |
+| Cumulative volume signed by close direction                   | `obv.ComputeCandles` / `obv.New`                              | Valid-first-bar zero, Neumaier state, unbounded finite balance and externally protected snapshots.            |
+| Cumulative volume weighted by close position                  | `ad.ComputeCandles` / `ad.New`                                | Valid first-bar contribution, bounded multiplier, Neumaier and external replay trust.                         |
+| Reproducible stochastic simulation paths                      | `rng.NewFactory().Stream` / `rng.NewStream`                   | Pinned PCG-DXSM, logical path IDs, one goroutine owner per stream.                                            |
+| Independent Monte Carlo paths and exact outcome quantiles     | `montecarlo.Run` / `RunWithQuantiles`                         | Path-indexed RNG streams, ordered vector sample moments, bounded worker window and explicit memory admission. |
+| Exact-in-distribution GBM on a chosen time grid               | `gbm.Simulate` / `gbm.SimulateSeeded`                         | Detached strictly positive prices, explicit years/days/seconds and complete/prefix status.                    |
+| Causal asymmetric return variance and bounded forecast        | `gjrgarch.FilterStationary` / `Step` / `ForecastVariance`     | One-shock next variance, then stationary expected-variance curve; no price path or VaR guarantee.             |
+| Fixed-order nonseasonal conditional mean and level forecast   | `arima.Fit` / `Model.Forecast`                                | Schur-stable ARMA, anchored d=1/2 levels, marginal innovation-only variance.                                  |
+| Frozen neural recurrent features with unequal session lengths | `lstm.Import` / `Model.InferSequence` / `Model.InferChunk`    | Immutable IFGO model, exact-zero padding and detached ModelID-tagged Hidden/Cell state.                       |
+| Deterministic constrained Gaussian volatility QMLE            | `gjrgarch.Fit` / `EvaluateGaussianQMLE`                       | Explicit Initial, hard variance floor, analytic score and nonconvergence candidate policy.                    |
+| Compensated Poisson-jump price paths over GBM                 | `jumpdiffusion.Simulate` / `SimulateSeeded`                   | Exact-in-distribution grid endpoints; bounded Poisson and complete-prefix policy.                             |
+| Complete fixed index windows                                  | `series.WindowRanges`                                         | ordered half-open sample-index intervals.                                                                     |
+| Hidden-state streaming causal filtering                       | `hmm.FilterStep` / `FilterDefault`                            | P(z_t given observations through t), no future-sample leakage.                                                |
+| Retrospective hidden-state attribution                        | `hmm.Smooth` / `hmm.Decode`                                   | Full-sequence state marginals vs one optimal joint path; different contracts.                                 |
+| Independent categorical/Gaussian sequence training            | `hmm.FitCategorical` / `hmm.FitGaussian`                      | MAP Baum-Welch with no cross-sequence transitions and explicit convergence diagnostics.                       |
+| Scalar sequence alignment                                     | `dtw.Align`                                                   | DTW `Result` with distance/reachability.                                                                      |
+| Inclusive-limit scalar alignment                              | `dtw.AlignBounded`                                            | Exact/above-limit/unreachable status.                                                                         |
+| Globally exact window top-K                                   | `dtw.Search`                                                  | Sorted fixed-length squared-DTW matches.                                                                      |
+| Precomputed local-cost alignment                              | `dtw.AlignCostMatrix`                                         | DTW over caller-owned finite cost surface.                                                                    |
+| Multivariate time-series alignment                            | `dtw.AlignMatrix`                                             | squared-L2 row-cost alignment result.                                                                         |
+| Complete route matrix optimization                            | `tsp.SolveMatrix`                                             | tour, cost, exactness/timeout/ratio metadata.                                                                 |
 
 ### If the goal is documentation or testing
 
@@ -6247,7 +6346,8 @@ max feasible throughput               -> flow
 all-pairs distances                   -> matrix metric closure
 previous-bar high/low range           -> donchian.ComputeExcludeCurrent (not an inclusive overlay)
 explicit-origin price-volume mean     -> vwap.ComputeDefault / Stream.Push (not a rolling estimator)
-previous completed session H/L/close   -> sessionlevels.ComputeDefault / ComputeDaily / ComputeWeekly
+previous completed session H/L/close  -> sessionlevels.ComputeDefault / ComputeDaily / ComputeWeekly
+sampled NAV risk and recovery         -> drawdown.Compute (not raw cashflow balance or OHLC)
 dense topology/covariance             -> matrix
 streaming mean/variance               -> stats.Moments / stats.Summarize
 train-only standardization            -> stats.FitStandardizer
@@ -6420,9 +6520,21 @@ artifacts only after success. A previous level known before a bar does not make 
 comparison with that bar's eventual close available early. See
 [SessionLevels foundations](#11aa-sessionlevels-foundations-previous-completed-session-levels).
 
+### Audit observed equity without future leakage
+
+Admit currency, NAV adjustment, source marks and availability before computing.
+Read the exact witness from the returned Result, not a rounded-depth argmax.
+When recovery is absent, retain the report cutoff instead of inventing a duration.
+Use current Depth for an as-of rounded threshold and final Maximum for a
+historical audit; neither supplies a trade, a risk-model approval or execution evidence.
+
 ## 14. Where To Go Next
 
 Use this tutorial as the entry point, then move into package-specific material:
+
+> For sampled capital risk and exact recovery evidence:
+>
+>   [`DRAWDOWN.md`](DRAWDOWN.md) -> [`drawdown/example_test.go`](../drawdown/example_test.go) -> [Drawdown FAQ](FAQ_%26_TIPS.md#13aa-drawdown-faq-exact-witness-and-nav-boundaries)
 
 > For previous completed trading-day/week references:
 >

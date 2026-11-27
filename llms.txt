@@ -23,7 +23,7 @@ supplementary; source and package contracts remain authoritative.
 
 ## Package-selection guide
 
-The 41 packages are grouped by objective. A family is not an import hierarchy.
+The 42 packages are grouped by objective. A family is not an import hierarchy.
 
 ### A. Topology, paths, capacity and discrete optimization (11)
 
@@ -68,13 +68,14 @@ The 41 packages are grouped by objective. A family is not an import hierarchy.
 - [gjrgarch](https://pkg.go.dev/github.com/lvlath/go/gjrgarch): Stationary asymmetric GJR-GARCH(1,1), causal variance, expected-variance forecasts and Gaussian QMLE.
 - [arima](https://pkg.go.dev/github.com/lvlath/go/arima): Fixed nonseasonal conditional Gaussian ARIMA with anchored level forecasts and marginal innovation variance.
 
-### E. Indicators: readiness, arithmetic and recovery (10)
+### E. Indicators: readiness, arithmetic and recovery (11)
 
 - [ema](https://pkg.go.dev/github.com/lvlath/go/ema): Exact affine exponential levels with explicit SMA or First seed and recoverable streams.
 - [atr](https://pkg.go.dev/github.com/lvlath/go/atr): Exact signed-candle True Range and Wilder ATR with independent readiness and replay.
 - [donchian](https://pkg.go.dev/github.com/lvlath/go/donchian): Observed rolling high/low channels with explicit current-bar policy and exact midpoint.
 - [vwap](https://pkg.go.dev/github.com/lvlath/go/vwap): Exact anchored price-volume means with positive-weight readiness and transactional reset.
 - [sessionlevels](https://pkg.go.dev/github.com/lvlath/go/sessionlevels): Previous completed session high, low and final close over explicit partitions; batch-only.
+- [drawdown](https://pkg.go.dev/github.com/lvlath/go/drawdown): Correctly rounded sampled equity depth, exact maximum witness and first recovery; batch-only.
 - [rsi](https://pkg.go.dev/github.com/lvlath/go/rsi): Wilder gain/loss oscillator over ordered finite positive prices, batch and checkpointable stream.
 - [macd](https://pkg.go.dev/github.com/lvlath/go/macd): SMA-seeded fast/slow Appel EMAs, signed Line/Signal/Histogram and separate masks.
 - [mfi](https://pkg.go.dev/github.com/lvlath/go/mfi): Rolling volume-weighted typical-price flow over P transitions, compensated sums.
@@ -141,6 +142,7 @@ The 41 packages are grouped by objective. A family is not an import hierarchy.
 - [donchian contract](https://raw.githubusercontent.com/lvlath/go/main/donchian/doc.go): Include [i-P+1,i] ready P-1; exclude [i-P,i-1] ready P. Preserve latest equal extrema bits, one nearest-even midpoint, validate even masked/excluded rows. No default, Stream or Snapshot; MaxInt period legal. All failures nil; width arithmetic external.
 - [vwap contract](https://raw.githubusercontent.com/lvlath/go/main/vwap/doc.go): All finite signed prices, nonnegative finite weights, explicit first anchor. Reset before row; zero-weight prefix +0/false; later zero weight retains value/count. Exact weights 2^-1074 and products 2^-2148, one nearest-even ratio. No implicit HLC3, period or calendar.
 - [sessionlevels contract](https://raw.githubusercontent.com/lvlath/go/main/sessionlevels/doc.go): Compute canonical; ComputeDefault, ComputeDaily and ComputeWeekly delegate with Options{}. Explicit adjacent [Start,End) partition, only final incomplete; first masked +0/false, earliest equal extrema bits, exact last close. Any nil H/L/C fails; non-nil empty with no sessions succeeds. Context/nil/shape/manifest, global nonfinite before finite ErrBar; all failures nil. O(n+s) time/O(n) output/O(1) workspace; no calendar or stream/snapshot.
+- [drawdown contract](https://raw.githubusercontent.com/lvlath/go/main/drawdown/doc.go): Compute canonical; ComputeMaximum and ComputeCurrentDepth project the complete batch. Finite first equity >0, later >=0; no warmup. Exact represented-input depth, strict rational maximum ordering, earliest ties, first recovery or -1, no-drawdown 0/0/0. Context/shape/ascending row finite-before-sign; nil Result or +0 scalar with error. O(n) time and transient/owning output, O(1) auxiliary. Depth prefix invariant, summary retrospective. No cashflow, intrabar, threshold or stream/snapshot inference.
 - [rsi contract](https://raw.githubusercontent.com/lvlath/go/main/rsi/doc.go): Period counts changes, not candles; warmup mask is not an oscillator zero. Keep shared batch/stream recurrence and flat-price convention; reject invalid rows without state advance.
 - [macd contract](https://raw.githubusercontent.com/lvlath/go/main/macd/doc.go): Signal starts from ready Line, not warmup zeros; preserve signed outputs and distinct readiness. MACD's private recurrence is not ema's exact affine ABI. Keep batch/stream parity and snapshot identity.
 - [mfi contract](https://raw.githubusercontent.com/lvlath/go/main/mfi/doc.go): Preserve zero-volume slots and canonical typical-price arithmetic; reject invalid OHLCV; keep rolling ring and rebasing state in checkpoint. No fabricated first transition.
@@ -210,6 +212,7 @@ source and published GoDoc. Do not treat root doc.go as a facade.
 - [donchian](https://raw.githubusercontent.com/lvlath/go/main/donchian/doc.go): public contract, options, errors, result/ownership and limitations.
 - [vwap](https://raw.githubusercontent.com/lvlath/go/main/vwap/doc.go): public contract, options, errors, result/ownership and limitations.
 - [sessionlevels](https://raw.githubusercontent.com/lvlath/go/main/sessionlevels/doc.go): public contract, explicit partitions, errors, ownership, causality and replay boundaries.
+- [drawdown](https://raw.githubusercontent.com/lvlath/go/main/drawdown/doc.go): exact rounding, witness, recovery, errors, ownership and scope.
 - [rsi](https://raw.githubusercontent.com/lvlath/go/main/rsi/doc.go): public contract, options, errors, result/ownership and limitations.
 - [macd](https://raw.githubusercontent.com/lvlath/go/main/macd/doc.go): public contract, options, errors, result/ownership and limitations.
 - [mfi](https://raw.githubusercontent.com/lvlath/go/main/mfi/doc.go): public contract, options, errors, result/ownership and limitations.
@@ -269,6 +272,7 @@ source and published GoDoc. Do not treat root doc.go as a facade.
 - [donchian guide](https://github.com/lvlath/go/blob/main/docs/DONCHIAN.md): Observed rolling high/low channels with explicit current-bar policy and exact midpoint.
 - [vwap guide](https://github.com/lvlath/go/blob/main/docs/VWAP.md): Exact anchored price-volume means with positive-weight readiness and transactional reset.
 - [sessionlevels guide](https://github.com/lvlath/go/blob/main/docs/SESSIONLEVELS.md): explicit manifests, previous-session proof, readiness, error precedence, exact selection, correction replay and examples.
+- [drawdown guide](https://github.com/lvlath/go/blob/main/docs/DRAWDOWN.md): NAV admission, exact arithmetic proof, witness/recovery, five audit scenarios and verification.
 - [rsi guide](https://github.com/lvlath/go/blob/main/docs/RSI.md): Wilder gain/loss oscillator over ordered finite positive prices, batch and checkpointable stream.
 - [macd guide](https://github.com/lvlath/go/blob/main/docs/MACD.md): SMA-seeded fast/slow Appel EMAs, signed Line/Signal/Histogram and separate masks.
 - [mfi guide](https://github.com/lvlath/go/blob/main/docs/MFI.md): Rolling volume-weighted typical-price flow over P transitions, compensated sums.
@@ -281,7 +285,7 @@ source and published GoDoc. Do not treat root doc.go as a facade.
 - B (`series`, `acf`, `pacf`, `paa`, `sax`, `dtw`, `tfsax`): sample indices, grid/gaps, fixed-window lag statistics, exact fractional geometry, compatible symbolic identity, time-alignment costs and research status. Euclidean MINDIST is not an exact DTW bound.
 - C (`stats`, `ols`, `ridge`, `pca`, `hmm`, `lstm`): observation rows/feature columns, training-only coordinates, physical coefficients, covariance spectrum, stochastic transition/emission rows and batch-first recurrent tensor state. PCA ThinSVD is not implemented; HMM smoothing is noncausal; LSTM is inference only.
 - D (`rng`, `bootstrap`, `montecarlo`, `gbm`, `jumpdiffusion`, `gjrgarch`, `arima`): logical path identity, index replicates, ordered moment reduction, explicit time units, positive path prefixes, causal return variance and anchored conditional mean. Sampling, calibration and execution are separate.
-- E (`ema`, `atr`, `donchian`, `vwap`, `sessionlevels`, `rsi`, `macd`, `mfi`, `obv`, `ad`): aligned masks, finite-domain distinctions, explicit window/seed/origin and independent rounding laws. EMA/ATR exact seed and VWAP exact-sum continuation are different from MACD's private recurrence; Donchian and SessionLevels are batch-only. SessionLevels uses the preceding completed explicit interval, not a rolling window or VWAP reset; calendar and source availability stay external. Check each state ABI rather than sharing a generic checkpoint parser.
+- E (`ema`, `atr`, `donchian`, `vwap`, `sessionlevels`, `drawdown`, `rsi`, `macd`, `mfi`, `obv`, `ad`): aligned masks, finite-domain distinctions, explicit window/seed/origin and independent rounding laws. EMA/ATR exact seed and VWAP exact-sum continuation are different from MACD's private recurrence; Donchian, SessionLevels and Drawdown are batch-only. Drawdown consumes equity/NAV, not price features; all depths are defined and its final witness is retrospective. SessionLevels uses the preceding completed explicit interval, not a rolling window or VWAP reset; calendar and source availability stay external. Check each state ABI rather than sharing a generic checkpoint parser.
 
 ## Examples and verification
 
@@ -307,7 +311,7 @@ source and published GoDoc. Do not treat root doc.go as a facade.
 
 ### E. Indicators: readiness, arithmetic and recovery
 
-- [ema](https://github.com/lvlath/go/tree/main/ema), [atr](https://github.com/lvlath/go/tree/main/atr), [donchian](https://github.com/lvlath/go/tree/main/donchian), [vwap](https://github.com/lvlath/go/tree/main/vwap), [sessionlevels](https://github.com/lvlath/go/tree/main/sessionlevels), [rsi](https://github.com/lvlath/go/tree/main/rsi), [macd](https://github.com/lvlath/go/tree/main/macd), [mfi](https://github.com/lvlath/go/tree/main/mfi), [obv](https://github.com/lvlath/go/tree/main/obv), [ad](https://github.com/lvlath/go/tree/main/ad).
+- [ema](https://github.com/lvlath/go/tree/main/ema), [atr](https://github.com/lvlath/go/tree/main/atr), [donchian](https://github.com/lvlath/go/tree/main/donchian), [vwap](https://github.com/lvlath/go/tree/main/vwap), [sessionlevels](https://github.com/lvlath/go/tree/main/sessionlevels), [drawdown](https://github.com/lvlath/go/tree/main/drawdown), [rsi](https://github.com/lvlath/go/tree/main/rsi), [macd](https://github.com/lvlath/go/tree/main/macd), [mfi](https://github.com/lvlath/go/tree/main/mfi), [obv](https://github.com/lvlath/go/tree/main/obv), [ad](https://github.com/lvlath/go/tree/main/ad).
 
 ## Optional
 
