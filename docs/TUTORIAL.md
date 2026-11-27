@@ -3,9 +3,9 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/TUTORIAL.md
-  Package reference: vwap, donchian, atr, ema, matrix, stats, ols, ridge, series, pacf, tfsax, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima, lstm and the wider lvlath package family
+  Package reference: sessionlevels, vwap, donchian, atr, ema, matrix, stats, ols, ridge, series, pacf, tfsax, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima, lstm and the wider lvlath package family
   Contract status: learning guide; package doc.go and source define the public API.
-  Scope: graph, matrix, factorization, statistical and temporal workflows, including exact anchored VWAP, causal Donchian ranges, exact affine EMA, causal MACD, rolling MFI, cumulative OBV, Chaikin A/D, reproducible parallel Monte Carlo, exact-in-distribution GBM, experimental Merton jump diffusion, GJR-GARCH causal volatility with constrained Gaussian QMLE, and fixed-order conditional Gaussian ARIMA with anchored forecasts, and frozen IFGO LSTM recurrent inference, and finite-window Durbin-Levinson PACF estimation, and the TFSAX research-only DTW-versus-SAX retrieval gate.
+  Scope: graph, matrix, factorization, statistical and temporal workflows, including previous completed session levels, exact anchored VWAP, causal Donchian ranges, exact affine EMA, causal MACD, rolling MFI, cumulative OBV, Chaikin A/D, reproducible parallel Monte Carlo, exact-in-distribution GBM, experimental Merton jump diffusion, GJR-GARCH causal volatility with constrained Gaussian QMLE, and fixed-order conditional Gaussian ARIMA with anchored forecasts, and frozen IFGO LSTM recurrent inference, and finite-window Durbin-Levinson PACF estimation, and the TFSAX research-only DTW-versus-SAX retrieval gate.
   lvlath - Repository Tutorial
 
   Purpose:
@@ -25,7 +25,7 @@
 
 > **hard math on an easy level**
 
-Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fitted feature scaling, covariance PCA, exact affine EMA, causal Donchian ranges, exact anchored VWAP, causal Wilder RSI, SMA-seeded MACD, rolling Money Flow Index, compensated On-Balance Volume, Chaikin A/D, reproducible parallel Monte Carlo, exact-lognormal GBM paths, stationary asymmetric GJR-GARCH conditional variance, fixed-order conditional Gaussian ARIMA, frozen LSTM forward inference, time-series alignment, and research-only DTW-versus-SAX retrieval audits.
+Welcome to **lvlath**, a deterministic Go library for graph algorithms, dense graph algebra, flows, routing, tours, fixtures, exact time grids, causal series primitives, fractional PAA, symbolic SAX encoding, stable statistical reductions, fitted feature scaling, covariance PCA, exact affine EMA, causal Donchian ranges, exact anchored VWAP, previous completed session levels, causal Wilder RSI, SMA-seeded MACD, rolling Money Flow Index, compensated On-Balance Volume, Chaikin A/D, reproducible parallel Monte Carlo, exact-lognormal GBM paths, stationary asymmetric GJR-GARCH conditional variance, fixed-order conditional Gaussian ARIMA, frozen LSTM forward inference, time-series alignment, and research-only DTW-versus-SAX retrieval audits.
 
 This tutorial is the beginning of the learning path. It introduces the objects and ideas that most packages share: graphs, matrices, options, result artifacts, error contracts, and deterministic algorithm execution.
 
@@ -71,6 +71,7 @@ This tutorial is the beginning of the learning path. It introduces the objects a
     11x. [ATR Foundations: Exact Ranges and Replay](#11x-atr-foundations-exact-ranges-and-replay)
     11y. [Donchian Foundations: Observed Ranges and Information Sets](#11y-donchian-foundations-observed-ranges-and-information-sets)
     11z. [VWAP Foundations: Exact Weights, Explicit Anchors, and Replay](#11z-vwap-foundations-exact-weights-explicit-anchors-and-replay)
+    11aa. [SessionLevels Foundations: Previous Completed Session Levels](#11aa-sessionlevels-foundations-previous-completed-session-levels)
 12. [Algorithm Selection Guide](#12-algorithm-selection-guide)
 13. [Professional Best Practices](#13-professional-best-practices)
 14. [Where To Go Next](#14-where-to-go-next)
@@ -109,6 +110,7 @@ The library covers:
 * `atr` exact True Range and Wilder range smoothing, finite signed candle geometry, ATR-only readiness and exact source-bound continuation;
 * `donchian` observed high/low ranges, explicit current-bar inclusion, correctly rounded midpoint and one aligned readiness mask;
 * `vwap` exact represented-input price-volume means with explicit anchors, positive-weight readiness, transactional streams and bounded exact-sum continuation;
+* `sessionlevels` exact previous completed session high, low and final close over explicit partitions, with one aligned readiness mask and no calendar inference;
 * `rsi` causal Wilder gain/loss smoothing, index-aligned readiness masks, zero-allocation streaming and versioned scalar checkpoints;
 * `macd` SMA-seeded Appel EMAs with signed Line/Signal/Histogram, separate readiness masks, transactional streaming and detached restart state;
 * `mfi` compensated rolling typical-price money flow over OHLCV, transition-counted zero volumes, batch/stream parity and detached replay state;
@@ -159,6 +161,7 @@ exact affine level         *ema.Result                 original-index Values / V
 exact candle range         *atr.Result                 always-present TR / independently ready ATR / Valid
 observed rolling range     *donchian.Result            Upper / Middle / Lower / shared Valid; explicit current-bar policy
 exact anchored price mean  *vwap.Result                Values / Valid; explicit resets and positive-weight readiness
+prior completed session    *sessionlevels.Result       PreviousHigh / PreviousLow / PreviousClose / shared Valid
 Wilder RSI factor          *rsi.Result                 aligned oscillator / Valid mask
 MACD trend difference      *macd.Result                aligned Line / Signal / Histogram masks
 MFI volume-weighted flow   *mfi.Result                 aligned Values / Valid with compensated rolling window
@@ -203,6 +206,7 @@ A shortest-path formula is easy. A reliable Go package must also answer:
 * Did an EMA pipeline treat an invalid warmup zero as a measured level, or discard exact unfinished seed state during failover?
 * Did a previous-range comparison accidentally include the current high, or normalize by a scale that already includes the same shock?
 * Did a VWAP consumer assume a first anchor, lose a small product through cancellation, reset on a rejected row, or mistake Count for the persisted source cursor?
+* Did a prior-session feature use a developing current-session extreme, mark an incomplete predecessor complete, or confuse a trading session with a UTC day?
 * Did a market-data loader drop a legitimate zero-volume candle and change the MFI rolling window?
 * Did an OBV calculation add the very first candle's volume, lose Neumaier correction, or reuse a mismatched feed cursor after Restore?
 * Did an A/D calculation accidentally discard the first contribution, form 2*Close, divide by a flat spread, or authenticate a public Config digest?
@@ -238,6 +242,8 @@ A shortest-path formula is easy. A reliable Go package must also answer:
 ---
 
 ## 2. Documentation Map
+
+The [documentation index](README.md) links the package guides and import boundaries.
 
 Read these files as a learning path. `doc.go` files define implemented package contracts; `docs/*.md` files teach the theory, diagrams, pitfalls, and recipes.
 
@@ -278,6 +284,7 @@ Read these files as a learning path. `doc.go` files define implemented package c
 | 8x   | [`ATR.md`](ATR.md)                         | Exact first-bar/gap ranges, Wilder seed/steps, named period facades, signed candles and lossless continuation.                 |
 | 8y   | [`DONCHIAN.md`](DONCHIAN.md)               | Observed rolling ranges, current-bar policy, exact midpoint, masks, bounded deques and consumer arithmetic.                    |
 | 8z   | [`VWAP.md`](VWAP.md)                       | Exact products/weights, explicit first anchors, zero-weight phases, error-atomic restart and source-bound replay.              |
+| 8aa  | [`SESSIONLEVELS.md`](SESSIONLEVELS.md)     | Explicit day/week manifests, causal reference levels, exact selection, readiness and replay.                                   |
 | 9    | [`DTW.md`](DTW.md)                         | `Align`, `AlignCostMatrix`, `AlignMatrix`, `AlignBounded`, exact `Search`, numeric and path artifacts.                         |
 | 9a   | [`DTW_SEARCH.md`](DTW_SEARCH.md)           | Fixed-length exact top-K, certified LB_Keogh, workers, budgets, and partial-result law.                                        |
 | 10   | [`TSP.md`](TSP.md)                         | Matrix-backed tours, exact regimes, Christofides, Blossom matching, local search, timeouts.                                    |
@@ -313,6 +320,7 @@ Working on numeric/time-series workflows:
   ordered H/L -> DONCHIAN.ComputeIncludeCurrent / ComputeExcludeCurrent -> owning ranges + shared mask
   prior DONCHIAN[t] + separately ready ATR[t-1] -> caller-owned normalized feature (check units and arithmetic)
   admitted price/quantity/reset -> VWAP.ComputeDefault -> owning weighted levels + mask
+  admitted H/L/C + day/week partitions -> SESSIONLEVELS.ComputeDaily / ComputeWeekly -> prior triples + shared masks
   source admission -> VWAP.NewDefault -> Push -> exact Snapshot + separate source cursor
   SERIES -> RSI.ComputePeriod / Stream.Push -> causal price-strength factors
   SERIES -> MACD.Compute / Stream.Push -> signed trend-separation features and masks
@@ -474,6 +482,28 @@ Think of `lvlath` as a contract stack.
                          │ frozen loadings / inference without refit     │
                          └───────────────────────────────────────────────┘
 ```
+
+### Previous completed session branch
+
+SessionLevels is a standalone scalar batch kernel. A caller may use series to
+check the observed time grid within the chosen calendar policy, but neither
+series nor SessionLevels derives a trading calendar or authenticates a feed.
+
+```text
+caller-admitted H/L/C + source revision
+               |
+        explicit manifest
+               |
+ sessionlevels.ComputeDefault
+               |
+ PreviousHigh / PreviousLow / PreviousClose / Valid
+               |
+ caller aligns with other independently computed features
+```
+
+Donchian chooses a moving observed-bar window. VWAP chooses a weighted prefix
+from an explicit reset. SessionLevels chooses the strictly previous completed
+interval. These are data-composition alternatives, not a dependency chain.
 
 ### Anchored weighted-price branch
 
@@ -5540,11 +5570,6 @@ the caller rejects duplicate event identities, not equal price values.
 
 ### Run a complete observed-data pipeline
 
-```sh
-go test ./atr -run '^Example' -count=1 -v
-go run ./examples/atr < atr/testdata/ibm_daily_20261026_20261120.csv
-```
-
 The source fixture is a pinned twenty-record vendor demo capture, not a live
 market query or independently verified exchange tape. Its first ATR14 is ready
 on 2026-11-12; examples also include separately labeled synthetic signed and flat
@@ -5968,6 +5993,154 @@ addresses first anchors, zero weights, rollback and checkpoint trust.
 
 ---
 
+## 11aa. SessionLevels Foundations: Previous Completed Session Levels
+
+A prior-day high is the maximum of the *previous completed trading day*, not
+the maximum of the previous P minutes. A prior-week close is the last observed
+close in that completed week, not the maximum or a settlement-price substitute.
+The current session's values cannot change its own reference.
+
+### Manifest before mathematics
+
+Supply `Session{Start, End, Complete}` descriptors over aligned finite H/L/C
+slices, with `low <= close <= high`. `Start` is inclusive, `End` exclusive.
+Cover `[0,n)` exactly, without gaps, overlaps, empty ranges or early incomplete
+sessions. `Complete` is the caller's assertion of finality and accepted coverage.
+A structurally valid manifest cannot prove exchange holidays, DST, trading halts,
+corporate-action consistency or missing-minute coverage. Resolve those upstream.
+
+```text
+rows             0,1       2,3       4,5    |  6,7       8
+week             W0 (complete)              |  W1 (incomplete)
+day              D0        D1        D2     |  D3        D4 (live)
+weekly reference masked    masked    masked |  W0        W0
+daily reference  masked    D0        D1     |  D2        D3
+```
+
+The first day and first week are masked independently. Separate calls on the
+same rows with different manifests are the correct way to obtain both scales.
+`ComputeDefault`, `ComputeDaily`, and `ComputeWeekly` are thin wrappers over
+`Compute(ctx,h,l,c,sessions,Options{})`. None infers a calendar or accepts a
+period parameter. There is no stream or snapshot.
+
+### Complete example: a multi-horizon opening-risk feature
+
+Use an engineered tape with a shortened three-day week followed by one complete
+day and a one-bar live day. Each aggregate is admitted by an external coverage
+policy. The example intentionally uses the same input row domain for both calls;
+no cross-frequency alignment is hidden. These are reproducible teaching values,
+not exchange-audited historical prices. The consumer reports whether a finalized
+close is strictly above both ready reference highs.
+
+<!-- sessionlevels-example: dual-manifest -->
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+
+	"github.com/lvlath/go/sessionlevels"
+)
+
+func main() {
+	ctx := context.Background()
+	// Engineered observations: two admitted aggregated H/L/C bars per day,
+	// except the final live day, which currently has one finalized bar.
+	high := []float64{102, 104, 105, 106, 107, 108, 109, 111, 112}
+	low := []float64{99, 100, 101, 103, 104, 105, 106, 107, 109}
+	closePrices := []float64{101, 103, 104, 105, 106, 107, 108, 110, 111}
+
+	// The caller has accepted a shortened three-day trading week. Day and
+	// week partitions refer to exactly the same observed rows, not clock bins.
+	daySessions := []sessionlevels.Session{
+		{Start: 0, End: 2, Complete: true},
+		{Start: 2, End: 4, Complete: true},
+		{Start: 4, End: 6, Complete: true},
+		{Start: 6, End: 8, Complete: true},
+		{Start: 8, End: 9, Complete: false},
+	}
+	weekSessions := []sessionlevels.Session{
+		{Start: 0, End: 6, Complete: true},
+		{Start: 6, End: 9, Complete: false},
+	}
+
+	// Both facades delegate to the same kernel; only the partition differs.
+	daily, err := sessionlevels.ComputeDaily(ctx, high, low, closePrices, daySessions)
+	if err != nil {
+		log.Fatal(err)
+	}
+	weekly, err := sessionlevels.ComputeWeekly(ctx, high, low, closePrices, weekSessions)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Preserve source indices and require both readiness masks. A comparison
+	// with a finalized close describes an observation, not an assumed fill.
+	for i := range closePrices {
+		if !daily.Valid[i] || !weekly.Valid[i] {
+			continue
+		}
+		fmt.Printf("row=%d day=(%.0f %.0f %.0f) week=(%.0f %.0f %.0f) above-both=%t\n",
+			i, daily.PreviousHigh[i], daily.PreviousLow[i], daily.PreviousClose[i],
+			weekly.PreviousHigh[i], weekly.PreviousLow[i], weekly.PreviousClose[i],
+			closePrices[i] > daily.PreviousHigh[i] && closePrices[i] > weekly.PreviousHigh[i])
+	}
+}
+```
+
+Output:
+
+```text
+row=6 day=(108 104 107) week=(108 99 107) above-both=false
+row=7 day=(108 104 107) week=(108 99 107) above-both=true
+row=8 day=(111 106 110) week=(108 99 107) above-both=false
+```
+
+The prior week stays at 108/99/107 through all three rows. The prior day changes
+only at the next day boundary (row 8), where the new PDH is 111. At row 8 the
+close equals PDH, so strict `above-both` is false. Both features can be ready
+while the current day and current week are incomplete. Row 6 closes exactly at
+the two prior highs, so no strict exceedance is reported.
+
+### Causality, replay and error admission
+
+The kernel writes the preceding summary before updating private current extrema.
+At a completed End it commits the selected maximum high, minimum low and final
+close for the next interval. Earliest equal extrema retain their exact bits,
+including signed zero; masked payloads are +0, but ready zero remains valid.
+Time is O(n+s), owning output O(n), auxiliary state O(1) for n bars and s sessions.
+
+Any nil H/L/C slice returns `ErrNilInput`; three non-nil empty slices and no
+sessions succeed. After context and shape, `ErrSession` precedes prices, and
+`ErrNonFinite` anywhere precedes a remembered finite `ErrBar`. A failed or
+canceled call returns no partial result. `IsNil` checks only the result pointer.
+Independent successful results own separate channels; a shallow Result copy
+still shares those channels.
+
+To replay inside a session, clip its End and mark it incomplete. Include a full
+preceding session if the first requested output needs a ready reference; a batch
+beginning with only current-session bars is correctly masked. A valid price
+correction with fixed segmentation can affect only the immediately following
+session's levels. Changed segmentation or source revisions require re-admission
+and explicit recomputation. Store the selected calendar policy, row mapping and
+as-of availability with the result, not in its numerical fields.
+
+For a threshold before bar i, ensure the predecessor summary was actually
+available by that time. A close comparison is observable only after its bar
+finalizes. Donchian's prior P bars, VWAP's current-inclusive weighted prefix and
+ATR's prior ready scale are distinct features; combine them only with aligned
+units, masks and availability. Do not interpret a threshold crossing as a
+trade or divide by a zero level without an independent consumer policy.
+
+For the proof, exact error precedence and resource accounting, see
+[SESSIONLEVELS.md](SESSIONLEVELS.md). Diagnose manifest and replay failures in the
+[SessionLevels FAQ](FAQ_%26_TIPS.md#13z-sessionlevels-faq-manifests-readiness-and-causality).
+
+---
+
 ## 12. Algorithm Selection Guide
 
 ### If the input is a graph
@@ -6021,6 +6194,7 @@ addresses first anchors, zero weights, rollback and checkpoint trust.
 | Smooth a finite signed level with explicit seed/readiness     | `ema.ComputeSMA` / `ComputeFirst`                           | Owning aligned Values/Valid; stream continuation through NewSMA/NewFirst.                                     |
 | Observed range including or excluding the current bar         | `donchian.ComputeIncludeCurrent` / `ComputeExcludeCurrent`  | Exact selected extrema, nearest-even midpoint, shared readiness; no default period or Stream. |
 | Exact price-volume mean within explicit segments              | `vwap.ComputeDefault` / `NewDefault` / `Stream.Push`        | Owning Values/Valid, positive-weight readiness, exact products and recoverable state; no rolling period. |
+| Fixed previous completed trading day/week H/L/close | `sessionlevels.ComputeDaily` / `ComputeWeekly` | Explicit partitions, one mask, exact selected extrema and final close; no calendar or stream. |
 | Causal Wilder price-strength oscillator                       | `rsi.ComputePeriod` / `rsi.NewPeriod`                       | Aligned Values+Valid or single-owner zero-allocation stream with explicit Reset.                              |
 | SMA-seeded MACD and trend separation                          | `macd.ComputeDefault` / `macd.NewDefault`                   | Three aligned signed outputs; independently gated Line and Signal/Histogram; zero-allocation Push.            |
 | Volume-weighted OHLCV price direction and rolling MFI         | `mfi.ComputeDefault` / `mfi.NewDefault`                     | Finite `[0,100]` feature, one Valid mask, compensated ring and versioned snapshots.                           |
@@ -6073,6 +6247,7 @@ max feasible throughput               -> flow
 all-pairs distances                   -> matrix metric closure
 previous-bar high/low range           -> donchian.ComputeExcludeCurrent (not an inclusive overlay)
 explicit-origin price-volume mean     -> vwap.ComputeDefault / Stream.Push (not a rolling estimator)
+previous completed session H/L/close   -> sessionlevels.ComputeDefault / ComputeDaily / ComputeWeekly
 dense topology/covariance             -> matrix
 streaming mean/variance               -> stats.Moments / stats.Summarize
 train-only standardization            -> stats.FitStandardizer
@@ -6235,9 +6410,23 @@ atomically with state. Explicit flags do not prove historical availability and
 a structurally valid snapshot does not authenticate trades. See
 [VWAP foundations](#11z-vwap-foundations-exact-weights-explicit-anchors-and-replay).
 
+### 13.19. Keep previous-session finality and availability separate
+
+Do not infer completeness from array length or mark a left-truncated predecessor
+complete. Admit calendar coverage and as-of data before computing, use each
+manifest's own Valid mask, and keep output indices and policy metadata together.
+`sessionlevels` has no continuation state: replay admitted partitions and replace
+artifacts only after success. A previous level known before a bar does not make a
+comparison with that bar's eventual close available early. See
+[SessionLevels foundations](#11aa-sessionlevels-foundations-previous-completed-session-levels).
+
 ## 14. Where To Go Next
 
 Use this tutorial as the entry point, then move into package-specific material:
+
+> For previous completed trading-day/week references:
+>
+>   [`SESSIONLEVELS.md`](SESSIONLEVELS.md) -> [`sessionlevels/example_test.go`](../sessionlevels/example_test.go) -> [SessionLevels FAQ](FAQ_%26_TIPS.md#13z-sessionlevels-faq-manifests-readiness-and-causality)
 
 > For exact weighted-price benchmarks and recoverable source-bound streams:
 >

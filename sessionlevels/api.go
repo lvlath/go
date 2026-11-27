@@ -34,11 +34,11 @@ import "context"
 //   - ErrNilContext, then an already observed context error, then ErrNilInput and ErrShape.
 //   - ErrSession before price validation, including nonempty sessions for empty prices.
 //   - ErrNonFinite anywhere in the input before the first finite ErrBar.
-//   - ErrEmptyInput is reserved and is never returned.
+//   - Non-nil empty prices with no sessions succeed; any nil price slice is ErrNilInput.
 //
 // Determinism:
 //   - Increasing session and bar order; earliest equal extrema; exact final-close selection.
-//   - Concurrent cancellation and input corruption after entry have no prescribed winner.
+//   - A racing context cancellation and input validation failure after entry have no prescribed winner.
 //
 // Complexity:
 //   - Time O(n+s), including validation and zero initialization; output space O(n).

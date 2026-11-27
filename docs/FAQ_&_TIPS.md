@@ -3,7 +3,7 @@
   Copyright (C) 2025-2026 katalvlaran
 
   File: docs/FAQ_&_TIPS.md
-  Package reference: vwap, donchian, atr, ema, core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima, lstm, pacf, tfsax and the wider lvlath package family
+  Package reference: sessionlevels, vwap, donchian, atr, ema, core, matrix, series, stats, paa, sax, ols, ridge, pca, hmm, rsi, macd, mfi, obv, ad, montecarlo, gbm, jumpdiffusion, gjrgarch, arima, lstm, pacf, tfsax and the wider lvlath package family
   lvlath - FAQ & Tips
 
   Purpose:
@@ -32,6 +32,7 @@
     - Exact affine EMA levels, SMA/First readiness, bounded seed continuation and atomic replay.
     - Donchian current/prior windows, shared readiness, finite midpoint, derived-width safety and batch correction boundaries.
     - Exact anchored VWAP, positive-weight readiness, rejected-reset rollback and authenticated source-bound continuation.
+    - Previous completed session levels, manifest admission, independent day/week readiness, exact selection and causal correction replay.
     - Wilder RSI warmup masks, deterministic batch/stream semantics, state rollback and checkpoint boundaries.
     - MACD SMA-seeded EMAs, signed features, three readiness masks, checkpoint identity and hot-path ownership.
     - MFI fixed-transition OHLCV windows, zero-volume retention, compensated rebasing and checkpoint authentication.
@@ -104,6 +105,7 @@ For formal package contracts, read `{package}/doc.go`. For theory, diagrams, and
     13w. [ATR FAQ](#13w-atr-faq-signed-candles-readiness-and-replay)
     13x. [Donchian FAQ](#13x-donchian-faq-windows-errors-and-range-safety)
     13y. [VWAP FAQ](#13y-vwap-faq-anchors-exact-means-and-continuation)
+    13z. [SessionLevels FAQ](#13z-sessionlevels-faq-manifests-readiness-and-causality)
 14. [Builder and gridgraph tips](#14-builder-and-gridgraph-tips)
 15. [Errors and diagnostics](#15-errors-and-diagnostics)
 16. [Determinism and concurrency](#16-determinism-and-concurrency)
@@ -148,6 +150,7 @@ Start with the question, not the algorithm name.
 | "How do I measure gap-aware ranges for signed candle prices?"                                                 | `atr.ComputePeriod` / `NewPeriod`                         | Exact TR, Wilder ATR, independent readiness and exact seed continuation.                                      |
 | "How do I compare a close against preceding observed highs and lows?"                                         | `donchian.ComputeExcludeCurrent`                          | Explicit prior window; owning Upper/Middle/Lower and one mask; no execution assumptions.                      |
 | "How do I calculate an exact price-volume mean from explicit session/news origins?"                           | `vwap.ComputeDefault` / `NewDefault`                      | Exact binary-input weights/products, positive-weight readiness, transactional reset and bounded continuation. |
+| "How do I compare against a previous completed trading day or week?"                                          | `sessionlevels.ComputeDaily` / `ComputeWeekly`            | Caller-prepared intervals, exact prior H/L/last close and shared readiness.                                   |
 | “How strong are smoothed up/down changes in an ordered positive price feed?”                                  | `rsi.ComputePeriod` / `Stream.Push`                       | Wilder oscillator with a validity mask or zero-allocation, single-owner recurrence.                           |
 | “How do fast and slow price trends diverge and how does that separation change?”                              | `macd.ComputeDefault` / `NewDefault`                      | SMA-seeded EMA, three signed aligned series, independent readiness masks and replayable Stream.               |
 | “How much rising versus falling typical-price flow occurred over the most recent candles?”                    | `mfi.ComputeDefault` / `NewDefault`                       | Volume-weighted last-P-transition MFI, warmup mask, compensated rolling ring and detached checkpoint.         |
@@ -193,6 +196,7 @@ smooth a causal signed level           -> EMA ComputeSMA / ComputeFirst / Stream
 measure gap-aware candle ranges        -> ATR ComputePeriod / Stream.Push (not EMA or NATR)
 select an observed prior-bar range     -> DONCHIAN ComputeExcludeCurrent (not a smoothed range)
 compute explicit-origin weighted price -> VWAP ComputeDefault / Stream.Push (not rolling, HLC3 or a calendar)
+fixed previous session H/L/last close  -> SESSIONLEVELS ComputeDefault / ComputeDaily / ComputeWeekly
 compute causal Wilder price strength   -> RSI ComputePeriod / Stream.Push
 compute signed trend-separation factor -> MACD ComputeDefault / Stream.Push
 compute volume-weighted OHLCV flow     -> MFI ComputeDefault / Stream.Push
@@ -5985,6 +5989,142 @@ See [the complete verification commands](VWAP.md#verification-commands-and-integ
 
 ---
 
+## 13z. SessionLevels FAQ: Manifests, Readiness, and Causality
+
+### Q13z.1. Is ComputeDaily a calendar-aware version of Compute?
+
+No. `ComputeDaily` and `ComputeWeekly` use caller-supplied day or week manifests;
+`ComputeDefault` accepts any admitted session partition. All three delegate to
+`Compute` with `Options{}`. Identical manifests yield identical bits and error
+identity through every facade. No wrapper chooses UTC midnight, exchange-local
+hours, 390 bars, five trading days, or a holiday schedule. Store the instrument,
+venue, adjustment basis and session policy with the input/result.
+
+### Q13z.2. Why does a manifest return ErrSession although my prices are finite?
+
+Structure is admitted before prices. Check the partition in observed-index space:
+
+| Symptom                                                           | Check                                                                |
+|-------------------------------------------------------------------|----------------------------------------------------------------------|
+| First range starts after index zero                               | First Start must equal zero                                          |
+| End is equal to or less than Start                                | Every interval must be nonempty                                      |
+| End exceeds available history                                     | Clip the final live/replay cut and set Complete=false when truncated |
+| Gap, overlap or uncovered suffix                                  | Adjacent End and Start must match; final End must equal n            |
+| An earlier interval is incomplete                                 | Only the final interval may be incomplete                            |
+| Nonempty prices without intervals, or empty prices with intervals | Empty history and manifest must agree                                |
+
+Do not sort, fill or invent candles to satisfy these constraints. Index coverage
+is not proof of feed coverage; the caller must resolve missing expected bars,
+calendar breaks, holidays, half-days and completion evidence. A zero-trade day
+is not a fabricated zero candle or an empty descriptor.
+
+### Q13z.3. Why is my result entirely masked even though the day is complete?
+
+The first supplied interval has no preceding completed interval. Its entire
+result is `Valid=false` with three positive-zero payloads, regardless of Complete.
+Include the whole accepted predecessor when a new day needs ready prior levels;
+rebase the manifest to the supplied slice. Do not label a truncated leading
+fragment complete or use its developing extrema as the missing predecessor.
+Once a complete predecessor exists, an incomplete final interval is fully ready.
+
+### Q13z.4. Are nil, empty, zero and IsNil interchangeable?
+
+No. An active context and any nil H/L/C slice yield `ErrNilInput`, even all nil.
+Three non-nil empty slices with no sessions return a non-nil Result with four
+non-nil empty slices. A nil sessions list is allowed only for empty prices.
+`IsNil()` reports the receiver pointer, not readiness or shape; a non-nil zero-
+value Result is not the artifact of a successful empty call. A ready +0 or -0
+is a numerical value, not warmup.
+
+### Q13z.5. Which error wins when several input problems exist?
+
+With no racing cancellation, the ordering is nil context, already observed
+context error, nil prices, unequal lengths, session structure, global non-finite
+price, then the first finite invalid candle. `ErrNilInput` and `ErrShape` are
+separate categories here. A malformed finite bar earlier in the history does
+not win against a later NaN/Inf; masked and incomplete-session prices are checked.
+All failures return nil. Use `errors.Is`, not message text. Cancellation racing
+validation after entry has no deterministic priority; context checks occur at
+entry, phase-local 1024-element checkpoints, before allocation and publication.
+See [the validation table](SESSIONLEVELS.md#validation-and-error-precedence).
+
+### Q13z.6. Why do I get a negative prior high or a signed zero?
+
+Selection starts from the first observed high and low, never zero. Signed finite
+prices are valid when `low <= close <= high`. Strict comparisons retain the
+earliest equal extrema, even when +0 and -0 compare equal; the final close is
+copied exactly. Donchian's latest-equal tie rule is different. Do not use an
+absolute value, epsilon or zero normalization to repair a signed spread. Build
+spread candles from synchronized spread observations, not independent leg extrema.
+
+### Q13z.7. Can I use the full current day's high as an opening threshold?
+
+Not for a causal opening reference. The whole previous completed session is
+selected and becomes eligible for the following session. A future price inside
+session j cannot change levels published within j on an admitted history with
+fixed segmentation. A schedule may be known early, but its future price totals
+are not. The algorithm cannot authenticate as-of data delivery. Any malformed
+future row rejects the whole batch; this is not a violation of numerical prefix
+invariance on valid histories.
+
+### Q13z.8. How should I replay live cuts and corrections?
+
+Keep stable original observation indices and source revision metadata. For a
+right-truncated last interval, clip End to the available length and mark it
+incomplete; retain complete earlier intervals. For a correction with unchanged
+segmentation and admissible prices, at most the next session's triple changes.
+Changed segmentation, completion or feed admission needs explicit recomputation.
+Run a new batch with a complete preceding interval when a ready initial
+reference is needed. There is no Stream, Snapshot or hidden retained state.
+A failed replacement must not invalidate a previously successful artifact in
+caller storage. Repeated full-prefix calls are not O(1) continuation.
+
+### Q13z.9. How do SessionLevels, Donchian, VWAP and ATR compose?
+
+| Need                                        | Correct information set                               |
+|---------------------------------------------|-------------------------------------------------------|
+| Fixed previous completed day/week reference | SessionLevels and that explicit partition             |
+| Previous P-bar breakout range               | Donchian exclude-current                              |
+| Current weighted price benchmark            | VWAP explicit anchor and ready positive-weight prefix |
+| Volatility scale known before bar i         | Separately ready ATR[i-1] with verified availability  |
+
+Use independent calls; SessionLevels imports no other lvlath package. Require aligned row IDs, units, masks and as-of availability. A valid
+level may be zero; derived differences, widths and normalized ratios can
+overflow or divide by zero even though selection itself cannot. A finalized
+close crossing is a feature, not a guaranteed same-close fill. See
+[composition and correction replay](SESSIONLEVELS.md#composition-and-correction-replay).
+
+### Q13z.10. What does the algorithm allocate, and how do I verify it?
+
+For n bars and s intervals, total time is O(n+s), including all admission scans
+and zero initialization. It uses O(n) owning output and O(1) scalar workspace,
+not a per-session summary array or rolling ring. Output channels do not alias
+one another or caller inputs; copying a Result value copies slice headers only.
+Independent calls may share stable inputs. Allocations are not interruptible,
+and context polling is not a hard real-time bound.
+
+Run the five [checked examples](../sessionlevels/example_test.go), the independent
+oracle and regression suite, then the benchmark workloads (fixture generation
+excluded):
+
+```sh
+go test ./sessionlevels -run '^Example' -count=1 -v
+go test -count=1 -covermode=atomic -coverprofile=sessionlevels.cover ./sessionlevels
+go tool cover -func=sessionlevels.cover
+go test -race ./sessionlevels
+go test ./sessionlevels -run '^$' -bench '^BenchmarkCompute$' -benchmem
+```
+
+The examples use engineered inputs for opening-risk monitoring, a shortened
+week, future-mutation replay, negative spreads and integrity rejection. They
+are offline, not audited current market data. Require 92% overall and for each
+executable production file; files without instrumented statements are N/A.
+No coverage percentage proves temporal provenance or execution correctness.
+See [the verification commands](SESSIONLEVELS.md#verification-and-benchmarks)
+and [the tutorial's complete example](TUTORIAL.md#11aa-sessionlevels-foundations-previous-completed-session-levels).
+
+---
+
 ## 14. Builder and gridgraph tips
 
 ### Q14.1. When should I use `builder`?
@@ -6605,6 +6745,20 @@ row mapping beside the channels: Result does not retain that metadata.
 Do not infer execution, reset windows at arbitrary chunk boundaries, or silently
 substitute a current-inclusive range. Run the [five scenarios](../donchian/example_test.go)
 and consult [the composition guide](DONCHIAN.md#composition-revision-and-batch-boundaries).
+
+---
+
+### Recipe V. Publish previous completed session references on a live history cut
+
+Admit a caller-owned calendar and coverage manifest for stable H/L/C arrays.
+Keep at least one complete predecessor, clip the final live interval, and call
+`sessionlevels.ComputeDaily` or `ComputeWeekly` with the corresponding explicit
+partition. Check err and Valid; publish a replacement only after success. For
+a multihorizon feature, use separate manifests and aligned source row mappings.
+Retain policy, provenance, revision and availability metadata alongside the
+output. Never use current-session totals at its opening or treat a close-based
+observation as a guaranteed fill. See [the guide](SESSIONLEVELS.md) and
+[the standalone scenario](../examples/sessionlevels/main.go).
 
 ---
 

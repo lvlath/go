@@ -11,6 +11,20 @@
 // The first session has no predecessor: Valid is false and all payloads are +0.
 // These are observed reference levels, not predictions, orders, fills, or profit claims.
 //
+// # Public surface and explicit policy
+//
+// Session carries the caller's half-open observed-index interval and Complete
+// assertion. Options{} is the only configuration. Compute is canonical;
+// ComputeDefault delegates with Options{}, and ComputeDaily and ComputeWeekly
+// are names for the same delegation with caller-prepared day/week partitions.
+// None derives, validates, or changes a calendar frequency. The same manifest
+// produces the same bits and error classification through all four facades.
+// There is no period, current-session overlay, or implicit previous-day policy.
+//
+// Result owns PreviousHigh, PreviousLow, PreviousClose and one shared Valid
+// slice. Each channel has length n, including non-nil zero-length channels on
+// successful empty input. The zero-value Result is not an allocated empty result.
+//
 // # Implementation and causality
 //
 // Validate the entire batch, then scan sessions and bars in ascending index order.
@@ -18,8 +32,11 @@
 // separate local scalars. Commit those scalars only after the session ends and
 // only if Complete is true. Therefore a change confined to session j cannot change
 // any successful output in sessions 0 through j. Its summary can affect session
-// j+1 only. An invalid later price still rejects the whole batch; success/error
-// prefix invariance is not promised for malformed extensions.
+// j+1 only, assuming unchanged segmentation. Extending an admitted prefix with
+// consistent intervals preserves its output bits; a cut inside a session clips
+// End and sets Complete=false. An invalid later price rejects the whole batch.
+// This is numerical causality on admitted histories, not proof of when a source
+// released or revised a price. The caller must establish that availability.
 //
 // # Inputs and options
 //
@@ -29,6 +46,9 @@
 // All three price slices must be non-nil, equally sized, finite, and satisfy
 // low <= close <= high. Negative prices, signed zeros, and subnormals are valid.
 // Options{} is valid and introduces no defaults or configuration errors.
+// A nil H/L/C slice fails even when all three are nil. Three non-nil empty
+// slices with no sessions succeed. Both nil and empty session lists are admitted
+// only for empty prices. Every nonfinal session must be complete.
 //
 // # Numeric policy and determinism
 //
@@ -40,20 +60,27 @@
 //
 // # Errors and nilability
 //
-// Precedence is nil/canceled context, nil prices, shape, empty/session structure,
-// global non-finiteness, finite candle geometry, computation. Within the finite
-// scan, visit increasing indices and high, low, close at each index. Remember a
-// bad finite candle until all prices are known finite. Classify through errors.Is.
-// Every error returns nil, never a partially useful Result. Concurrent cancellation
-// and an input error after entry have no prescribed winner. ErrEmptyInput is a
-// reserved, deprecated identity; valid empty input succeeds. IsNil is exactly a
-// receiver-pointer comparison, not readiness or channel validation.
+// A nil context returns ErrNilContext; an already canceled or expired context
+// returns ctx.Err(). Next come ErrNilInput for any nil H/L/C slice, ErrShape
+// for unequal lengths, and ErrSession for invalid coverage or completion.
+// Only after structural admission does price validation scan increasing bar
+// indices, checking high, low, close for NaN/Inf. Any ErrNonFinite takes
+// precedence over the first remembered finite ErrBar (low <= close <= high).
+// Masked and final incomplete bars are not exempt from validation.
+// There is no invalid-option or arithmetic-overflow category for this selection.
+//
+// Every failure returns nil, error. Classify with errors.Is, not error text.
+// Cancellation observed during work returns ctx.Err(); a racing input error
+// after entry has no prescribed winner. Successful empty or masked results are
+// not errors. IsNil is exactly a receiver-pointer comparison; it does not
+// validate channel shape, determine readiness, or certify source history.
 //
 // # Ownership and concurrency
 //
 // Successful results have four non-nil input-length slices, allocated independently.
-// No output aliases an input, another channel, or another call. Inputs are neither
-// modified nor retained. Copying Result by value is shallow. Independent calls may
+// Each has capacity n. No output aliases an input, another channel, or another
+// call. Inputs are neither modified nor retained. Copying Result by value is
+// shallow. Independent calls may
 // share read-only input; input mutation during a call is unsupported. Concurrent
 // writes to a returned result require caller synchronization. No locks or shared
 // algorithm state are needed.
@@ -63,7 +90,8 @@
 // With n bars and s sessions, total work including validation and output zeroing
 // is O(n+s), output space O(n), and auxiliary space O(1). The sequential kernel is
 // one pass; the whole API also performs validation scans. Four output buffers and
-// a result object are required for a nonempty call; this owning API is not allocation-free.
+// a result object form the owning allocation layout for a nonempty call. The
+// facade wrappers introduce no additional buffers or passes.
 // There are no per-session arrays, matrices, or heap allocations inside hot loops.
 //
 // Each float buffer is allocated with an already existing float-slice length n;
@@ -79,6 +107,19 @@
 // cannot retroactively retract a result. Typed-nil or misbehaving custom contexts
 // are outside the contract and are not detected through reflection or recovery.
 //
+// # Composition and operational boundaries
+//
+// The caller may supply ordered grid-checked observations from series, but
+// sessionlevels imports no other lvlath package. Donchian uses a rolling bar
+// count with explicit current-bar policy; VWAP uses a weighted prefix with
+// explicit reset flags; ATR measures and smooths ranges including price gaps.
+// None of those values substitutes for the previous completed session triple.
+// When combining features, align original row identity, units, readiness and
+// availability time. A previous-session threshold can be known before the
+// current bar only if its predecessor was actually finalized and available then.
+// A finalized current close comparison becomes observable at that close, not
+// before it. Consumer differences, ratios and execution rules are external.
+//
 // # Non-goals and AI-Hints
 //
 // No calendar, timezone, network, timestamp, series, or other lvlath package is
@@ -89,5 +130,13 @@
 // Zero-trade days are not represented by fabricated zero candles or empty sessions.
 // Future-known schedule boundaries are not permission to consume future price totals.
 // The package has no Stream, Snapshot, execution model, or mutable model state.
+// An isolated new-session batch loses its predecessor. Replay with an admitted
+// complete preceding interval and rebase indices; never mark a truncated left
+// fragment complete to manufacture readiness. With fixed boundaries a price
+// correction changes at most the following session's levels; changed boundaries,
+// completion or source admission require explicit revalidation and recomputation.
+// Check err before Valid, never treat a warmup zero as a level or compare across
+// different adjustment bases. Do not normalize or subtract extreme finite
+// levels without independently checking consumer arithmetic.
 // No reflection, unsafe operations, embedded fixtures, panic, or recovery calls are used.
 package sessionlevels

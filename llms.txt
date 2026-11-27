@@ -1,186 +1,315 @@
 # lvlath/go
 
-> lvlath/go is a deterministic, contract-driven, pure-Go library for graph modeling, traversal, shortest paths, spanning trees, network flow, routing, dense matrix computation, combinatorial optimization, grid construction, reproducible fixtures, time-series alignment, exact affine exponential level smoothing, observed Donchian range channels with explicit current-bar policy, and exact volume-weighted means with explicit segment anchors.
+> Deterministic, contract-driven pure-Go graph algorithms, dense numerical
+> algebra, time-series alignment, statistics, stochastic models, econometrics
+> and causal indicators. Import the owning package under `github.com/lvlath/go`.
 
-
-Maintained repository: `github.com/lvlath/go`.
-Use `go get github.com/lvlath/go`; read `go.mod` for the required Go version.
-The maintained implementation requires Go 1.23.4 or newer and is licensed under `AGPL-3.0-only`.
-
-Canonical Go module: `github.com/lvlath/go`
-
-Install with:
-
-```bash
-go get github.com/lvlath/go@latest
-```
-
+Repository: https://github.com/lvlath/go. Go 1.23.4 or newer at the reviewed
+revision; check `go.mod` for the selected version. License: AGPL-3.0-only.
+Use `go get github.com/lvlath/go@latest`, then consult documentation at the
+actual module version. A published GoDoc version may lag main. This index is
+supplementary; source and package contracts remain authoritative.
 
 ## Start here
 
-- [Repository README](https://github.com/lvlath/go/blob/main/README.md): Overview and working entry points.
-- [Go module](https://raw.githubusercontent.com/lvlath/go/main/go.mod): Module path and Go requirement.
-- [Tutorial](https://raw.githubusercontent.com/lvlath/go/main/docs/TUTORIAL.md): Package selection and composition.
-- [Go reference](https://pkg.go.dev/github.com/lvlath/go): Published API documentation; check the selected version.
+- [README](https://github.com/lvlath/go/blob/main/README.md): package map and examples.
+- [Module](https://raw.githubusercontent.com/lvlath/go/main/go.mod): actual import path and Go version.
+- [Documentation index](https://github.com/lvlath/go/blob/main/docs/README.md): guide discovery and import boundaries.
+- [Tutorial](https://github.com/lvlath/go/blob/main/docs/TUTORIAL.md): mathematical objects and data composition.
+- [FAQ](https://github.com/lvlath/go/blob/main/docs/FAQ_%26_TIPS.md): practical failure diagnosis.
+- [UES](https://github.com/lvlath/go/blob/main/docs/lvlath_UES.md): engineering standard.
+- [AGENTS](https://github.com/lvlath/go/blob/main/AGENTS.md): operational change rules.
+- [Go reference](https://pkg.go.dev/github.com/lvlath/go): selected-version public API.
 
-## Important usage rules:
+## Package-selection guide
 
-- Read source and package documentation at the selected repository/module version. `pkg.go.dev` may describe a different published version; do not infer new symbols from an older release page. Do not invent exported functions, options, fields, or result methods.
-- Build graph topology with `core.Graph`; use algorithm packages for computation and `matrix` for dense numeric artifacts.
-- Deterministic ordering and tie-breaking are observable API behavior where documented.
-- Public sentinel errors are checked with `errors.Is`; never match error strings.
-- Non-trivial algorithms return inspectable evidence such as paths, predecessor maps, cycle witnesses, trees, cuts, residual graphs, tours, alignments, or matrices.
-- Numeric meanings are package-specific. Do not treat `0`, `+Inf`, `NaN`, a missing edge, an unreachable state, and an untracked witness as interchangeable.
-- Preserve caller ownership and aliasing rules documented by each package. Do not mutate returned or retained values unless the API explicitly permits it.
-- Prefer explicit options over inferred policy. Never silently substitute a weaker algorithm, memory mode, matching policy, topology interpretation, or numeric encoding.
+The 41 packages are grouped by objective. A family is not an import hierarchy.
 
-## Package-selection guide:
+### A. Topology, paths, capacity and discrete optimization (11)
 
-- Use `core` for deterministic, thread-safe graph topology and explicit directed/weighted/loop/multi-edge/mixed-edge capabilities.
-- Use `builder` for deterministic fixtures and reproducible graph construction.
-- Use `bfs` for unweighted shortest-hop traversal, paths, layers, and weak components.
-- Use `dfs` for depth-first forests, finish order, cycle witnesses, and topological sorting.
-- Use `dijkstra` for non-negative weighted single-source shortest paths.
-- Use `mst` for minimum spanning trees or explicitly requested spanning forests.
-- Use `flow` for max-flow/min-cut computation and residual-network evidence.
-- Use `gridgraph` to generate lattice graphs for routing and traversal workloads.
-- Use `matrix` for dense matrices, graph adapters, metric closure, algebra, statistics, and factorization workflows.
-- Use `tsp` for exact, approximate, heuristic, and local-search tour construction under documented assumptions.
-- Use `dtw` for deterministic scalar, multivariate, or cost-matrix dynamic time warping.
-- Use `ema.ComputeSMA` / `ComputeFirst` for owning, index-aligned smoothed levels with an explicit period, or `NewSMA` / `NewFirst` and `Stream.Push(ctx,x)` for recoverable streaming. Canonical `Compute` and `New` accept full `ema.Options`.
-- Use `atr.ComputePeriod` / `NewPeriod` for an explicit observation horizon, or `ComputeDefault` / `NewDefault` to explicitly select `DefaultPeriod=14`. Canonical Compute/New retain Options; Options{} is invalid. ATR measures range, not smoothed price levels.
-- Use `donchian.ComputeIncludeCurrent(ctx,high,low,period)` for a finalized-bar overlay or `ComputeExcludeCurrent` for a preceding-range comparison. Canonical `Compute` accepts Options. No default period, Stream, or Snapshot exists.
-- Use `vwap.Compute(ctx,price,volume,reset,opts)` for a segmented weighted-price history, or `ComputeDefault` for the same call with Options{}. `New` / `NewDefault` construct a single-owner stream. Reset flags remain explicit; no period or calendar is selected.
+- [core](https://pkg.go.dev/github.com/lvlath/go/core): Deterministic capability-driven graph topology, stable IDs and traversal surfaces.
+- [builder](https://pkg.go.dev/github.com/lvlath/go/builder): Deterministic graph constructors and numeric datasets for experiments.
+- [gridgraph](https://pkg.go.dev/github.com/lvlath/go/gridgraph): Rectangular lattice connectivity, island analysis, 0-1 expansion and conversion to core.Graph.
+- [bfs](https://pkg.go.dev/github.com/lvlath/go/bfs): Unweighted shortest-hop traversal, deterministic paths and weak components.
+- [dfs](https://pkg.go.dev/github.com/lvlath/go/dfs): Depth-first forest, finish order, cycle witnesses and topological sort.
+- [dijkstra](https://pkg.go.dev/github.com/lvlath/go/dijkstra): Full SSSP and four target methods: Dijkstra, bidirectional, consistent A*, balanced bidirectional A*.
+- [mst](https://pkg.go.dev/github.com/lvlath/go/mst): Prim/Kruskal MST/MSF, KMB graph Steiner approximation, closed or fixed-end tree-covering walks.
+- [flow](https://pkg.go.dev/github.com/lvlath/go/flow): Canonical MaxFlow (Dinic, Edmonds-Karp, Ford-Fulkerson) with MaxFlowResult residual, cut and interruption evidence.
+- [matrix](https://pkg.go.dev/github.com/lvlath/go/matrix): Row-major dense algebra, graph adapters, APSP, stable statistics, pivoted solves and direct economy SVD.
+- [match](https://pkg.go.dev/github.com/lvlath/go/match): Minimum-weight perfect matching on an ordered even matrix subset; exact-or-error Blossom and explicit Greedy.
+- [tsp](https://pkg.go.dev/github.com/lvlath/go/tsp): Matrix-backed TSP/ATSP, exact Held-Karp and completed Branch-and-Bound, Christofides and local search.
 
-## Critical semantic boundaries:
+### B. Time, features and alignment (7)
 
-- `bfs`: discovery/visited state is not the same as processing order.
-- `dfs`: discovery order is not finish order and is not automatically a topological order.
-- `dijkstra`: unknown target, known unreachable target, disabled path tracking, and missing path evidence are distinct states.
-- `mst`: a disconnected graph has no single spanning tree; forest behavior must be requested explicitly.
-- `flow`: a scalar maximum-flow value is incomplete when the caller needs residual or cut evidence.
-- `matrix`: classic adjacency may use `0` for absence; zero-preserving weighted adjacency uses finite `0` for a real zero-weight edge and `+Inf` for absence. All-zero weighted graphs require explicit zero-weight preservation.
-- `matrix`: metric closure stores derived all-pairs distances and must not be exported as if those distances were literal graph edges.
-- `tsp`: exactness, metric assumptions, matching policy, time limits, and incumbent optimality are explicit contracts.
-- `dtw`: alignment cost and recovered alignment path are different result products; path recovery depends on memory policy.
-- `ema`: require `1 <= Period < MaxInt`; there is no default period. Finite negative values and subnormals are valid. Nil/empty slices succeed after context/options checks; a short SMA history has +0/false entries.
-- `ema`: exact represented-input SMA sum/P at index P-1, or first-value seeding at index zero; then one nearest-even rounding of `((P-1)*previous+2*x)/(P+1)`. Do not use rounded alpha, an overflowing difference, a floating numerator, or MACD's private kernel. P1 returns x except that -0 becomes +0.
-- `ema`: check error before Valid. Failed Push returns Value{} and changes no state; successful warmup also returns Value{} but advances Count. Result.IsNil checks pointer presence, not readiness. Result copies share slice backing arrays.
-- `ema`: Snapshot Version=1, Algorithm="ema/affine-rn/v1"; restore only into a constructed stream with matching Options. Warmup SeedSum is exact signed decimal in 2^-1074 units, at most 660 bytes and bounded by Count*MaxBinary64Units. Outside SMA warmup it is "0". Current is finite and zero-canonical.
-- `ema`: one owner per Stream, no internal locks or retained history. Caller owns cadence, duplicates, corrections, source cursor, checkpoint authentication, and lossless numeric serialization. EMA is not ATR, a full Keltner channel, a prediction interval, or a trading/safety decision.
-- `ema`: Push uses fixed O(34) arithmetic and no internal heap allocation. Compute performs two linear passes and owns O(n) output; Snapshot may allocate its decimal seed string. Keep persistence, logging, and custom context costs outside Push claims.
+- [series](https://pkg.go.dev/github.com/lvlath/go/series): Exact integer-nanosecond grids, causal lag/difference/returns, complete index windows.
+- [acf](https://pkg.go.dev/github.com/lvlath/go/acf): Direct fixed-window sample autocorrelation with common or lag-adjusted denominator and pair counts.
+- [pacf](https://pkg.go.dev/github.com/lvlath/go/pacf): Common-n Durbin-Levinson partial autocorrelation and order-wise prediction-error variance.
+- [paa](https://pkg.go.dev/github.com/lvlath/go/paa): Fractional equal-duration compression with exact rational segment geometry and correctly rounded means.
+- [sax](https://pkg.go.dev/github.com/lvlath/go/sax): Immutable symbolic encoders over fractional PAA, explicit normalization and compatible Euclidean MINDIST.
+- [dtw](https://pkg.go.dev/github.com/lvlath/go/dtw): Scalar, cost-matrix and multivariate alignment; bounded classifications and exact fixed-length squared-scalar top-K search.
+- [tfsax](https://pkg.go.dev/github.com/lvlath/go/tfsax): Research-only exact absolute-cost DTW oracle versus classical SAX TopM retrieval.
 
-- `atr`: all finite signed H/L/C prices are allowed if low<=close<=high. Nonfinite input is ErrNonFinite; invalid finite geometry is ErrBar. Mixed nil/nonempty columns give ErrNilInput; other unequal lengths give ErrShape. Empty and short histories succeed after validation.
-- `atr`: TR0=RN64(H0-L0), no synthetic previous close. TR stays available during warmup; Valid belongs only to ATR. The first ATR is RN64(exactSum(roundedTR[0:P])/P), followed by RN64(((P-1)*previousATR+TR)/P). P1 is bitwise identity. No EMA coefficient, float alpha, clamp, or warmup TR masking.
-- `atr`: failed Compute returns nil; failed Push returns Value{} and changes no state. Result.IsNil is a pointer check. One Stream has one owner. NewPeriod/NewDefault delegate to New; no extra options, seed modes, or implicit default period exist.
-- `atr`: Snapshot Version=1, Algorithm="atr/wilder-rn/v1". PreviousClose and exact unsigned SeedSum preserve continuation; canonical decimal is bounded to 660 bytes and Count*MaxBinary64Units. Warmup Current is +0; mature Current is finite nonnegative, including either zero sign. Restore is structural validation, not authentication.
-- `atr`: source identity/revision/offset, candle finality, correction replay, channel composition, and alert policy belong to the caller. Do not implement NATR, positions, stops, or division by ATR in the package. A ready zero is a valid measurement. Push has fixed O(34) work with no internal heap allocation; JSON, logging, and custom contexts are separate.
+### C. Statistics, regression, hidden states and inference (6)
 
+- [stats](https://pkg.go.dev/github.com/lvlath/go/stats): Stable scalar moments, Chan merges, immutable fitted column standardization.
+- [ols](https://pkg.go.dev/github.com/lvlath/go/ols): Full-rank least squares by column-pivoted QR, physical-unit coefficients and frozen prediction.
+- [ridge](https://pkg.go.dev/github.com/lvlath/go/ridge): Positive-Lambda L2 regression via protected augmented pivoted QR, including wide/collinear designs.
+- [pca](https://pkg.go.dev/github.com/lvlath/go/pca): Immutable training covariance eigenbasis, projection and reconstruction in original units.
+- [hmm](https://pkg.go.dev/github.com/lvlath/go/hmm): Categorical and diagonal-Gaussian hidden Markov models, filtering, smoothing, Viterbi and multi-sequence MAP-EM.
+- [lstm](https://pkg.go.dev/github.com/lvlath/go/lstm): Frozen single-layer unidirectional PyTorch IFGO recurrent inference over masked batch-first tensors.
 
-- `donchian`: include window [i-P+1,i], first ready P-1; exclude [i-P,i-1], first ready P. All positive int periods including MaxInt are valid; Options{} is invalid. P counts observations, not calendar days. Include is causal after bar availability, but is not a prior-bar threshold.
-- `donchian`: finite signed H/L with high>=low; latest equal extrema retain input bits. Middle rounds the exact boundary mean to nearest-even without destructive overflow/underflow. Exact zero becomes +0; negative nonzero means may round to -0. A finite Middle does not guarantee a finite width or ratio.
-- `donchian`: context -> options -> shape -> complete nonfinite scan -> first finite ErrBar -> computation/publication. Nil/nonempty matches both ErrShape and ErrNilInput. Even excluded or masked rows are validated; every error returns nil. Do not copy ATR's per-index error order.
-- `donchian`: Result owns aligned Upper/Middle/Lower/Valid; false masks imply +0 payloads, ready zeros remain valid. Empty inputs return non-nil empty channels. IsNil is only pointer presence. Result carries no Options or source provenance.
-- `donchian`: O(n) total work, O(n) output, O(min(P,n)) workspace. Entirely masked histories allocate no rings. Individual inserts can pop O(P); polling is phase-local, not hard real-time. Packed numerical channels are disjoint cap-limited views; keeping one retains the array, and struct copies are shallow. No runtime OOM recovery is promised.
-- `donchian`: callers govern time grids, closed bars, source revisions, close validity, chunk overlap, corrections and execution. Prior ATR normalization uses a ready ATR[i-1] and explicit finite arithmetic; no inferred epsilon or fill. All tests are external; fixed fixtures/oracles are in test_helper_test.go and five complete scenarios are in example_test.go.
+### D. Stochastic computation and econometrics (7)
 
-- `vwap`: prices may have any finite sign; weights are finite and nonnegative. Require reset[0]=true for nonempty batch and reset=true for the first accepted Push after construction/Reset. Reset is before the row. Before positive segment weight return +0/false; later zero weight preserves the ready mean and increments Count.
-- `vwap`: exact VolumeSum uses 2^-1074 units and WeightedSum uses 2^-2148 units. Round their scaled ratio once to nearest-even; exact zero is +0 and negative nonzero underflow may be -0. Fixed 67-limb magnitudes avoid float product overflow and lost cancellation residuals. Do not substitute rounded products, a delta mean, or an approximate continuation law.
-- `vwap`: context -> shape -> first anchor -> increasing-index rows, finite checks before negative volume per row -> allocation/kernel/publication. A later NaN does not override an earlier negative-volume error. Mixed nil/nonempty shape matches both ErrShape and ErrNilInput. Empty slices succeed with non-nil empty outputs. Empty Options has no invalid value or option-error sentinel.
-- `vwap`: errors return nil Result or Value{}; failed Push/Restore changes no state. IsNil checks only pointer presence; output slices are detached, while Result struct copies are shallow. Nil Push/Restore receivers give ErrNilInput; zero Stream gives ErrStateVersion. Nil/zero Reset is a no-op; Snapshot returns Snapshot{}.
-- `vwap`: Snapshot v1, algorithm vwap/exact-weighted/v1, matching Options; Started==(Count!=0). Require canonical ASCII decimal sums of at most 1300 bytes each, V>=0, V<=Count*Umax and abs(W)<=V*Umax, Umax=(2^53-1)<<2045. Bit bounds are 2162/4260. Restore reconstructs the rounded value from sums, not from a stored Current field, and is not authentication.
-- `vwap`: Count includes zero-volume observations of the current segment, not source sequence IDs. Non-reset Count overflow is ErrOverflow; a valid reset starts Count=1. Keep cursor, source/revision, availability and anchor identity in an externally authenticated atomic envelope. A separate Reset cannot roll back with a later failed Push; use Push(reset=true).
-- `vwap`: one owner per stream; batch uses two linear passes and O(n) owning output, Push uses fixed O(67) work/no internal heap allocation, Snapshot/Restore bounded O(D*67), D<=1300. Snapshot strings, JSON and custom contexts have separate costs. These bounds do not guarantee hard real-time latency or successful allocation under OOM.
-- `vwap`: no rolling window, HLC3 inference, calendar, merge/remove API, execution simulation, or liquidity/profit guarantee. A current-inclusive benchmark is not a prior-observation baseline. Bars cannot reveal unobserved tick prices; spread weights must refer to matched observations. Corrected history requires explicit replay before the correction; unchanged later resets isolate subsequent segments.
-- `vwap`: tests use package vwap_test and shared test_helper_test.go, independent rational oracles, and five offline examples. Run the Go-only coverage gate after creating a fresh profile; LVLATH_VWAP_COVERPROFILE must be an absolute path. Each executable file and the package need 92%; no Python checker or data-file dependency is required.
+- [rng](https://pkg.go.dev/github.com/lvlath/go/rng): Version-pinned SHA-256/PCG-DXSM logical-path streams, open uniforms and cached normals.
+- [bootstrap](https://pkg.go.dev/github.com/lvlath/go/bootstrap): Moving, Circular and Stationary dependent-data block-index ensembles.
+- [montecarlo](https://pkg.go.dev/github.com/lvlath/go/montecarlo): Bounded-parallel independent vector sampling with ordered moments and optional exact empirical quantiles.
+- [gbm](https://pkg.go.dev/github.com/lvlath/go/gbm): Exact-in-distribution lognormal endpoint paths on explicit elapsed-time grids.
+- [jumpdiffusion](https://pkg.go.dev/github.com/lvlath/go/jumpdiffusion): Experimental Merton compound-Poisson lognormal jumps on GBM grids.
+- [gjrgarch](https://pkg.go.dev/github.com/lvlath/go/gjrgarch): Stationary asymmetric GJR-GARCH(1,1), causal variance, expected-variance forecasts and Gaussian QMLE.
+- [arima](https://pkg.go.dev/github.com/lvlath/go/arima): Fixed nonseasonal conditional Gaussian ARIMA with anchored level forecasts and marginal innovation variance.
 
-## Canonical project resources:
+### E. Indicators: readiness, arithmetic and recovery (10)
 
-- [Repository](https://github.com/lvlath/go): Source code, tests, benchmarks, examples, releases, contribution workflow, and issue tracker.
-- [Go Reference](https://pkg.go.dev/github.com/lvlath/go): Current public package APIs and GoDoc.
-- [Organization profile](https://github.com/lvlath): Project principles, maintained implementations, and contribution entry points.
-- [Repository README](https://github.com/lvlath/go/blob/main/README.md): Package map, project laws, installation, and navigation.
-- [Tutorial](https://github.com/lvlath/go/blob/main/docs/TUTORIAL.md): Cross-package introduction and composition guidance.
-- [Engineering standard](https://github.com/lvlath/go/blob/main/docs/lvlath_UES.md): Repository-wide quality, documentation, testing, and API expectations.
-- [Contributing](https://github.com/lvlath/go/blob/main/CONTRIBUTING.md): Required workflow and quality gates for changes.
-- [Security policy](https://github.com/lvlath/go/security/policy): Private vulnerability-reporting process.
+- [ema](https://pkg.go.dev/github.com/lvlath/go/ema): Exact affine exponential levels with explicit SMA or First seed and recoverable streams.
+- [atr](https://pkg.go.dev/github.com/lvlath/go/atr): Exact signed-candle True Range and Wilder ATR with independent readiness and replay.
+- [donchian](https://pkg.go.dev/github.com/lvlath/go/donchian): Observed rolling high/low channels with explicit current-bar policy and exact midpoint.
+- [vwap](https://pkg.go.dev/github.com/lvlath/go/vwap): Exact anchored price-volume means with positive-weight readiness and transactional reset.
+- [sessionlevels](https://pkg.go.dev/github.com/lvlath/go/sessionlevels): Previous completed session high, low and final close over explicit partitions; batch-only.
+- [rsi](https://pkg.go.dev/github.com/lvlath/go/rsi): Wilder gain/loss oscillator over ordered finite positive prices, batch and checkpointable stream.
+- [macd](https://pkg.go.dev/github.com/lvlath/go/macd): SMA-seeded fast/slow Appel EMAs, signed Line/Signal/Histogram and separate masks.
+- [mfi](https://pkg.go.dev/github.com/lvlath/go/mfi): Rolling volume-weighted typical-price flow over P transitions, compensated sums.
+- [obv](https://pkg.go.dev/github.com/lvlath/go/obv): Cumulative signed current-candle base volume with compensated accumulation.
+- [ad](https://pkg.go.dev/github.com/lvlath/go/ad): Chaikin close-location-weighted current-candle base volume with compensated accumulation.
 
-## Package documentation:
+## Critical semantic boundaries
 
-- [core](https://pkg.go.dev/github.com/lvlath/go/core): Deterministic graph topology, capabilities, identity, ownership, and concurrency rules.
-- [builder](https://pkg.go.dev/github.com/lvlath/go/builder): Deterministic graph builders and reproducible fixtures.
-- [bfs](https://pkg.go.dev/github.com/lvlath/go/bfs): Breadth-first traversal, shortest-hop paths, layers, components, filters, hooks, and partial results.
-- [dfs](https://pkg.go.dev/github.com/lvlath/go/dfs): Depth-first traversal, finish order, cycle witnesses, and topological sorting.
-- [dijkstra](https://pkg.go.dev/github.com/lvlath/go/dijkstra): Non-negative weighted shortest paths, path witnesses, cutoffs, and unreachable-state publication.
-- [mst](https://pkg.go.dev/github.com/lvlath/go/mst): Prim/Kruskal minimum spanning trees and explicit forest behavior.
-- [flow](https://pkg.go.dev/github.com/lvlath/go/flow): Ford-Fulkerson, Edmonds-Karp, Dinic, residual graphs, and cut evidence.
-- [gridgraph](https://pkg.go.dev/github.com/lvlath/go/gridgraph): Deterministic two-dimensional lattice graph generation.
-- [matrix](https://pkg.go.dev/github.com/lvlath/go/matrix): Dense matrices, graph adapters, zero-weight policy, metric closure, algebra, statistics, and factorizations.
-- [tsp](https://pkg.go.dev/github.com/lvlath/go/tsp): Exact, approximate, heuristic, and local-search tours with explicit assumptions and stopping policy.
-- [dtw](https://pkg.go.dev/github.com/lvlath/go/dtw): Dynamic time warping, windows, slope penalties, memory modes, costs, and optional path recovery.
-- [ema](https://pkg.go.dev/github.com/lvlath/go/ema): Exact affine exponential levels, explicit seed policies, Values/Valid, transactional streaming and bounded continuation. Use the source links below when the selected published version predates the package.
-- [atr](https://pkg.go.dev/github.com/lvlath/go/atr): Exact True Range and Wilder ATR, signed candles, independent readiness, named period facades, and lossless single-owner continuation. Check the selected published version.
-- [donchian](https://pkg.go.dev/github.com/lvlath/go/donchian): Observed rolling ranges, explicit current-bar inclusion, exact midpoint and aligned readiness. Use repository source when the selected published version predates the package.
-- [vwap](https://pkg.go.dev/github.com/lvlath/go/vwap): Exact anchored price-volume means, Values/Valid, transactional streams and exact continuation. Check the selected version; repository source is authoritative when a published version predates the package.
+- Match the mathematical objective and explicit options, not just the package name; never invent a symbol, result field or fallback. Use errors.Is and inspect error before readiness, completion or convergence. Unknown/unreachable/disabled/invalid states are distinct.
+- Preserve deterministic ordering and tie decisions, finite domain, true overflow, aliasing and detached-result contracts. Graph storage locking is not algorithm snapshot isolation. Never replace an exact ordering by a universal epsilon comparator.
+- Separate caller-side composition from actual Go imports. Independent scalar indicators are not wrappers around matrix or graph code. `core` and `matrix` are the foundational representations where needed.
+- No future leakage, invented bars, holdout refits or unapproved model/approximation guarantees. A readiness mask, model fingerprint, config hash or snapshot is not evidence of source availability or authentication.
+- One owner per mutable accumulator, stream and RNG. Error atomicity does not imply concurrent safety. Persist source/revision/cursor with compatible numeric state in an authenticated envelope. Keep calibration, model release, calendars, correction replay and decisions in the application.
 
-## Detailed guides:
+## Package-specific cautions
 
-- [Core guide](https://github.com/lvlath/go/blob/main/docs/CORE.md): Graph contracts, topology, identity, ownership, concurrency, and operational examples.
-- [BFS guide](https://github.com/lvlath/go/blob/main/docs/BFS.md): Queue semantics, discovery versus processing, paths, components, and pitfalls.
-- [DFS guide](https://github.com/lvlath/go/blob/main/docs/DFS.md): Discovery/finish semantics, cycles, DAG validation, and topological ordering.
-- [Dijkstra guide](https://github.com/lvlath/go/blob/main/docs/DIJKSTRA.md): Input domain, unreachable states, witnesses, policy, and complexity.
-- [MST guide](https://github.com/lvlath/go/blob/main/docs/MST.md): Prim/Kruskal, strict tree versus forest behavior, and disconnected inputs.
-- [Flow guide](https://github.com/lvlath/go/blob/main/docs/FLOW.md): Augmenting paths, residual networks, cuts, and algorithm selection.
-- [Matrix guide](https://github.com/lvlath/go/blob/main/docs/MATRICES.md): Dense storage, numeric policy, zero-weight preservation, graph adapters, APSP, statistics, and factorizations.
-- [TSP guide](https://github.com/lvlath/go/blob/main/docs/TSP.md): Exactness, approximation assumptions, local search, limits, and result interpretation.
-- [DTW guide](https://github.com/lvlath/go/blob/main/docs/DTW.md): Alignment cost, path recovery, windows, penalties, and memory modes.
-- [Grid graph guide](https://github.com/lvlath/go/blob/main/docs/GRID_GRAPH.md): Lattice construction, connectivity, obstacles, and routing scenarios.
-- [EMA guide](https://github.com/lvlath/go/blob/main/docs/EMA.md): Correct rounding, seed and error tables, lossless warmup replay, complete programs, complexity, and pitfalls.
-- [ATR guide](https://github.com/lvlath/go/blob/main/docs/ATR.md): Exact range arithmetic, phase/error tables, prior-baseline review, source provenance and replay.
-- [Donchian guide](https://github.com/lvlath/go/blob/main/docs/DONCHIAN.md): Window/error tables, finite-domain midpoint proof, deque bounds, ownership, complete usage and source-timing pitfalls.
-- [VWAP guide](https://github.com/lvlath/go/blob/main/docs/VWAP.md): Exact integer units, anchor/readiness laws, lifecycle/errors, bounded checkpoint validation, correction replay and Go-only verification.
-- [Documentation routes](https://github.com/lvlath/go/blob/main/README.md#current-contract-documentation): Existing repository catalog of package-owned guides and engineering references.
+### A. Topology, paths, capacity and discrete optimization
 
-## Numerical representations and alignment:
+- [core contract](https://raw.githubusercontent.com/lvlath/go/main/core/doc.go): Declare directed, weighted, loop, parallel and mixed-edge policy. Graph weights are finite; structural pointers may alias live records. An undirected edge retains its stored endpoints. Locking is not snapshot isolation.
+- [builder contract](https://raw.githubusercontent.com/lvlath/go/main/builder/doc.go): BuildGraph validates options and executes constructors in order; check setup errors, preserve seed and shape, and do not infer correctness from one generated family.
+- [gridgraph contract](https://raw.githubusercontent.com/lvlath/go/main/gridgraph/doc.go): Declare land threshold and neighborhood (4/8); distinguish minimum conversions from weighted route cost. Grid coordinates and graph IDs are separate representations.
+- [bfs contract](https://raw.githubusercontent.com/lvlath/go/main/bfs/doc.go): Visited means discovered/enqueued; Order means processed. Honor depth/filter/hooks and partial-result contracts; weak components are not SCCs. Weighted cost is not hop count.
+- [dfs contract](https://raw.githubusercontent.com/lvlath/go/main/dfs/doc.go): Order is finish, not discovery. A cycle witness is not exhaustive cycle enumeration. Require a DAG for topological order and respect partial-order validity.
+- [dijkstra contract](https://raw.githubusercontent.com/lvlath/go/main/dijkstra/doc.go): Keep unknown, unreachable (+Inf), disabled tracking and broken witnesses distinct. DistanceTo/ShortestPathTo run full SSSP; target PathResult retains original EdgeIDs. Validate finite nonnegative costs, heuristic consistency, exact target cutoff and walls.
+- [mst contract](https://raw.githubusercontent.com/lvlath/go/main/mst/doc.go): Strict MST never silently becomes MSF. Finite negative edges can be valid for MST, not KMB. SteinerResult network edges and WalkResult repeated passages have different objectives and costs; preserve original IDs.
+- [flow contract](https://raw.githubusercontent.com/lvlath/go/main/flow/doc.go): Finite capacity uses explicit epsilon policy; undirected edges become independent directed arcs, parallel arcs aggregate. Preserve residual/cut and Partial semantics; no input mutation or task orchestration.
+- [matrix contract](https://raw.githubusercontent.com/lvlath/go/main/matrix/doc.go): Preserve finite zero edges with explicit policy and +Inf absence; never export metric closure as original edges. View aliases; Clone detaches; read zero-element transform exceptions. FactorLU/QR/Cholesky are distinct from historical decompositions; SVD is not PCA or a solve. Respect rank, condition, residual, convergence and finite-domain diagnostics.
+- [match contract](https://raw.githubusercontent.com/lvlath/go/main/match/doc.go): Complete finite nonnegative approximately symmetric costs; no triangle inequality required. Preserve original index pairs, subset order and raw cost; never mutate TSP adjacency or silently fall back to Greedy.
+- [tsp contract](https://raw.githubusercontent.com/lvlath/go/main/tsp/doc.go): Tour cost is not shortest path or MST cost. Christofides 1.5 requires symmetric complete metric input and exact Blossom; Greedy does not certify it. Inspect incumbent, timeout, exactness and optimality separately.
 
-- [Matrix contract](https://raw.githubusercontent.com/lvlath/go/main/matrix/doc.go): Dense storage, numeric policies and graph representations.
-- [Matrix API](https://raw.githubusercontent.com/lvlath/go/main/matrix/api.go): Implemented constructors and operations.
-- [DTW](https://raw.githubusercontent.com/lvlath/go/main/dtw/doc.go): Sequence alignment, cost models, windows and memory policies.
-- [EMA contract](https://raw.githubusercontent.com/lvlath/go/main/ema/doc.go): Numeric domain, readiness, errors, ownership, cancellation, and snapshot ABI.
-- [EMA API](https://raw.githubusercontent.com/lvlath/go/main/ema/api.go): Compute/New and the four named seed wrappers; no implicit period defaults.
-- [EMA types](https://raw.githubusercontent.com/lvlath/go/main/ema/types.go): Options, Result.IsNil, Value, and Snapshot fields.
-- [ATR API](https://raw.githubusercontent.com/lvlath/go/main/atr/api.go): Canonical Compute/New and the four period/default wrappers.
-- [ATR charter](https://raw.githubusercontent.com/lvlath/go/main/atr/doc.go): Signed domain, exact rounding, masks, ownership, cancellation and snapshot ABI.
-- [ATR types](https://raw.githubusercontent.com/lvlath/go/main/atr/types.go): Options, Result.IsNil, scalar Value, and Snapshot.
-- [Donchian charter](https://raw.githubusercontent.com/lvlath/go/main/donchian/doc.go): Windows, domain, masks, errors, ownership and cancellation.
-- [Donchian API](https://raw.githubusercontent.com/lvlath/go/main/donchian/api.go): Compute and the two explicit include/exclude-current wrappers; no hidden defaults.
-- [Donchian types](https://raw.githubusercontent.com/lvlath/go/main/donchian/types.go): Options, owning Result and pointer-only IsNil.
-- [VWAP charter](https://raw.githubusercontent.com/lvlath/go/main/vwap/doc.go): Explicit segmentation, exact ratio rounding, nil/domain errors, ownership, cancellation and continuation.
-- [VWAP API](https://raw.githubusercontent.com/lvlath/go/main/vwap/api.go): Canonical Compute/New and direct ComputeDefault/NewDefault wrappers; no implicit anchors.
-- [VWAP types](https://raw.githubusercontent.com/lvlath/go/main/vwap/types.go): Empty Options, owning Result, pointer-only IsNil, Value and exact-sum Snapshot.
-- [VWAP errors](https://raw.githubusercontent.com/lvlath/go/main/vwap/errors.go): The eight implemented sentinel categories; no unreachable option sentinel.
+### B. Time, features and alignment
 
-## Examples and verification:
+- [series contract](https://raw.githubusercontent.com/lvlath/go/main/series/doc.go): Keep sample indices, missing whole slots, timestamps and Valid masks separate; no interpolation or implicit resampling. Do not compress gaps into false adjacency.
+- [acf contract](https://raw.githubusercontent.com/lvlath/go/main/acf/doc.go): Fit one full-window mean or use explicit raw origin. LagAdjusted can exceed unit magnitude and lose Toeplitz PSD; no clipping, no causal prefix claim, FFT or significance test.
+- [pacf contract](https://raw.githubusercontent.com/lvlath/go/main/pacf/doc.go): Explicit full-window centering; preserve separate coefficient rows and reject nonpositive prediction variance, no epsilon repair. Not automatic AR fit or confidence bands.
+- [paa contract](https://raw.githubusercontent.com/lvlath/go/main/paa/doc.go): Every source observation contributes by overlap; no tail loss, padding or unweighted integer-bin shortcut. Returned averages/segments are detached.
+- [sax contract](https://raw.githubusercontent.com/lvlath/go/main/sax/doc.go): Right-bin equality and encoding-policy identity matter; compare compatible words only. MINDIST is not a certified DTW lower bound; identity digest is not authentication.
+- [dtw contract](https://raw.githubusercontent.com/lvlath/go/main/dtw/doc.go): Local cost, window, penalty, memory and path artifacts are explicit. Exact Search has its own certified LB_Keogh domain; neither generic DTW nor SAX MINDIST inherits that bound. DTW is not generally metric.
+- [tfsax contract](https://raw.githubusercontent.com/lvlath/go/main/tfsax/doc.go): No TFSAX codec or proven symbolic DTW pruning. Complete and Exact are independent; heuristic shortlist stays non-exact at observed recall 1. Preserve temporal provenance, strict-ID metrics and NA.
 
-- [Runnable examples](https://github.com/lvlath/go/tree/main/examples): Cross-package executable scenarios using the implemented public API.
-- [Package tests](https://github.com/lvlath/go): Validation, medium, edge, adversarial, deterministic, and concurrency tests live beside each package.
-- [GitHub Actions](https://github.com/lvlath/go/actions): Continuous integration status and workflow history.
-- [Codecov](https://codecov.io/github/lvlath/go): Repository coverage reporting.
-- [EMA executable scenarios](https://github.com/lvlath/go/blob/main/ema/example_test.go): Centerline, tick-noise admission, seed failover, prior-baseline incident review, rejected telemetry, and extreme cancellation. Run `go test ./ema -run Example -count=1` from the repository root.
-- [EMA rational oracle](https://github.com/lvlath/go/blob/main/ema/test_helper_test.go): Independent represented-input reference arithmetic and typed comparison helpers; tests use `package ema_test`.
-- [EMA benchmarks](https://github.com/lvlath/go/blob/main/ema/bench_test.go): Batch sizes 1e3/1e5/1e6 and periods 14/64/512; separate steady-state, warmup, and adversarial Push regimes. Report the actual toolchain and machine; no universal timing guarantee.
-- [ATR executable scenarios](https://github.com/lvlath/go/blob/main/atr/example_test.go): Frozen vendor-source audit, prior-baseline review, warmup failover, rejected-row retry, signed spreads and ready zeros. Run `go test ./atr -run Example -count=1`.
-- [ATR oracle and fixtures](https://github.com/lvlath/go/blob/main/atr/test_helper_test.go): External tests, independent math/big.Rat arithmetic and offline source parsing; no production test hooks.
-- [ATR CSV replay](https://github.com/lvlath/go/blob/main/examples/atr/main.go): Bounded stdin CSV, typed checkpoint plus source cursor, and suffix bit parity.
-- [Donchian executable scenarios](https://github.com/lvlath/go/blob/main/donchian/example_test.go): Current-range report, prior-20 audit, 10/50 compression, signed spreads and feed quarantine. Run `go test ./donchian -run '^Example' -count=1 -v`.
-- [Donchian oracles and fixture provenance](https://github.com/lvlath/go/blob/main/donchian/test_helper_test.go): Independent direct-window/rational arithmetic and frozen or engineered data; no live requests.
-- [Donchian benchmarks](https://github.com/lvlath/go/blob/main/donchian/bench_test.go): Size/period grid, masked MaxInt, full rings, equal eviction, pop bursts and wrappers; setup outside timing.
-- [VWAP executable scenarios](https://github.com/lvlath/go/blob/main/vwap/example_test.go): Frozen vendor bar benchmark, separate market/fill comparison, available-at anchor, failover cursor and matched spread basis. Run `go test ./vwap -run '^Example' -count=1 -v`.
-- [VWAP fixtures and independent oracles](https://github.com/lvlath/go/blob/main/vwap/test_helper_test.go): Frozen IBM demo provenance, separately engineered tapes, exact Rat/Int references and Go coverage helpers.
-- [VWAP coverage gate](https://github.com/lvlath/go/blob/main/vwap/coverage_test.go): Optional explicit fresh-profile validation, per-file and total 92% thresholds; profile provenance is external.
-- [VWAP benchmarks](https://github.com/lvlath/go/blob/main/vwap/bench_test.go): Batch sizes 1e3/1e5/1e6 and explicit reset cadences 14/64/512, steady Push, extreme cancellation and Restore. Reset cadence is not a rolling period option.
+### C. Statistics, regression, hidden states and inference
 
-## Optional:
+- [stats contract](https://raw.githubusercontent.com/lvlath/go/main/stats/doc.go): Exact represented-input mean and scaled second moments are distinct. Respect ddof, constant-column policy, transactional update/merge and train-only transforms; one owner per mutable accumulator.
+- [ols contract](https://raw.githubusercontent.com/lvlath/go/main/ols/doc.go): Explicit intercept or exact zero origin; rank/shape/condition diagnostics are not repaired by normal equations or pseudoinverse fallback. Fit preprocessing on training only.
+- [ridge contract](https://raw.githubusercontent.com/lvlath/go/main/ridge/doc.go): Penalty applies to optimization slopes, never intercept. Preserve physical predictions and explicit scaling, numerical rank and checked objective; no hidden Lambda=0 OLS mode.
+- [pca contract](https://raw.githubusercontent.com/lvlath/go/main/pca/doc.go): CovarianceEigen is implemented; ThinSVD remains unsupported on the reviewed contract. Verify spectrum/PSD/rank, compare degenerate subspaces, no holdout recentering/refit or automatic SVD fallback.
+- [hmm contract](https://raw.githubusercontent.com/lvlath/go/main/hmm/doc.go): Filter/FilterStep are causal; smoothing/decoding use full supplied sequence. Preserve zero-probability support, log-domain overflow distinction and independent training boundaries; ModelID is not source authentication.
+- [lstm contract](https://raw.githubusercontent.com/lvlath/go/main/lstm/doc.go): No training or prediction head. Keep gate/bias order, exact-zero masked output, unchanged masked state, ModelID-bound detached Hidden/Cell, numeric error instead of clipping. Check error before state reuse.
 
-- [Issues](https://github.com/lvlath/go/issues): Reproducible defects, API proposals, and planned work.
-- [License](https://github.com/lvlath/go/blob/main/LICENSE): Full AGPL-3.0-only terms.
+### D. Stochastic computation and econometrics
+
+- [rng contract](https://raw.githubusercontent.com/lvlath/go/main/rng/doc.go): One mutable stream per owner; immutable factory; preserve raw draw order, normal spare and version identity. Not cryptographic randomness.
+- [bootstrap contract](https://raw.githubusercontent.com/lvlath/go/main/bootstrap/doc.go): Returns indices, not statistics or confidence intervals. Preserve paired observations, unbiased bounded integers, per-replicate RNG identity, memory admission and complete-row interruption semantics.
+- [montecarlo contract](https://raw.githubusercontent.com/lvlath/go/main/montecarlo/doc.go): One stream per logical path, not worker; 2W scheduling bound, canonical reduction, byte admission; failed run exposes only contiguous complete prefix, no quantiles. Sampler owns model, payoffs and concurrency safety.
+- [gbm contract](https://raw.githubusercontent.com/lvlath/go/main/gbm/doc.go): Positive finite initial price, matching units, no implicit annualization; zero volatility consumes no entropy. Preserve safe log-growth publication and distinguish completed prefix from terminal success; no calibration or measure selection.
+- [jumpdiffusion contract](https://raw.githubusercontent.com/lvlath/go/main/jumpdiffusion/doc.go): Use arithmetic jump compensator expm1(m+s^2/2), not log mean; exact discrete bounded Poisson inversion/PTRS, no Gaussian count fallback. Intensity=0 delegates to GBM. Interrupted intervals are not terminal payoffs.
+- [gjrgarch contract](https://raw.githubusercontent.com/lvlath/go/main/gjrgarch/doc.go): Variance for r[t] is fixed before observing r[t]; negative shocks affect next variance. Respect stationarity and convergence diagnostics; unfinished fit is not an approved model; variance is not VaR.
+- [arima contract](https://raw.githubusercontent.com/lvlath/go/main/arima/doc.go): Condition on burn-in max(p,q) of differenced observations; strict Schur roots, no clipping or exact diffuse MLE claim. Preserve historical anchors; variance excludes parameter uncertainty.
+
+### E. Indicators: readiness, arithmetic and recovery
+
+- [ema contract](https://raw.githubusercontent.com/lvlath/go/main/ema/doc.go): Finite signed values, 1<=P<MaxInt, no default; SMA ready at P-1, First at 0. Exact seed and RN64(((P-1)*prev+2*x)/(P+1)); P1 canonical +0. Keep bounded exact SeedSum; never substitute MACD's private kernel or rounded alpha.
+- [atr contract](https://raw.githubusercontent.com/lvlath/go/main/atr/doc.go): Validate finite low<=close<=high. TR0=RN64(H-L); later prior-close gaps. Seed P rounded TR values then RN64(((P-1)*prev+TR)/P); P1 identity. Positive periods, named default 14, Options{} invalid. TR never masked by ATR warmup.
+- [donchian contract](https://raw.githubusercontent.com/lvlath/go/main/donchian/doc.go): Include [i-P+1,i] ready P-1; exclude [i-P,i-1] ready P. Preserve latest equal extrema bits, one nearest-even midpoint, validate even masked/excluded rows. No default, Stream or Snapshot; MaxInt period legal. All failures nil; width arithmetic external.
+- [vwap contract](https://raw.githubusercontent.com/lvlath/go/main/vwap/doc.go): All finite signed prices, nonnegative finite weights, explicit first anchor. Reset before row; zero-weight prefix +0/false; later zero weight retains value/count. Exact weights 2^-1074 and products 2^-2148, one nearest-even ratio. No implicit HLC3, period or calendar.
+- [sessionlevels contract](https://raw.githubusercontent.com/lvlath/go/main/sessionlevels/doc.go): Compute canonical; ComputeDefault, ComputeDaily and ComputeWeekly delegate with Options{}. Explicit adjacent [Start,End) partition, only final incomplete; first masked +0/false, earliest equal extrema bits, exact last close. Any nil H/L/C fails; non-nil empty with no sessions succeeds. Context/nil/shape/manifest, global nonfinite before finite ErrBar; all failures nil. O(n+s) time/O(n) output/O(1) workspace; no calendar or stream/snapshot.
+- [rsi contract](https://raw.githubusercontent.com/lvlath/go/main/rsi/doc.go): Period counts changes, not candles; warmup mask is not an oscillator zero. Keep shared batch/stream recurrence and flat-price convention; reject invalid rows without state advance.
+- [macd contract](https://raw.githubusercontent.com/lvlath/go/main/macd/doc.go): Signal starts from ready Line, not warmup zeros; preserve signed outputs and distinct readiness. MACD's private recurrence is not ema's exact affine ABI. Keep batch/stream parity and snapshot identity.
+- [mfi contract](https://raw.githubusercontent.com/lvlath/go/main/mfi/doc.go): Preserve zero-volume slots and canonical typical-price arithmetic; reject invalid OHLCV; keep rolling ring and rebasing state in checkpoint. No fabricated first transition.
+- [obv contract](https://raw.githubusercontent.com/lvlath/go/main/obv/doc.go): First bar is valid zero regardless of its volume; compare successive closes and keep zero-volume continuity and Neumaier correction. No implicit session reset from time.
+- [ad contract](https://raw.githubusercontent.com/lvlath/go/main/ad/doc.go): First bar contributes; flat candle contributes zero, no division by flat range or overflowing 2*Close. Keep Neumaier correction and source-bound replay distinct from OBV's seed.
+
+## Canonical project resources
+
+- [Repository](https://github.com/lvlath/go): source and history.
+- [Organization](https://github.com/lvlath): maintained projects.
+- [Contributing](https://github.com/lvlath/go/blob/main/CONTRIBUTING.md): change and verification workflow.
+- [Security policy](https://github.com/lvlath/go/security/policy): vulnerability reporting.
+
+## Package documentation
+
+Use these source charters to check actual behavior on main; select a matching
+commit/tag for versioned use. For per-symbol signatures read that package's
+source and published GoDoc. Do not treat root doc.go as a facade.
+
+### A. Topology, paths, capacity and discrete optimization
+
+- [core](https://raw.githubusercontent.com/lvlath/go/main/core/doc.go): public contract, options, errors, result/ownership and limitations.
+- [builder](https://raw.githubusercontent.com/lvlath/go/main/builder/doc.go): public contract, options, errors, result/ownership and limitations.
+- [gridgraph](https://raw.githubusercontent.com/lvlath/go/main/gridgraph/doc.go): public contract, options, errors, result/ownership and limitations.
+- [bfs](https://raw.githubusercontent.com/lvlath/go/main/bfs/doc.go): public contract, options, errors, result/ownership and limitations.
+- [dfs](https://raw.githubusercontent.com/lvlath/go/main/dfs/doc.go): public contract, options, errors, result/ownership and limitations.
+- [dijkstra](https://raw.githubusercontent.com/lvlath/go/main/dijkstra/doc.go): public contract, options, errors, result/ownership and limitations.
+- [mst](https://raw.githubusercontent.com/lvlath/go/main/mst/doc.go): public contract, options, errors, result/ownership and limitations.
+- [flow](https://raw.githubusercontent.com/lvlath/go/main/flow/doc.go): public contract, options, errors, result/ownership and limitations.
+- [matrix](https://raw.githubusercontent.com/lvlath/go/main/matrix/doc.go): public contract, options, errors, result/ownership and limitations.
+- [match](https://raw.githubusercontent.com/lvlath/go/main/match/doc.go): public contract, options, errors, result/ownership and limitations.
+- [tsp](https://raw.githubusercontent.com/lvlath/go/main/tsp/doc.go): public contract, options, errors, result/ownership and limitations.
+
+### B. Time, features and alignment
+
+- [series](https://raw.githubusercontent.com/lvlath/go/main/series/doc.go): public contract, options, errors, result/ownership and limitations.
+- [acf](https://raw.githubusercontent.com/lvlath/go/main/acf/doc.go): public contract, options, errors, result/ownership and limitations.
+- [pacf](https://raw.githubusercontent.com/lvlath/go/main/pacf/doc.go): public contract, options, errors, result/ownership and limitations.
+- [paa](https://raw.githubusercontent.com/lvlath/go/main/paa/doc.go): public contract, options, errors, result/ownership and limitations.
+- [sax](https://raw.githubusercontent.com/lvlath/go/main/sax/doc.go): public contract, options, errors, result/ownership and limitations.
+- [dtw](https://raw.githubusercontent.com/lvlath/go/main/dtw/doc.go): public contract, options, errors, result/ownership and limitations.
+- [tfsax](https://raw.githubusercontent.com/lvlath/go/main/tfsax/doc.go): public contract, options, errors, result/ownership and limitations.
+
+### C. Statistics, regression, hidden states and inference
+
+- [stats](https://raw.githubusercontent.com/lvlath/go/main/stats/doc.go): public contract, options, errors, result/ownership and limitations.
+- [ols](https://raw.githubusercontent.com/lvlath/go/main/ols/doc.go): public contract, options, errors, result/ownership and limitations.
+- [ridge](https://raw.githubusercontent.com/lvlath/go/main/ridge/doc.go): public contract, options, errors, result/ownership and limitations.
+- [pca](https://raw.githubusercontent.com/lvlath/go/main/pca/doc.go): public contract, options, errors, result/ownership and limitations.
+- [hmm](https://raw.githubusercontent.com/lvlath/go/main/hmm/doc.go): public contract, options, errors, result/ownership and limitations.
+- [lstm](https://raw.githubusercontent.com/lvlath/go/main/lstm/doc.go): public contract, options, errors, result/ownership and limitations.
+
+### D. Stochastic computation and econometrics
+
+- [rng](https://raw.githubusercontent.com/lvlath/go/main/rng/doc.go): public contract, options, errors, result/ownership and limitations.
+- [bootstrap](https://raw.githubusercontent.com/lvlath/go/main/bootstrap/doc.go): public contract, options, errors, result/ownership and limitations.
+- [montecarlo](https://raw.githubusercontent.com/lvlath/go/main/montecarlo/doc.go): public contract, options, errors, result/ownership and limitations.
+- [gbm](https://raw.githubusercontent.com/lvlath/go/main/gbm/doc.go): public contract, options, errors, result/ownership and limitations.
+- [jumpdiffusion](https://raw.githubusercontent.com/lvlath/go/main/jumpdiffusion/doc.go): public contract, options, errors, result/ownership and limitations.
+- [gjrgarch](https://raw.githubusercontent.com/lvlath/go/main/gjrgarch/doc.go): public contract, options, errors, result/ownership and limitations.
+- [arima](https://raw.githubusercontent.com/lvlath/go/main/arima/doc.go): public contract, options, errors, result/ownership and limitations.
+
+### E. Indicators: readiness, arithmetic and recovery
+
+- [ema](https://raw.githubusercontent.com/lvlath/go/main/ema/doc.go): public contract, options, errors, result/ownership and limitations.
+- [atr](https://raw.githubusercontent.com/lvlath/go/main/atr/doc.go): public contract, options, errors, result/ownership and limitations.
+- [donchian](https://raw.githubusercontent.com/lvlath/go/main/donchian/doc.go): public contract, options, errors, result/ownership and limitations.
+- [vwap](https://raw.githubusercontent.com/lvlath/go/main/vwap/doc.go): public contract, options, errors, result/ownership and limitations.
+- [sessionlevels](https://raw.githubusercontent.com/lvlath/go/main/sessionlevels/doc.go): public contract, explicit partitions, errors, ownership, causality and replay boundaries.
+- [rsi](https://raw.githubusercontent.com/lvlath/go/main/rsi/doc.go): public contract, options, errors, result/ownership and limitations.
+- [macd](https://raw.githubusercontent.com/lvlath/go/main/macd/doc.go): public contract, options, errors, result/ownership and limitations.
+- [mfi](https://raw.githubusercontent.com/lvlath/go/main/mfi/doc.go): public contract, options, errors, result/ownership and limitations.
+- [obv](https://raw.githubusercontent.com/lvlath/go/main/obv/doc.go): public contract, options, errors, result/ownership and limitations.
+- [ad](https://raw.githubusercontent.com/lvlath/go/main/ad/doc.go): public contract, options, errors, result/ownership and limitations.
+
+## Detailed guides
+
+### A. Topology, paths, capacity and discrete optimization
+
+- [core guide](https://github.com/lvlath/go/blob/main/docs/CORE.md): Deterministic capability-driven graph topology, stable IDs and traversal surfaces.
+- [builder guide](https://github.com/lvlath/go/blob/main/builder/doc.go): Deterministic graph constructors and numeric datasets for experiments.
+- [gridgraph guide](https://github.com/lvlath/go/blob/main/docs/GRID_GRAPH.md): Rectangular lattice connectivity, island analysis, 0-1 expansion and conversion to core.Graph.
+- [bfs guide](https://github.com/lvlath/go/blob/main/docs/BFS.md): Unweighted shortest-hop traversal, deterministic paths and weak components.
+- [dfs guide](https://github.com/lvlath/go/blob/main/docs/DFS.md): Depth-first forest, finish order, cycle witnesses and topological sort.
+- [dijkstra guide](https://github.com/lvlath/go/blob/main/docs/DIJKSTRA.md): Full SSSP and four target methods: Dijkstra, bidirectional, consistent A*, balanced bidirectional A*.
+- [mst guide](https://github.com/lvlath/go/blob/main/docs/MST.md): Prim/Kruskal MST/MSF, KMB graph Steiner approximation, closed or fixed-end tree-covering walks.
+- [flow guide](https://github.com/lvlath/go/blob/main/docs/FLOW.md): Canonical MaxFlow (Dinic, Edmonds-Karp, Ford-Fulkerson) with MaxFlowResult residual, cut and interruption evidence.
+- [matrix guide](https://github.com/lvlath/go/blob/main/docs/MATRICES.md): Row-major dense algebra, graph adapters, APSP, stable statistics, pivoted solves and direct economy SVD.
+- [match guide](https://github.com/lvlath/go/blob/main/docs/MATCH.md): Minimum-weight perfect matching on an ordered even matrix subset; exact-or-error Blossom and explicit Greedy.
+- [tsp guide](https://github.com/lvlath/go/blob/main/docs/TSP.md): Matrix-backed TSP/ATSP, exact Held-Karp and completed Branch-and-Bound, Christofides and local search.
+
+### B. Time, features and alignment
+
+- [series guide](https://github.com/lvlath/go/blob/main/docs/SERIES.md): Exact integer-nanosecond grids, causal lag/difference/returns, complete index windows.
+- [acf guide](https://github.com/lvlath/go/blob/main/docs/ACF.md): Direct fixed-window sample autocorrelation with common or lag-adjusted denominator and pair counts.
+- [pacf guide](https://github.com/lvlath/go/blob/main/docs/PACF.md): Common-n Durbin-Levinson partial autocorrelation and order-wise prediction-error variance.
+- [paa guide](https://github.com/lvlath/go/blob/main/docs/PAA.md): Fractional equal-duration compression with exact rational segment geometry and correctly rounded means.
+- [sax guide](https://github.com/lvlath/go/blob/main/docs/SAX.md): Immutable symbolic encoders over fractional PAA, explicit normalization and compatible Euclidean MINDIST.
+- [dtw guide](https://github.com/lvlath/go/blob/main/docs/DTW.md): Scalar, cost-matrix and multivariate alignment; bounded classifications and exact fixed-length squared-scalar top-K search.
+- [tfsax guide](https://github.com/lvlath/go/blob/main/docs/TFSAX.md): Research-only exact absolute-cost DTW oracle versus classical SAX TopM retrieval.
+- [Exact DTW search](https://github.com/lvlath/go/blob/main/docs/DTW_SEARCH.md): squared-cost certified top-K, budgets and partial results.
+
+### C. Statistics, regression, hidden states and inference
+
+- [stats guide](https://github.com/lvlath/go/blob/main/docs/STATS.md): Stable scalar moments, Chan merges, immutable fitted column standardization.
+- [ols guide](https://github.com/lvlath/go/blob/main/docs/OLS.md): Full-rank least squares by column-pivoted QR, physical-unit coefficients and frozen prediction.
+- [ridge guide](https://github.com/lvlath/go/blob/main/docs/RIDGE.md): Positive-Lambda L2 regression via protected augmented pivoted QR, including wide/collinear designs.
+- [pca guide](https://github.com/lvlath/go/blob/main/docs/PCA.md): Immutable training covariance eigenbasis, projection and reconstruction in original units.
+- [hmm guide](https://github.com/lvlath/go/blob/main/docs/HMM.md): Categorical and diagonal-Gaussian hidden Markov models, filtering, smoothing, Viterbi and multi-sequence MAP-EM.
+- [lstm guide](https://github.com/lvlath/go/blob/main/docs/LSTM.md): Frozen single-layer unidirectional PyTorch IFGO recurrent inference over masked batch-first tensors.
+
+### D. Stochastic computation and econometrics
+
+- [rng guide](https://github.com/lvlath/go/blob/main/docs/RNG.md): Version-pinned SHA-256/PCG-DXSM logical-path streams, open uniforms and cached normals.
+- [bootstrap guide](https://github.com/lvlath/go/blob/main/docs/BOOTSTRAP.md): Moving, Circular and Stationary dependent-data block-index ensembles.
+- [montecarlo guide](https://github.com/lvlath/go/blob/main/docs/MONTECARLO.md): Bounded-parallel independent vector sampling with ordered moments and optional exact empirical quantiles.
+- [gbm guide](https://github.com/lvlath/go/blob/main/docs/GBM.md): Exact-in-distribution lognormal endpoint paths on explicit elapsed-time grids.
+- [jumpdiffusion guide](https://github.com/lvlath/go/blob/main/docs/JUMPDIFFUSION.md): Experimental Merton compound-Poisson lognormal jumps on GBM grids.
+- [gjrgarch guide](https://github.com/lvlath/go/blob/main/docs/GJRGARCH.md): Stationary asymmetric GJR-GARCH(1,1), causal variance, expected-variance forecasts and Gaussian QMLE.
+- [arima guide](https://github.com/lvlath/go/blob/main/docs/ARIMA.md): Fixed nonseasonal conditional Gaussian ARIMA with anchored level forecasts and marginal innovation variance.
+
+### E. Indicators: readiness, arithmetic and recovery
+
+- [ema guide](https://github.com/lvlath/go/blob/main/docs/EMA.md): Exact affine exponential levels with explicit SMA or First seed and recoverable streams.
+- [atr guide](https://github.com/lvlath/go/blob/main/docs/ATR.md): Exact signed-candle True Range and Wilder ATR with independent readiness and replay.
+- [donchian guide](https://github.com/lvlath/go/blob/main/docs/DONCHIAN.md): Observed rolling high/low channels with explicit current-bar policy and exact midpoint.
+- [vwap guide](https://github.com/lvlath/go/blob/main/docs/VWAP.md): Exact anchored price-volume means with positive-weight readiness and transactional reset.
+- [sessionlevels guide](https://github.com/lvlath/go/blob/main/docs/SESSIONLEVELS.md): explicit manifests, previous-session proof, readiness, error precedence, exact selection, correction replay and examples.
+- [rsi guide](https://github.com/lvlath/go/blob/main/docs/RSI.md): Wilder gain/loss oscillator over ordered finite positive prices, batch and checkpointable stream.
+- [macd guide](https://github.com/lvlath/go/blob/main/docs/MACD.md): SMA-seeded fast/slow Appel EMAs, signed Line/Signal/Histogram and separate masks.
+- [mfi guide](https://github.com/lvlath/go/blob/main/docs/MFI.md): Rolling volume-weighted typical-price flow over P transitions, compensated sums.
+- [obv guide](https://github.com/lvlath/go/blob/main/docs/OBV.md): Cumulative signed current-candle base volume with compensated accumulation.
+- [ad guide](https://github.com/lvlath/go/blob/main/docs/AD.md): Chaikin close-location-weighted current-candle base volume with compensated accumulation.
+
+## Numerical representations and alignment
+
+- A (`core`, `builder`, `gridgraph`, `bfs`, `dfs`, `dijkstra`, `mst`, `flow`, `matrix`, `match`, `tsp`): topology and original IDs; finite edge costs vs dense absence; residual and path witnesses; dense factors and tour/matching objectives.
+- B (`series`, `acf`, `pacf`, `paa`, `sax`, `dtw`, `tfsax`): sample indices, grid/gaps, fixed-window lag statistics, exact fractional geometry, compatible symbolic identity, time-alignment costs and research status. Euclidean MINDIST is not an exact DTW bound.
+- C (`stats`, `ols`, `ridge`, `pca`, `hmm`, `lstm`): observation rows/feature columns, training-only coordinates, physical coefficients, covariance spectrum, stochastic transition/emission rows and batch-first recurrent tensor state. PCA ThinSVD is not implemented; HMM smoothing is noncausal; LSTM is inference only.
+- D (`rng`, `bootstrap`, `montecarlo`, `gbm`, `jumpdiffusion`, `gjrgarch`, `arima`): logical path identity, index replicates, ordered moment reduction, explicit time units, positive path prefixes, causal return variance and anchored conditional mean. Sampling, calibration and execution are separate.
+- E (`ema`, `atr`, `donchian`, `vwap`, `sessionlevels`, `rsi`, `macd`, `mfi`, `obv`, `ad`): aligned masks, finite-domain distinctions, explicit window/seed/origin and independent rounding laws. EMA/ATR exact seed and VWAP exact-sum continuation are different from MACD's private recurrence; Donchian and SessionLevels are batch-only. SessionLevels uses the preceding completed explicit interval, not a rolling window or VWAP reset; calendar and source availability stay external. Check each state ABI rather than sharing a generic checkpoint parser.
+
+## Examples and verification
+
+- [Runnable examples](https://github.com/lvlath/go/tree/main/examples): cross-package programs.
+- [CI](https://github.com/lvlath/go/actions) and [coverage](https://codecov.io/github/lvlath/go): actual verification status; not a claim that a local change passed.
+- Use the owning package directory for executable examples, independent tests and benchmarks. Do not assume a particular filename, standalone executable or latest published version. Run `go test ./...`, `go test -race ./...`, `go vet ./...` and the configured lint gate on the required toolchain; measure selected workloads with `-benchmem`. Read the owning coverage gate if applicable. Frozen inputs and external replay/serialization costs must be described honestly.
+
+### A. Topology, paths, capacity and discrete optimization
+
+- [core](https://github.com/lvlath/go/tree/main/core), [builder](https://github.com/lvlath/go/tree/main/builder), [gridgraph](https://github.com/lvlath/go/tree/main/gridgraph), [bfs](https://github.com/lvlath/go/tree/main/bfs), [dfs](https://github.com/lvlath/go/tree/main/dfs), [dijkstra](https://github.com/lvlath/go/tree/main/dijkstra), [mst](https://github.com/lvlath/go/tree/main/mst), [flow](https://github.com/lvlath/go/tree/main/flow), [matrix](https://github.com/lvlath/go/tree/main/matrix), [match](https://github.com/lvlath/go/tree/main/match), [tsp](https://github.com/lvlath/go/tree/main/tsp).
+
+### B. Time, features and alignment
+
+- [series](https://github.com/lvlath/go/tree/main/series), [acf](https://github.com/lvlath/go/tree/main/acf), [pacf](https://github.com/lvlath/go/tree/main/pacf), [paa](https://github.com/lvlath/go/tree/main/paa), [sax](https://github.com/lvlath/go/tree/main/sax), [dtw](https://github.com/lvlath/go/tree/main/dtw), [tfsax](https://github.com/lvlath/go/tree/main/tfsax).
+
+### C. Statistics, regression, hidden states and inference
+
+- [stats](https://github.com/lvlath/go/tree/main/stats), [ols](https://github.com/lvlath/go/tree/main/ols), [ridge](https://github.com/lvlath/go/tree/main/ridge), [pca](https://github.com/lvlath/go/tree/main/pca), [hmm](https://github.com/lvlath/go/tree/main/hmm), [lstm](https://github.com/lvlath/go/tree/main/lstm).
+
+### D. Stochastic computation and econometrics
+
+- [rng](https://github.com/lvlath/go/tree/main/rng), [bootstrap](https://github.com/lvlath/go/tree/main/bootstrap), [montecarlo](https://github.com/lvlath/go/tree/main/montecarlo), [gbm](https://github.com/lvlath/go/tree/main/gbm), [jumpdiffusion](https://github.com/lvlath/go/tree/main/jumpdiffusion), [gjrgarch](https://github.com/lvlath/go/tree/main/gjrgarch), [arima](https://github.com/lvlath/go/tree/main/arima).
+
+### E. Indicators: readiness, arithmetic and recovery
+
+- [ema](https://github.com/lvlath/go/tree/main/ema), [atr](https://github.com/lvlath/go/tree/main/atr), [donchian](https://github.com/lvlath/go/tree/main/donchian), [vwap](https://github.com/lvlath/go/tree/main/vwap), [sessionlevels](https://github.com/lvlath/go/tree/main/sessionlevels), [rsi](https://github.com/lvlath/go/tree/main/rsi), [macd](https://github.com/lvlath/go/tree/main/macd), [mfi](https://github.com/lvlath/go/tree/main/mfi), [obv](https://github.com/lvlath/go/tree/main/obv), [ad](https://github.com/lvlath/go/tree/main/ad).
+
+## Optional
+
+- [Issues](https://github.com/lvlath/go/issues): reported defects and proposals, not a list of implemented features.
+- [License](https://github.com/lvlath/go/blob/main/LICENSE): full terms.
